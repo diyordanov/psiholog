@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/c/Users/dimou/OneDrive/Документи/GitHub/psiholog\" && ls -la | grep -v \"^d\" | grep -v \"^total\")",
+      "Read(//c/c/Users/dimou/OneDrive/Документи/GitHub/**)",
+      "Bash(npm install *)",
+      "Bash(npm run *)"
+    ]
+  }
+}
