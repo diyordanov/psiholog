@@ -4,7 +4,16 @@
       "Bash(cd \"/c/Users/dimou/OneDrive/Документи/GitHub/psiholog\" && ls -la | grep -v \"^d\" | grep -v \"^total\")",
       "Read(//c/c/Users/dimou/OneDrive/Документи/GitHub/**)",
       "Bash(npm install *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(mkdir -p /c/Users/dimou/OneDrive/Документи/GitHub/templates/template-bold)",
+      "Bash(rsync -a --exclude node_modules --exclude .git --exclude dist --exclude dist-ssr ./ /c/Users/dimou/OneDrive/Документи/GitHub/templates/template-bold/)",
+      "Bash(git check-ignore *)",
+      "Bash(xargs grep -l \"SupabaseClientOptions\\\\|GoTrueClientOptions\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:5173/)",
+      "Bash(curl -s http://127.0.0.1:5173/)",
+      "Bash(curl -s http://127.0.0.1:5173/src/App.tsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:5174/)",
+      "Bash(curl -s http://127.0.0.1:5174/)"
     ]
   }
 }
