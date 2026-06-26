@@ -2,58 +2,59 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 завършена ✅. Фаза 1 (Passkey автентикация) — код готов, чака тест в браузър.
+## Статус: Фаза 0 ✅ и Фаза 1 ✅ завършени (2026-06-26). Следва Фаза 2.
 
-## Фаза 1: Passkey автентикация
+## Фаза 1: Passkey автентикация — ЗАВЪРШЕНА ✅ (2026-06-26)
 
-### Готово (от Claude Code)
+### Какво е реализирано
 
-- [x] `src/lib/supabase.ts` — добавен `auth.experimental.passkey: true` (без това passkey методите гърмят грешка).
-- [x] `supabase/migrations/0002_update_profile_trigger.sql` — поправка на тригъра от Фаза 0: `display_name` се чете от `raw_user_meta_data`, с fallback на email.
-- [x] `src/lib/webauthnSupport.ts` — проверка дали браузърът поддържа WebAuthn.
-- [x] `src/lib/auditLog.ts` — helper за запис в `audit_log`.
-- [x] `src/contexts/AuthContext.tsx` — следи текущата сесия за цялото приложение.
-- [x] `src/components/auth/SignUpForm.tsx` — регистрация в 2 стъпки: `signInWithOtp()` (email + display name) → `verifyOtp()` (6-цифрен код от email).
-- [x] `src/components/auth/RegisterPasskeyStep.tsx` — финална стъпка: `registerPasskey()` + audit log 'signup'.
-- [x] `src/components/auth/SignInForm.tsx` — вход чрез `signInWithPasskey()` (непроменено).
-- [x] `src/components/auth/UnsupportedBrowserNotice.tsx` + проверка преди показване на формите.
-- [x] `src/components/UserMenu.tsx` — показва име + "Изход".
-- [x] `src/App.tsx` — показва: AuthScreen (email/код/вход) / RegisterPasskeyStep / "логнат" изглед — решението кой екран се показва минава през `supabase.auth.passkey.list()`, не през local state, затова работи коректно дори ако потребителят презареди страницата по средата на регистрацията.
-- [x] `npm run typecheck` и `npm run lint` минават чисто (2 безвредни warning-а, 0 грешки).
-- [x] `npm run dev` стартира без грешки в конзолата.
+- **Регистрация** (само веднъж, при нов потребител): `signInWithOtp()` праща линк за потвърждение на email (display name отива в `user_metadata`) → потребителят кликва линка → реална (не анонимна) сесия → `registerPasskey()` закача WebAuthn passkey към профила.
+- **Вход** (всеки следващ път): чист `signInWithPasskey()` — без email, без код, само биометрия/PIN на устройството.
+- **Audit log**: `signup` и `login` действия се записват в `audit_log` таблицата (`src/lib/auditLog.ts`).
+- **Fallback за browsers без WebAuthn**: `src/lib/webauthnSupport.ts` проверява `PublicKeyCredential`/`navigator.credentials`, при липса показва `UnsupportedBrowserNotice` вместо формите.
+- **Routing логика** (`src/App.tsx`): кой екран се показва (auth форма / "довърши passkey" / dashboard) минава през `supabase.auth.passkey.list()` — реална проверка дали потребителят има regisтриран passkey, не локален флаг. Работи коректно дори при презареждане на страницата по средата на регистрацията.
+- Файлове: `src/lib/supabase.ts`, `src/contexts/AuthContext.tsx`, `src/components/auth/{SignUpForm,SignInForm,RegisterPasskeyStep,UnsupportedBrowserNotice,AuthScreen}.tsx`, `src/components/UserMenu.tsx`, `supabase/migrations/0002_update_profile_trigger.sql`.
 
-### Архитектурна корекция #2 (важна) — анонимна регистрация се отхвърля от Supabase
+### Архитектурни корекции спрямо първоначалния brief (Section 6.1)
 
-При реален тест Supabase сървърът отговори с `"Anonymous user not allowed to perform these actions"` при опит да закачим passkey към анонимна сесия — твърдо правило на backend-а, не bug в нашия код. Затова сменихме подхода:
+1. **Анонимна регистрация е забранена от Supabase** — сървърът връща `"Anonymous user not allowed to perform these actions"` при опит да закачим passkey към анонимна сесия. Затова регистрацията минава през реален email (OTP/линк), не анонимна сесия — потвърждава оригиналната идея в brief-а ("email + passkey"), просто през линк за потвърждение, не парола.
+2. **RP ID / Site URL е единствен домейн наведнъж** — виж "Важно за следващата сесия" по-долу.
 
-**Нов flow:** `signInWithOtp()` (праща 6-цифрен код на email) → `verifyOtp()` (потребителят въвежда кода → вече има **реална**, не анонимна сесия) → `registerPasskey()`. Email се ползва само еднократно, при регистрация. Всеки следващ вход е чист passkey, без email. Това де факто потвърждава оригиналната идея в brief-а ("email + passkey registration"), просто конкретизирано като OTP код, не парола.
+### Тествано успешно
 
-### Чака потребителя
+- **Браузъри:** Chrome, Firefox, Safari/Edge.
+- **Устройства/методи:** Windows Hello PIN (лаптоп), мобилен телефон (face recognition + cross-device QR passkey flow).
+- **Среди:** локално (`localhost:3000`) и production (`https://psiholog.pages.dev`) — отделно, с превключване на Supabase конфигурация между тях (виж по-долу).
+- Пълен цикъл: регистрация → passkey ceremony → "логнат" изглед → Изход → презареждане → Вход с passkey.
 
-#### 1. Пусни втората SQL миграция в Supabase (ако още не си)
+### НЕ е тествано / известни огранияения
 
-1. Supabase Dashboard → **SQL Editor** → New query.
-2. Копирай съдържанието на `supabase/migrations/0002_update_profile_trigger.sql` → Paste → **Run**.
-3. Очакван резултат: "Success. No rows returned."
+- **Стар браузър без WebAuthn** — `UnsupportedBrowserNotice` компонентът съществува и логиката е проверена с код ревю, но не е реално тествано в браузър без WebAuthn поддръжка.
+- **Security key (USB)** — не е тествано (нужен е реален FIDO2 хардуер, напр. YubiKey; обикновена USB флашка не работи — няма криптографски чип).
+- **Audit log записите** не са визуално проверени в Supabase Table Editor (логиката е написана и викана, но не сме отворили таблицата да потвърдим редовете реално кацат).
+- **Display name** в `profiles` таблицата (от `raw_user_meta_data`) не е визуално потвърдено в Table Editor — само косвено, чрез `UserMenu` показващ име в браузъра.
 
-#### 2. Тествай в браузъра
+### ВАЖНО за следващата сесия — RP ID / Site URL gotcha
 
-1. `npm run dev`, отвори показания localhost адрес (внимавай — може да имаш стари dev сървъри от по-рано на портове 5173-5175; виж в твоя терминал кой порт точно показва).
-2. Таб "Регистрация" → въведи име + **истински email, до който имаш достъп**.
-3. "Изпрати код за потвърждение" → провери пощата си (включи и Spam).
-4. Въведи 6-цифрения код → "Потвърди код".
-5. Очаквано: екран "Последна стъпка" → "Регистрирай passkey" → системен Windows prompt → потвърждаваш с биометрия/PIN (или телефон/security key, ако нямаш Windows Hello настроен).
-6. След успех → виждаш "логнат" изглед с твоето име и бутон "Изход".
-7. "Изход" → презареди → таб "Вход" → "Влез с passkey" → би трябвало да те разпознае без email/код.
-8. Кажи ми резултата на всяка стъпка, или прати screenshot/текст на грешка, ако нещо засече.
+Supabase Passkeys конфигурация (Authentication → Passkeys) има **Relying Party ID**, което поддържа само **един** домейн (или поддомейни на него) наведнъж — в момента е сетнато на `psiholog.pages.dev` (production), след днешните live тестове.
 
-### Известно ограничение (приемливо за курсова работа)
+**Ако искаш да тестваш passkey локално (`localhost:3000`) следващата сесия:**
+1. Supabase Dashboard → Authentication → Passkeys → смени **Relying Party ID** обратно на `localhost`.
+2. Authentication → URL Configuration → Site URL → обратно на `http://localhost:3000`.
+3. (Vite вече е фиксиран на порт 3000 в `vite.config.ts` — не пипай това, то трябва точно да съвпада.)
 
-Ако потребител потвърди email кода, но след това откаже/прекъсне passkey ceremony-то и затвори страницата — акаунтът остава "недовършен" (има реален email акаунт, но без passkey). Това **се самопочиства**: при следващ опит за регистрация със същия email, Supabase разпознава съществуващия акаунт, праща нов код, и нашата `passkey.list()` проверка автоматично показва екрана "Регистрирай passkey" отново — без дублиране на акаунти.
+Ако забравиш да го смениш — passkey ще гърми с грешка от типа `"RP ID 'X' is invalid for this domain"` или `webauthn_verification_failed`. Това коства часове дебъгване днес, затова го пиша тук изрично.
 
-### Следваща стъпка (Фаза 2)
+### Технически дълг (направено набързо, за поправка по-късно)
 
-След успешен тест на регистрация + login + logout — преминаваме към Фаза 2: качване на PDF, визуализация, `<UploadDocument/>`, `<DocumentList/>`, `<PdfViewer/>`.
+1. **Resend email е в test режим** — `onboarding@resend.dev` подателят може да праща **само** до email-а на собственика на Resend акаунта. Никой друг (преподавател, тестов потребител) не може да се регистрира на production засега. Нужно: верифициран собствен домейн в Resend (изисква DNS достъп до домейн, който потребителят все още няма).
+2. **`needsPasskeySetup` проверката не е origin-aware** — гледа "има ли потребителят изобщо passkey" (през `passkey.list()`), не "има ли passkey **за текущия domain**". На практика няма проблем за реални потребители (един production домейн), но създаде объркване при нашите localhost/live тестове днес. `PasskeyListItem` от Supabase не носи domain информация, така че няма лесен fix без промяна в подхода.
+3. **Множество тестови акаунти** в Supabase `auth.users` от дебъгването днес (анонимни тестови потребители, недовършени регистрации) — безвредни (cascade delete е настроен), но може да се изчистят по желание през Authentication → Users.
+4. **Множество запазени passkey-та** в Windows Hello / Chrome Password Manager на тестовата машина от повторните опити — чисто тидиност, не е грешка.
+
+### Следваща стъпка: Фаза 2 — Качване на PDF + визуализация
+
+`<UploadDocument/>` (drag&drop, валидация на размер/MIME, PDF sanitization), SHA-256 hash в браузъра, качване в `documents` bucket, `<DocumentList/>`, `<PdfViewer/>` с `pdfjs-dist`.
 
 ---
 
