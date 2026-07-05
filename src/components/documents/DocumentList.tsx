@@ -98,64 +98,64 @@ export default function DocumentList({ userId }: DocumentListProps) {
       ) : (
         <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-100 bg-white shadow-sm">
           {documents.map((doc) => (
-            <div key={doc.id} className="flex items-center gap-4 px-4 py-3">
+            <div key={doc.id} className="flex gap-3 px-4 py-3">
               {/* Икона */}
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50">
                 <FileText size={18} className="text-indigo-500" />
               </div>
 
-              {/* Информация */}
+              {/* Съдържание: 2 реда */}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-neutral-800">
+                {/* Ред 1: Файлово наименование (цяло, с пренос) */}
+                <p className="break-all text-sm font-medium leading-snug text-neutral-800">
                   {doc.original_filename}
                 </p>
-                <p className="text-xs text-neutral-400">
-                  {formatDate(doc.created_at)}
-                </p>
-              </div>
+                {/* Ред 2: дата + статус + действия */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span className="text-xs text-neutral-400">{formatDate(doc.created_at)}</span>
+                  <StatusBadge status={doc.status} />
 
-              {/* Статус бадж */}
-              <StatusBadge status={doc.status} />
-
-              {/* Бутон преглед */}
-              <button
-                onClick={() => handleView(doc)}
-                disabled={loadingUrl === doc.id}
-                className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50"
-              >
-                {loadingUrl === doc.id
-                  ? <RefreshCw size={12} className="animate-spin" />
-                  : <Eye size={12} />
-                }
-                Преглед
-              </button>
-
-              {/* Бутон изтрий — с inline потвърждение */}
-              {confirmDeleteId === doc.id ? (
-                <div className="flex items-center gap-1">
+                  {/* Бутон преглед */}
                   <button
-                    onClick={() => handleDelete(doc.id)}
-                    disabled={deletingId === doc.id}
-                    className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                    onClick={() => handleView(doc)}
+                    disabled={loadingUrl === doc.id}
+                    className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50"
                   >
-                    {deletingId === doc.id ? <RefreshCw size={12} className="animate-spin" /> : 'Потвърди'}
+                    {loadingUrl === doc.id
+                      ? <RefreshCw size={11} className="animate-spin" />
+                      : <Eye size={11} />
+                    }
+                    Преглед
                   </button>
-                  <button
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="rounded-lg px-2 py-1.5 text-xs text-neutral-400 hover:text-neutral-600"
-                  >
-                    Откажи
-                  </button>
+
+                  {/* Бутон изтрий — с inline потвърждение */}
+                  {confirmDeleteId === doc.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleDelete(doc.id)}
+                        disabled={deletingId === doc.id}
+                        className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        {deletingId === doc.id ? <RefreshCw size={11} className="animate-spin" /> : 'Потвърди'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="rounded-lg px-2 py-1 text-xs text-neutral-400 hover:text-neutral-600"
+                      >
+                        Откажи
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(doc.id)}
+                      className="rounded-lg p-1 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                      title="Изтрий документ"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmDeleteId(doc.id)}
-                  className="rounded-lg p-1.5 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                  title="Изтрий документ"
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
+              </div>
             </div>
           ))}
         </div>
