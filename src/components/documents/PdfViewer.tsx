@@ -18,35 +18,60 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.2);
   const [loading, setLoading] = useState(true);
+  const [loadingLabel, setLoadingLabel] = useState('Изтегляме документа...');
   const [error, setError] = useState<string | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
 
-  // Зареждаме PDF документа при промяна на URL
+  // Зареждаме PDF: първо fetch байтовете сами, после ги подаваме на pdf.js.
+  // Директен URL към pdf.js прави вътрешни range-request-и и може да рендира
+  // бяла страница заради CORS/credential ограничения на Supabase Storage.
   useEffect(() => {
+    let cancelled = false;
+
     setLoading(true);
     setError(null);
     setPageNum(1);
+    setPdf(null);
+    pdfRef.current = null;
 
-    pdfjsLib.getDocument({ url }).promise
-      .then((doc) => {
+    (async () => {
+      try {
+        // 1. Изтегляме PDF данните сами
+        setLoadingLabel('Изтегляме документа...');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        if (cancelled) return;
+
+        // 2. Подаваме байтовете директно на pdf.js (избягваме range-request CORS проблем)
+        setLoadingLabel('Обработваме документа...');
+        const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+        if (cancelled) { (doc as unknown as { destroy(): void }).destroy(); return; }
+
+        pdfRef.current = doc;
         setPdf(doc);
         setTotalPages(doc.numPages);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : 'Грешка при зареждане на PDF.');
-        setLoading(false);
-      });
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Грешка при зареждане на PDF.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
-    return () => { };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+      (pdfRef.current as unknown as { destroy(): void } | null)?.destroy();
+      pdfRef.current = null;
+    };
   }, [url]);
 
   // Рендираме страницата при промяна на pdf/pageNum/scale
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
 
-    // Отменяме предишно рендиране ако не е приключило
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
       renderTaskRef.current = null;
@@ -61,11 +86,11 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
       canvas.width = viewport.width;
       canvas.height = viewport.height;
 
-      const task = page.render({ canvasContext: ctx, viewport, canvas });
+      // canvasContext + viewport са достатъчни; 'canvas' param е само за OffscreenCanvas
+      const task = page.render({ canvasContext: ctx, viewport } as Parameters<typeof page.render>[0]);
       renderTaskRef.current = task;
 
       task.promise.catch((e) => {
-        // RenderingCancelledException е нормално при бързо превъртане
         if (e?.name !== 'RenderingCancelledException') {
           console.error('PDF render грешка:', e);
         }
@@ -73,7 +98,7 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
     });
   }, [pdf, pageNum, scale]);
 
-  // Затваряме при Escape
+  // Keyboard навигация
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -89,10 +114,9 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
       {/* Горна лента */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
         <div className="flex items-center gap-3">
-          {/* Навигация по страници */}
           <button
             onClick={() => setPageNum((p) => Math.max(1, p - 1))}
-            disabled={pageNum <= 1}
+            disabled={pageNum <= 1 || loading}
             className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
             <ChevronLeft size={18} />
@@ -102,23 +126,22 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
           </span>
           <button
             onClick={() => setPageNum((p) => Math.min(totalPages, p + 1))}
-            disabled={pageNum >= totalPages}
+            disabled={pageNum >= totalPages || loading}
             className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
             <ChevronRight size={18} />
           </button>
         </div>
 
-        {/* Файлово наименование */}
         <p className="absolute left-1/2 -translate-x-1/2 max-w-xs truncate text-sm text-neutral-300">
           {filename}
         </p>
 
         <div className="flex items-center gap-1">
-          {/* Zoom бутони */}
           <button
             onClick={() => setScale((s) => Math.max(0.5, +(s - 0.25).toFixed(2)))}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
+            disabled={loading}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
             <ZoomOut size={18} />
           </button>
@@ -127,12 +150,12 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
           </span>
           <button
             onClick={() => setScale((s) => Math.min(3, +(s + 0.25).toFixed(2)))}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
+            disabled={loading}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
             <ZoomIn size={18} />
           </button>
 
-          {/* Затваряне */}
           <button
             onClick={onClose}
             className="ml-2 rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
@@ -147,7 +170,7 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
         {loading && (
           <div className="flex items-center gap-2 self-center text-neutral-400">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            <span className="text-sm">Зареждане...</span>
+            <span className="text-sm">{loadingLabel}</span>
           </div>
         )}
         {error && (
