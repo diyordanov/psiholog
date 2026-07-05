@@ -19,10 +19,37 @@ async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
   return `\\x${hex}`;
 }
 
+// Качва файл директно през XHR за да може да репортира прогрес.
+// Supabase JS клиентът не излага upload progress (ползва fetch вътрешно).
+function uploadWithProgress(
+  url: string,
+  file: File,
+  accessToken: string,
+  onProgress: (pct: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.setRequestHeader('Content-Type', 'application/pdf');
+    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Грешка при качване: ${xhr.status} ${xhr.responseText}`));
+    };
+    xhr.onerror = () => reject(new Error('Мрежова грешка при качване.'));
+    xhr.send(file);
+  });
+}
+
 export async function uploadDocument(
   file: File,
   buffer: ArrayBuffer,
-  userId: string
+  userId: string,
+  onProgress?: (pct: number) => void,
 ): Promise<UploadResult> {
   // 1. SHA-256 хеш
   const hashHex = await computeSha256Hex(buffer);
@@ -31,16 +58,15 @@ export async function uploadDocument(
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const storagePath = `${userId}/${Date.now()}-${safeName}`;
 
-  const { error: storageError } = await supabase.storage
-    .from('documents')
-    .upload(storagePath, file, {
-      contentType: 'application/pdf',
-      upsert: false,
-    });
+  // 3. Взимаме access token за XHR upload
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Не сте логнат.');
 
-  if (storageError) {
-    throw new Error(`Грешка при качване: ${storageError.message}`);
-  }
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const uploadUrl = `${supabaseUrl}/storage/v1/object/documents/${storagePath}`;
+
+  await uploadWithProgress(uploadUrl, file, session.access_token, onProgress ?? (() => {}));
+
 
   // 3. INSERT в documents таблица
   const { data, error: dbError } = await supabase

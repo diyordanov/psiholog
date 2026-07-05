@@ -25,6 +25,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadPct, setUploadPct] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const stageLabels: Record<UploadStage, string> = {
@@ -42,6 +43,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     setStage('idle');
     setErrorMessage(null);
     setSelectedFile(null);
+    setUploadPct(0);
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -85,11 +87,12 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
 
     // 4. Hash + Upload
     setStage('hashing');
-    await new Promise((r) => setTimeout(r, 50)); // позволяваме UI да се обнови
+    await new Promise((r) => setTimeout(r, 50));
 
     setStage('uploading');
+    setUploadPct(0);
     try {
-      await uploadDocument(file, buffer, userId);
+      await uploadDocument(file, buffer, userId, (pct) => setUploadPct(pct));
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Неизвестна грешка при качване.');
       setStage('error');
@@ -167,12 +170,27 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
         )}
 
         {isBusy && (
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex w-full flex-col items-center gap-2">
             <p className="text-sm text-neutral-600">{stageLabels[stage]}</p>
             {selectedFile && (
-              <p className="text-xs text-neutral-400">{selectedFile.name}</p>
+              <p className="max-w-full truncate text-xs text-neutral-400">{selectedFile.name}</p>
             )}
-            <ProgressDots />
+            {stage === 'uploading' ? (
+              <div className="w-full max-w-xs">
+                <div className="mb-1 flex justify-between text-xs text-neutral-400">
+                  <span>Качване...</span>
+                  <span>{uploadPct}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+                  <div
+                    className="h-full rounded-full bg-indigo-500 transition-all duration-150"
+                    style={{ width: `${uploadPct}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <ProgressDots />
+            )}
           </div>
         )}
 
