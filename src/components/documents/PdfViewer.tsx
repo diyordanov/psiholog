@@ -5,54 +5,28 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-// Module-level cache — оцелява при затваряне/отваряне на viewer-а в рамките на сесията.
-// Ключ: "${cacheId}:${page}:${scaleBucket}" → JPEG data URL на рендираната страница.
-const pageCache = new Map<string, string>();
-const MAX_CACHE_ENTRIES = 30;
+// Module-level cache — оцелява при затваряне/отваряне в рамките на сесията
+const pageCache = new Map<string, string>(); // key → JPEG data URL
+const MAX_CACHE_ENTRIES = 20;
 
-// Скейл за бързия preview (рендира ~(0.35/userScale)² пъти по-малко пиксели)
-const PREVIEW_SCALE = 0.35;
-
-function scaleBucket(s: number): string {
-  // Групираме в стъпки от 0.25, за да ползваме кеша при незначителни разлики
-  return (Math.round(s * 4) / 4).toFixed(2);
-}
+// iOS Safari: max ~16.7M px на canvas; десктоп: ~268M px. Ограничаваме консервативно.
+const MAX_CANVAS_PIXELS = 8_000_000;
 
 function cacheKey(cacheId: string, page: number, scale: number) {
-  return `${cacheId}:${page}:${scaleBucket(scale)}`;
+  return `${cacheId}:${page}:${(Math.round(scale * 4) / 4).toFixed(2)}`;
 }
 
 function saveToCache(key: string, canvas: HTMLCanvasElement) {
   try {
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
     if (pageCache.size >= MAX_CACHE_ENTRIES) {
       pageCache.delete(pageCache.keys().next().value!);
     }
     pageCache.set(key, dataUrl);
-  } catch {
-    // canvas.toDataURL може да хвърли SecurityError при tainted canvas
-  }
+  } catch { /* SecurityError при tainted canvas */ }
 }
 
-async function renderToCanvas(
-  pdf: pdfjsLib.PDFDocumentProxy,
-  pageNum: number,
-  scale: number,
-  canvas: HTMLCanvasElement,
-): Promise<pdfjsLib.RenderTask> {
-  const page = await pdf.getPage(pageNum);
-  const viewport = page.getViewport({ scale });
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  const ctx = canvas.getContext('2d')!;
-  return page.render({
-    canvasContext: ctx,
-    viewport,
-    intent: 'display',
-  } as Parameters<typeof page.render>[0]);
-}
-
-function drawCachedToCanvas(dataUrl: string, canvas: HTMLCanvasElement): Promise<void> {
+function drawFromCache(dataUrl: string, canvas: HTMLCanvasElement): Promise<void> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -68,7 +42,7 @@ function drawCachedToCanvas(dataUrl: string, canvas: HTMLCanvasElement): Promise
 interface PdfViewerProps {
   url: string;
   filename: string;
-  cacheId: string; // стабилен document.id — ключ за кеша при повторно отваряне
+  cacheId: string;
   onClose: () => void;
 }
 
@@ -78,53 +52,60 @@ export default function PdfViewer({ url, filename, cacheId, onClose }: PdfViewer
   const [pageNum, setPageNum] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.0);
-  const [loading, setLoading] = useState(true);
-  const [renderState, setRenderState] = useState<'idle' | 'preview' | 'full'>('idle');
+  const [docLoading, setDocLoading] = useState(true);
+  const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
 
-  // Зареждаме PDF документа чрез URL + range requests (само данните за текущата страница)
+  // Зареждаме PDF чрез URL + range requests (само данните за текущата страница)
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    setDocLoading(true);
     setError(null);
     setPageNum(1);
     setPdf(null);
 
-    const loadingTask = pdfjsLib.getDocument(
+    const task = pdfjsLib.getDocument(
       { url, withCredentials: false } as Parameters<typeof pdfjsLib.getDocument>[0]
     );
 
-    loadingTask.promise
-      .then((doc) => {
+    task.promise
+      .then(async (doc) => {
         if (cancelled) { (doc as unknown as { destroy(): void }).destroy(); return; }
-        setPdf(doc);
-        setTotalPages(doc.numPages);
-        setLoading(false);
+
+        // Изчисляваме fit-width скейл спрямо ширината на екрана
+        const page = await doc.getPage(1);
+        const naturalVp = page.getViewport({ scale: 1 });
+        const containerW = Math.min(window.innerWidth, 900) - 48;
+        const fitScale = containerW / naturalVp.width;
+        const clampedScale = Math.max(0.4, Math.min(fitScale, 2.0));
+
+        if (!cancelled) {
+          setScale(clampedScale);
+          setPdf(doc);
+          setTotalPages(doc.numPages);
+          setDocLoading(false);
+        }
       })
       .catch((e) => {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Грешка при зареждане на PDF.');
-          setLoading(false);
+          setDocLoading(false);
         }
       });
 
     return () => {
       cancelled = true;
-      loadingTask.destroy();
+      task.destroy();
     };
   }, [url]);
 
-  // Двустъпков рендер при смяна на страница/скейл:
-  //   1. Ако пълният рендер е в кеша → покажи незабавно
-  //   2. Иначе: рендирай preview (0.35×) за ~5 сек → покажи го,
-  //      след това рендирай пълен → замести + кешира
+  // Рендираме страница при промяна на pdf / pageNum / scale
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const fullKey = cacheKey(cacheId, pageNum, scale);
-    const previewKey = cacheKey(cacheId, pageNum, PREVIEW_SCALE);
+    const key = cacheKey(cacheId, pageNum, scale);
 
     // Отменяме текущ рендер
     if (renderTaskRef.current) {
@@ -132,55 +113,55 @@ export default function PdfViewer({ url, filename, cacheId, onClose }: PdfViewer
       renderTaskRef.current = null;
     }
 
-    // --- Кеш hit за пълна резолюция → незабавно ---
-    const cachedFull = pageCache.get(fullKey);
-    if (cachedFull) {
-      drawCachedToCanvas(cachedFull, canvas).then(() => setRenderState('full'));
+    // Cache hit → покажи незабавно
+    const cached = pageCache.get(key);
+    if (cached) {
+      drawFromCache(cached, canvas).then(() => setRendering(false));
+      setRendering(false);
       return;
     }
 
-    setRenderState('preview');
+    setRendering(true);
+    setError(null);
 
-    // --- Стартираме двата рендера паралелно ---
-    const offscreen = document.createElement('canvas');
+    pdf.getPage(pageNum)
+      .then((page) => {
+        // Ограничаваме скейла ако canvas-ът би надхвърлил iOS/браузър лимита
+        const naturalVp = page.getViewport({ scale: 1 });
+        const naturalPixels = naturalVp.width * naturalVp.height;
+        const effectiveScale = naturalPixels * scale * scale > MAX_CANVAS_PIXELS
+          ? Math.sqrt(MAX_CANVAS_PIXELS / naturalPixels)
+          : scale;
 
-    // Preview рендер (бърз)
-    const cachedPreview = pageCache.get(previewKey);
-    const previewPromise: Promise<void> = cachedPreview
-      ? drawCachedToCanvas(cachedPreview, canvas)
-      : renderToCanvas(pdf, pageNum, PREVIEW_SCALE, canvas).then((task) => {
-          renderTaskRef.current = task;
-          return task.promise
-            .then(() => { saveToCache(previewKey, canvas); })
-            .catch(() => {});
-        });
+        const viewport = page.getViewport({ scale: effectiveScale });
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
 
-    // Пълен рендер (бавен, в offscreen canvas)
-    const fullRenderPromise = renderToCanvas(pdf, pageNum, scale, offscreen)
-      .then((task) => {
-        renderTaskRef.current = task;
-        return task.promise
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { setRendering(false); return; }
+
+        const renderTask = page.render({
+          canvasContext: ctx,
+          viewport,
+        } as Parameters<typeof page.render>[0]);
+
+        renderTaskRef.current = renderTask;
+
+        renderTask.promise
           .then(() => {
-            // Копираме offscreen → видимия canvas
-            canvas.width = offscreen.width;
-            canvas.height = offscreen.height;
-            canvas.getContext('2d')!.drawImage(offscreen, 0, 0);
-            saveToCache(fullKey, canvas);
-            setRenderState('full');
+            saveToCache(key, canvas);
+            setRendering(false);
           })
           .catch((e) => {
-            if (e?.name !== 'RenderingCancelledException') {
-              console.error('PDF full render грешка:', e);
-            }
+            if (e?.name === 'RenderingCancelledException') return;
+            setError('Грешка при рендиране на страницата.');
+            setRendering(false);
           });
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Грешка при зареждане на страница.');
+        setRendering(false);
       });
-
-    previewPromise
-      .then(() => { if (renderState !== 'full') setRenderState('preview'); })
-      .catch(() => {});
-
-    fullRenderPromise.catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdf, pageNum, scale, cacheId]);
 
   // Keyboard навигация
@@ -194,87 +175,98 @@ export default function PdfViewer({ url, filename, cacheId, onClose }: PdfViewer
     return () => window.removeEventListener('keydown', handler);
   }, [onClose, pageNum, totalPages]);
 
-  const renderLabel =
-    renderState === 'preview' ? 'Зарежда пълна резолюция...' :
-    renderState === 'full'    ? '' : '';
+  const isLoading = docLoading || rendering;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950/95">
-      {/* Горна лента */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
-        <div className="flex items-center gap-3">
+    <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950">
+
+      {/* ── Toolbar ─────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-white/10 bg-neutral-900">
+
+        {/* Ред 1: навигация + zoom + затваряне */}
+        <div className="flex h-11 items-center gap-1 px-3">
+
+          {/* Навигация по страници */}
           <button
             onClick={() => setPageNum((p) => Math.max(1, p - 1))}
-            disabled={pageNum <= 1 || loading}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+            disabled={pageNum <= 1 || docLoading}
+            className="rounded p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
-            <ChevronLeft size={18} />
+            <ChevronLeft size={16} />
           </button>
-          <span className="text-sm text-neutral-300">
-            {loading ? '—' : `${pageNum} / ${totalPages}`}
+          <span className="min-w-[3.5rem] text-center text-sm text-neutral-300">
+            {docLoading ? '—' : `${pageNum} / ${totalPages}`}
           </span>
           <button
             onClick={() => setPageNum((p) => Math.min(totalPages, p + 1))}
-            disabled={pageNum >= totalPages || loading}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+            disabled={pageNum >= totalPages || docLoading}
+            className="rounded p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
-            <ChevronRight size={18} />
+            <ChevronRight size={16} />
           </button>
-        </div>
 
-        {/* Заглавие + статус */}
-        <div className="absolute left-1/2 flex -translate-x-1/2 flex-col items-center">
-          <p className="max-w-xs truncate text-sm text-neutral-300">{filename}</p>
-          {renderLabel && (
-            <p className="text-xs text-neutral-500">{renderLabel}</p>
-          )}
-        </div>
+          <div className="flex-1" />
 
-        <div className="flex items-center gap-1">
+          {/* Zoom */}
           <button
-            onClick={() => setScale((s) => Math.max(0.5, +(s - 0.25).toFixed(2)))}
-            disabled={loading}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+            onClick={() => setScale((s) => Math.max(0.25, +(s - 0.25).toFixed(2)))}
+            disabled={docLoading}
+            className="rounded p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
-            <ZoomOut size={18} />
+            <ZoomOut size={16} />
           </button>
-          <span className="min-w-[3rem] text-center text-xs text-neutral-400">
+          <span className="w-10 text-center text-xs text-neutral-400">
             {Math.round(scale * 100)}%
           </span>
           <button
             onClick={() => setScale((s) => Math.min(3, +(s + 0.25).toFixed(2)))}
-            disabled={loading}
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+            disabled={docLoading}
+            className="rounded p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
           >
-            <ZoomIn size={18} />
+            <ZoomIn size={16} />
           </button>
-          <button
-            onClick={onClose}
-            className="ml-2 rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
-          >
-            <X size={18} />
+
+          <div className="mx-1 h-5 w-px bg-white/10" />
+
+          {/* Затваряне */}
+          <button onClick={onClose} className="rounded p-1.5 text-neutral-400 hover:bg-white/10">
+            <X size={16} />
           </button>
+        </div>
+
+        {/* Ред 2: файлово наименование (центрирано) */}
+        <div className="flex h-8 items-center justify-center px-4">
+          <p className="max-w-full truncate text-center text-xs text-neutral-400">
+            {filename}
+          </p>
         </div>
       </div>
 
-      {/* Canvas зона */}
-      <div className="flex flex-1 items-start justify-center overflow-auto p-6">
-        {loading && (
-          <div className="flex items-center gap-2 self-center text-neutral-400">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            <span className="text-sm">Зареждаме документа...</span>
+      {/* ── Canvas зона ─────────────────────────────────────────────── */}
+      <div className="relative flex flex-1 items-start justify-center overflow-auto p-4">
+
+        {/* Loading / статус — абсолютно центриран */}
+        {isLoading && !error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-neutral-400">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            <span className="text-sm">
+              {docLoading ? 'Зареждаме документа...' : 'Рендираме страницата...'}
+            </span>
           </div>
         )}
+
         {error && (
-          <p className="self-center text-sm text-red-400">{error}</p>
+          <div className="absolute inset-0 flex items-center justify-center px-8">
+            <p className="text-center text-sm text-red-400">{error}</p>
+          </div>
         )}
+
         <canvas
           ref={canvasRef}
-          className={`shadow-2xl transition-opacity duration-300 ${
-            loading || error ? 'hidden' :
-            renderState === 'preview' ? 'opacity-60' : 'opacity-100'
+          className={`shadow-2xl transition-opacity duration-200 ${
+            docLoading || error ? 'invisible' : rendering ? 'opacity-50' : 'opacity-100'
           }`}
-          style={{ maxWidth: '100%' }}
+          style={{ maxWidth: '100%', height: 'auto' }}
         />
       </div>
     </div>
