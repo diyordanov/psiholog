@@ -36,7 +36,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
         <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
 
-      {/* Заглавие + форм�� — вертикално центрирани */}
+      {/* Заглавие + форма — вертикално центрирани */}
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">
           <h1 className="text-2xl font-medium leading-snug text-neutral-900">Добре дошли</h1>
@@ -57,7 +57,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
               {status === 'signing-in' ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Изчакайт��...
+                  Изчакайте...
                 </>
               ) : (
                 <>
@@ -82,7 +82,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-3">
           <div className="flex-1 border-t border-neutral-200" />
-          <span className="text-xs text-neutral-400">н��мате акаунт?</span>
+          <span className="text-xs text-neutral-400">нямате акаунт?</span>
           <div className="flex-1 border-t border-neutral-200" />
         </div>
         <button
