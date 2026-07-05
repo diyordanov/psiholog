@@ -2,141 +2,113 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ и Фаза 1 ✅ завършени (вкл. recovery flow — 2026-07-05). Следва: deploy на Edge Function + пускане на migration 0003 + Фаза 2.
-
-## Фаза 1: Passkey автентикация — ЗАВЪРШЕНА ✅ (2026-06-26)
-
-### Какво е реализирано
-
-- **Регистрация** (само веднъж, при нов потребител): `signInWithOtp()` праща линк за потвърждение на email (display name отива в `user_metadata`) → потребителят кликва линка → реална (не анонимна) сесия → `registerPasskey()` закача WebAuthn passkey към профила.
-- **Вход** (всеки следващ път): чист `signInWithPasskey()` — без email, без код, само биометрия/PIN на устройството.
-- **Audit log**: `signup` и `login` действия се записват в `audit_log` таблицата (`src/lib/auditLog.ts`).
-- **Fallback за browsers без WebAuthn**: `src/lib/webauthnSupport.ts` проверява `PublicKeyCredential`/`navigator.credentials`, при липса показва `UnsupportedBrowserNotice` вместо формите.
-- **Routing логика** (`src/App.tsx`): кой екран се показва (auth форма / "довърши passkey" / dashboard) минава през `supabase.auth.passkey.list()` — реална проверка дали потребителят има regisтриран passkey, не локален флаг. Работи коректно дори при презареждане на страницата по средата на регистрацията.
-- Файлове: `src/lib/supabase.ts`, `src/contexts/AuthContext.tsx`, `src/components/auth/{SignUpForm,SignInForm,RegisterPasskeyStep,UnsupportedBrowserNotice,AuthScreen}.tsx`, `src/components/UserMenu.tsx`, `supabase/migrations/0002_update_profile_trigger.sql`.
-
-### Архитектурни корекции спрямо първоначалния brief (Section 6.1)
-
-1. **Анонимна регистрация е забранена от Supabase** — сървърът връща `"Anonymous user not allowed to perform these actions"` при опит да закачим passkey към анонимна сесия. Затова регистрацията минава през реален email (OTP/линк), не анонимна сесия — потвърждава оригиналната идея в brief-а ("email + passkey"), просто през линк за потвърждение, не парола.
-2. **RP ID / Site URL е единствен домейн наведнъж** — виж "Важно за следващата сесия" по-долу.
-
-### Тествано успешно
-
-- **Браузъри:** Chrome, Firefox, Safari/Edge.
-- **Устройства/методи:** Windows Hello PIN (лаптоп), мобилен телефон (face recognition + cross-device QR passkey flow).
-- **Среди:** локално (`localhost:3000`) и production (`https://psiholog.pages.dev`) — отделно, с превключване на Supabase конфигурация между тях (виж по-долу).
-- Пълен цикъл: регистрация → passkey ceremony → "логнат" изглед → Изход → презареждане → Вход с passkey.
-
-### НЕ е тествано / известни огранияения
-
-- **Стар браузър без WebAuthn** — `UnsupportedBrowserNotice` компонентът съществува и логиката е проверена с код ревю, но не е реално тествано в браузър без WebAuthn поддръжка.
-- **Security key (USB)** — не е тествано (нужен е реален FIDO2 хардуер, напр. YubiKey; обикновена USB флашка не работи — няма криптографски чип).
-- **Audit log записите** не са визуално проверени в Supabase Table Editor (логиката е написана и викана, но не сме отворили таблицата да потвърдим редовете реално кацат).
-- **Display name** в `profiles` таблицата (от `raw_user_meta_data`) не е визуално потвърдено в Table Editor — само косвено, чрез `UserMenu` показващ име в браузъра.
-
-### ВАЖНО за следващата сесия — RP ID / Site URL gotcha
-
-Supabase Passkeys конфигурация (Authentication → Passkeys) има **Relying Party ID**, което поддържа само **един** домейн (или поддомейни на него) наведнъж — в момента е сетнато на `psiholog.pages.dev` (production), след днешните live тестове.
-
-**Ако искаш да тестваш passkey локално (`localhost:3000`) следващата сесия:**
-1. Supabase Dashboard → Authentication → Passkeys → смени **Relying Party ID** обратно на `localhost`.
-2. Authentication → URL Configuration → Site URL → обратно на `http://localhost:3000`.
-3. (Vite вече е фиксиран на порт 3000 в `vite.config.ts` — не пипай това, то трябва точно да съвпада.)
-
-Ако забравиш да го смениш — passkey ще гърми с грешка от типа `"RP ID 'X' is invalid for this domain"` или `webauthn_verification_failed`. Това коства часове дебъгване днес, затова го пиша тук изрично.
-
-### Технически дълг (направено набързо, за поправка по-късно)
-
-1. **Resend email е в test режим** — `onboarding@resend.dev` подателят може да праща **само** до email-а на собственика на Resend акаунта. Никой друг (преподавател, тестов потребител) не може да се регистрира на production засега. Нужно: верифициран собствен домейн в Resend (изисква DNS достъп до домейн, който потребителят все още няма).
-2. **`needsPasskeySetup` проверката не е origin-aware** — гледа "има ли потребителят изобщо passkey" (през `passkey.list()`), не "има ли passkey **за текущия domain**". На практика няма проблем за реални потребители (един production домейн), но създаде объркване при нашите localhost/live тестове днес. `PasskeyListItem` от Supabase не носи domain информация, така че няма лесен fix без промяна в подхода.
-3. **Множество тестови акаунти** в Supabase `auth.users` от дебъгването днес (анонимни тестови потребители, недовършени регистрации) — безвредни (cascade delete е настроен), но може да се изчистят по желание през Authentication → Users.
-4. **Множество запазени passkey-та** в Windows Hello / Chrome Password Manager на тестовата машина от повторните опити — чисто тидиност, не е грешка.
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ завършени и тествани. Следва: Фаза 3 (подписване с passkey).
 
 ---
 
-## Фаза 1 добавка: Recovery flow — НАПИСАН ✅ (2026-07-05), ЧАКА DEPLOY
+## Фаза 2: Качване на PDF + Визуализация — ЗАВЪРШЕНА ✅ (2026-07-05)
 
 ### Какво е реализирано
 
-- **`RecoveryFlow.tsx`** — форма "въведи email" → `signInWithOtp` с `emailRedirectTo: origin/?recovery=1` (линк по email, идентично с регистрацията; `shouldCreateUser: false` — не създава нов акаунт)
-- **`?recovery=1` detection в App.tsx** — след redirect App.tsx открива параметъра, извиква Edge Function, изтрива старите passkey-и, показва RegisterPasskeyStep
-- **`delete-user-passkeys` Edge Function** (`supabase/functions/delete-user-passkeys/index.ts`) — взима user_id от JWT, изтрива всички `webauthn` MFA factors чрез `supabase.auth.admin.mfa.deleteFactor()`, ползва service_role key
-- **Audit log** — `recovery_otp_verified`, `old_passkeys_deleted`, `new_passkey_registered`
-- **`AuthScreen.tsx`** — добавен `recovery` mode; `SignInForm` получи `onStartRecovery` prop
-- **`auditLog.ts`** — добавен `AuditAction` union type за type safety
+**Библиотеки / нови файлове:**
+- `pdfjs-dist` инсталирана (legacy build — задължително за iOS Safari)
+- `src/lib/pdfSanitizer.ts` — сканира raw PDF байтове (chunked, 8 KB) за опасни елементи: `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/SubmitForm`, `/ImportData`
+- `src/lib/documentUpload.ts` — SHA-256 хеш (Web Crypto API), XHR upload с onProgress callback, DB insert, `softDeleteDocument`, `fetchUserDocuments`, `getDocumentSignedUrl`
+- `src/components/documents/UploadDocument.tsx` — drag & drop зона, стъпков прогрес (validating → scanning → hashing → uploading с реален % progress bar → done), грешки с X бутон
+- `src/components/documents/DocumentList.tsx` — таблица с документи, двуредов layout (filename на ред 1, дата + статус + действия на ред 2), бутон Преглед, inline soft delete с потвърждение
+- `src/components/documents/PdfViewer.tsx` — fullscreen viewer, двустъпков рендер (preview ~80 000 px бързо + quality в background), module-level JPEG кеш (instant при повторно отваряне), ExternalLink бутон за native браузъров PDF viewer, iOS-safe canvas size guard (4 MP), keyboard навигация
+- `src/App.tsx` — заменен placeholder с `<DocumentList />`
+
+**Технически решения:**
+- Upload прогрес: Supabase JS не излага progress events → директен XHR към Storage REST API
+- PDF blank page на iOS: pdfjs-dist стандартен build ползва `Map.prototype.getOrInsertComputed` (няма в iOS Safari) → превключено към legacy build
+- Canvas size guard: iOS Safari crash при >16 MP canvas → ограничено до 4 MP
+- Fit-width scale: при отваряне PDF се оразмерява автоматично по ширината на екрана
+- Render кеш: module-level `Map<key, JPEG dataURL>` — повторното отваряне на документ е мигновено
+
+### Тествано (по чеклист от потребителя)
+
+| Тест | Резултат |
+|---|---|
+| Качване на нормален PDF (1–2 MB) | ✅ |
+| Качване на голям PDF (~19 MB) с прогрес bar | ✅ |
+| Качване на PDF над 25 MB | ✅ отказан с ясно съобщение |
+| Качване на не-PDF (.docx, .jpg) | ✅ отказан с ясно съобщение |
+| Качване на PDF с вграден JavaScript | ✅ отказан от sanitizer |
+| Визуализация на PDF (десктоп) | ✅ |
+| Визуализация на PDF (мобилно, iOS Safari) | ✅ след legacy build fix |
+| SHA-256 hash в documents таблицата | ✅ |
+| Файлът е в Supabase Storage bucket `documents` | ✅ |
+| RLS изолация — друг потребител не вижда документа | ✅ |
+| Soft delete — файлът се скрива, остава в базата с `deleted_at` | ✅ |
+
+### Технически дълг и непокрити edge cases
+
+1. **PDF с компресирани object streams (FlateDecode)** — `pdfSanitizer` сканира само plain-text байтове. Malicious PDF, в който `/JavaScript` е в компресиран stream, ще мине sanitization. Документирано в кода. Приемливо за текущия scope; пълна защита изисква сървърно разкомпресиране и повторен scan.
+
+2. **Signed URLs изтичат след 5 минути** — `getDocumentSignedUrl` ги генерира с 300s TTL. При много дълго разглеждане на документ или зареждане от кеш след >5 мин, viewer-ът ще получи грешка при следващото отваряне. Fix: при reload на viewer генерира нов URL; при кеш запазваме само рендирания JPEG (не URL-а) — вече е така, но потребителят трябва да натисне "Преглед" отново за нов URL.
+
+3. **Голям PDF рендер е бавен на мобилно (>10 MB)** — за 19 MB 1-страничен PDF: preview се показва за ~5 сек, quality рендер в background може да отнеме 1–3 мин (CPU-bound декомпресия). Workaround: бутон ↗ отваря native браузъров PDF viewer (iOS/Android), който е hardware-оптимизиран и зарежда мигновено. Пълното решение изисква server-side PDF → image конвертиране при качване (Фаза 4+).
+
+4. **Няма pagination на DocumentList** — ако потребителят качи >50 документа, списъкът може да стане тежък. Приемливо за текущата фаза.
+
+5. **Storage достъп при soft-deleted документ** — `deleted_at` е в DB, но файлът в Storage остава. Ако потребителят знае точния storage path, може да генерира нов signed URL за изтрит документ (ако RLS на storage.objects го позволява). Проверено само на ниво документна таблица, не storage policies.
+
+6. **Мобилна версия на upload UI** — drag & drop не работи на мобилни браузъри, но натискането на зоната отваря file picker. Функционира коректно.
+
+---
+
+## Фаза 1: Passkey автентикация — ЗАВЪРШЕНА ✅ (2026-07-05)
+
+### Какво е реализирано
+
+- **Регистрация**: `signInWithOtp()` → email линк → реална сесия → `registerPasskey()`
+- **Вход**: `signInWithPasskey()` — само биометрия/PIN, без email
+- **Recovery flow** ("Забравих passkey"): email → `?recovery=1` redirect → Edge Function изтрива всички `webauthn_credentials` в `auth` schema (през SECURITY DEFINER PostgreSQL функция) → `RegisterPasskeyStep`
+- **Audit log**: `signup`, `login`, `recovery_otp_verified`, `old_passkeys_deleted`, `new_passkey_registered`
+- **Unsupported browser**: `UnsupportedBrowserNotice` при липса на WebAuthn
+- **Split-screen дизайн** (SignShield бранд, indigo палитра)
 
 ### Архитектурни бележки
 
-- `shouldCreateUser: false` при recovery OTP: Supabase ще върне грешка ако email-ът не съществува — показваме общо съобщение (не разкриваме дали акаунтът съществува)
-- Старите passkey-и се изтриват **преди** регистрацията на нов — изгубено/откраднато устройство незабавно губи достъп
-- `?recovery=1` се почиства от URL с `history.replaceState` без reload
+- `auth.webauthn_credentials` (не `auth.mfa_factors`) е правилната таблица за passkeys
+- Edge Function ползва SECURITY DEFINER PostgreSQL функция — PostgREST не излага `auth` schema
+- `useState(isRecoveryRedirect)` (function reference) инициализира state преди първия render — предотвратява dashboard flash
 
-### ЧАКА РЪЧНИ СТЪПКИ (преди да работи на production)
+### Тествано
 
-1. **Пусни migration 0003 в Supabase SQL Editor:**
-   - Файл: `supabase/migrations/0003_soft_delete_and_key_columns.sql`
-   - Добавя `deleted_at` колони + нови колони на `signing_keys` + обновени RLS policies
+Chrome, Firefox, Safari, Edge · Windows Hello PIN · Face recognition (mobile) · Cross-device QR passkey flow · Production (`psiholog.pages.dev`) · Recovery flow end-to-end
 
-2. **Deploy на Edge Function:**
-   ```
-   npx supabase functions deploy delete-user-passkeys --project-ref dwrcpsdmoeiughxyaxvz
-   ```
-   Или от Supabase Dashboard → Edge Functions → Deploy.
-   Edge Function чете `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` автоматично от проекта.
-   Задай env variable `ALLOWED_ORIGIN=https://psiholog.pages.dev` в Edge Function настройките.
+### Технически дълг
 
-3. **Тествай recovery flow** след deploy.
+1. **Resend без custom domain** — праща само до акаунта на собственика. За производствено ползване: нужен верифициран домейн в Resend.
+2. **Email templates са на английски** — Supabase игнорира Bulgarian templates (вероятно Resend override). Изисква custom SMTP с custom templates или Supabase SMTP template директно.
+3. **`needsPasskeySetup` не е origin-aware** — може да създаде объркване при localhost/production превключване.
 
-### Следваща стъпка: Фаза 2 — Качване на PDF + визуализация
+### ВАЖНО: RP ID gotcha
 
-`<UploadDocument/>` (drag&drop, валидация на размер/MIME, PDF sanitization), SHA-256 hash в браузъра, качване в `documents` bucket, `<DocumentList/>`, `<PdfViewer/>` с `pdfjs-dist`.
+Supabase Passkeys → Relying Party ID поддържа само **един** домейн наведнъж. В момента: `psiholog.pages.dev`. При локално тестване: смени RP ID + Site URL на `localhost:3000` и обратно.
 
 ---
 
-## Архив: Фаза 0 (Setup) — завършена
+## Фаза 0: Setup — ЗАВЪРШЕНА ✅
 
-### Готово (от Claude Code)
+- Supabase клиент, `.env.local` (gitignored), TypeScript типове
+- SQL миграции: `0001_initial_schema.sql`, `0002_update_profile_trigger.sql`, `0003_soft_delete_and_key_columns.sql`, `0004_delete_webauthn_rpc.sql`
+- Storage buckets: `documents`, `signed-documents` (private, RLS)
+- Cloudflare Pages: auto-deploy от GitHub `main`
 
-- [x] Инсталиран `@supabase/supabase-js`.
-- [x] Създаден `src/lib/supabase.ts` — Supabase клиент, чете URL/key от env vars.
-- [x] Създаден `.env.local` (gitignored, не е в repo) с реалните `VITE_SUPABASE_URL` и `VITE_SUPABASE_ANON_KEY`.
-- [x] Добавени TypeScript типове за `import.meta.env` в `src/vite-env.d.ts`.
-- [x] Написана SQL миграция `supabase/migrations/0001_initial_schema.sql`:
-  - Таблици: `profiles`, `signing_keys`, `documents`, `signatures`, `audit_log` (по Section 4 на brief-а).
-  - Trigger, който автоматично създава `profiles` ред при регистрация на нов потребител.
-  - RLS policies на всяка таблица (`auth.uid() = user_id`).
-  - **Отклонение от brief-а, флагнато тук съзнателно:** `signatures` и `audit_log` имат само SELECT + INSERT policies (без UPDATE/DELETE) — за да не може потребител да изтрие/промени следа от вече направен подпис или audit запис. Останалите таблици следват буквално "auth.uid() = user_id за SELECT/INSERT/UPDATE/DELETE".
-  - Storage buckets `documents` и `signed-documents` (private), + RLS policies на `storage.objects` по конвенция за пътя `<user_id>/<filename>`.
-- [x] `npm run typecheck` минава чисто.
+---
 
-### Чака потребителя (ръчни стъпки в dashboard-и — Claude Code няма достъп дотам)
+## За следващата сесия: Фаза 3 — Подписване с passkey
 
-#### 1. Пусни SQL миграцията в Supabase
+**Цел:** потребителят избира качен документ → подписва го с passkey → подписът и хеш-ът се записват → статусът на документа се сменя на "Подписан".
 
-1. Отвори https://supabase.com/dashboard/project/dwrcpsdmoeiughxyaxvz
-2. Ляво меню → **SQL Editor** → **New query**.
-3. Отвори файла `supabase/migrations/0001_initial_schema.sql` от проекта, копирай **цялото съдържание**.
-4. Paste в SQL Editor → бутон **Run**.
-5. Очакван резултат: "Success. No rows returned." Ако видиш грешка — копирай я и ми я пратù.
-6. Провери: ляво меню → **Table Editor** → трябва да видиш 5-те таблици (`profiles`, `signing_keys`, `documents`, `signatures`, `audit_log`).
-7. Провери: ляво меню → **Storage** → трябва да видиш 2 bucket-а (`documents`, `signed-documents`), и двата маркирани като **Private**.
+**Прочети преди да започнеш:**
+- `PROJECT_BRIEF.md` Section 3.4 (подписване) и Section 4 (схема) — `signatures` таблицата, `signing_keys` таблицата
+- ⚠️ Предупрежденията в Section 5 за Фаза 3 (крипто в браузъра)
+- Текущото поле `status` в `documents` е `'uploaded' | 'signed'` — вече е подготвено
 
-#### 2. Включи Passkeys
-
-1. Същия Supabase проект → ляво меню → **Authentication** → **Sign In / Providers** (или **Passkeys**, в зависимост от версията на dashboard-а).
-2. Намери секция **Passkeys (WebAuthn)** → enable toggle.
-3. Запази.
-
-#### 3. Свържи repo с Cloudflare Pages
-
-1. https://dash.cloudflare.com → избери акаунта си → ляво меню **Workers & Pages** → **Create** → таб **Pages** → **Connect to Git**.
-2. Избери GitHub → авторизирай Cloudflare (ако за първи път) → избери repo `psiholog`.
-3. Настройки за build:
-   - **Framework preset:** Vite
-   - **Build command:** `npm run build`
-   - **Build output directory:** `dist`
-4. Environment variables (важно!) — добави същите две от `.env.local`:
-   - `VITE_SUPABASE_URL` = `https://dwrcpsdmoeiughxyaxvz.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY` = (anon key-я, същия като в `.env.local`)
-5. **Save and Deploy**.
-6. След deploy — провери дали сайтът се отваря на даденото `*.pages.dev` URL.
+**Непокрити зависимости:**
+- `signing_keys` таблицата е създадена (с `encrypted_private_key`, `kdf_salt`, `kdf_iterations`, `aes_iv`, `certificate`) но все още не се попълва
+- Фаза 3 ще изисква: генериране на key pair при регистрация или при първо подписване, AES-GCM криптиране на private key с passkey-derived secret, запис в `signing_keys`
