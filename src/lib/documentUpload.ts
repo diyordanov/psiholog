@@ -1,17 +1,39 @@
-// Качване на PDF документ:
-//   1. SHA-256 хеш на файла (Web Crypto API — без зависимости)
-//   2. Upload в Supabase Storage bucket 'documents'
-//   3. INSERT в таблица 'documents'
-
+/**
+ * documentUpload.ts
+ * Всички операции с документи: качване, изтриване, зареждане от базата.
+ *
+ * Поток при качване на нов документ:
+ *   1. SHA-256 хеш на съдържанието (Web Crypto API — без зависимости)
+ *   2. XHR upload в Supabase Storage bucket 'documents' с прогрес callback
+ *   3. INSERT запис в таблица 'documents' с хеша и metadata
+ *   4. При DB грешка — изтриваме физическия файл от Storage (rollback)
+ */
 import { supabase } from './supabase';
 
+/** Резултат от успешно качване. */
 export interface UploadResult {
   documentId: string;
   storagePath: string;
   hashHex: string;
 }
 
-// Изчислява SHA-256 хеш и го връща като \x-prefixed hex string (Postgres bytea формат)
+/** Един ред от таблицата `documents`, върнат от базата. */
+export interface DocumentRow {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  status: 'uploaded' | 'signed';
+  created_at: string;
+  signed_at: string | null;
+}
+
+/**
+ * Изчислява SHA-256 хеш на буфера чрез Web Crypto API (вградено в браузъра).
+ * Резултатът е форматиран като `\x<hex>` — Postgres bytea литерален формат.
+ *
+ * Хешът се записва в DB при качване и се верифицира при подписване,
+ * за да се гарантира, че документът не е модифициран между двете операции.
+ */
 async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -19,8 +41,15 @@ async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
   return `\\x${hex}`;
 }
 
-// Качва файл директно през XHR за да може да репортира прогрес.
-// Supabase JS клиентът не излага upload progress (ползва fetch вътрешно).
+/**
+ * Качва файл в Supabase Storage чрез XHR (не fetch) за да може да репортира прогрес.
+ * Supabase JS клиентът използва fetch вътрешно и не излага upload progress events.
+ *
+ * @param url           Storage REST API URL за файла
+ * @param file          File обектът за качване
+ * @param accessToken   JWT токенът на текущия потребител (взет от сесията)
+ * @param onProgress    Callback с процент (0–100), извикван при всеки XHR прогрес event
+ */
 function uploadWithProgress(
   url: string,
   file: File,
@@ -32,7 +61,7 @@ function uploadWithProgress(
     xhr.open('POST', url);
     xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
     xhr.setRequestHeader('Content-Type', 'application/pdf');
-    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.setRequestHeader('x-upsert', 'false'); // отказваме презаписване на съществуващ файл
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };
@@ -45,20 +74,29 @@ function uploadWithProgress(
   });
 }
 
+/**
+ * Качва PDF документ: изчислява хеш, записва в Storage и в базата.
+ *
+ * @param file        File обектът избран от потребителя
+ * @param buffer      Съдържанието на файла (четено преди да дойде тук за PDF scan)
+ * @param userId      UUID на текущия потребител
+ * @param onProgress  Опционален callback за прогрес на upload-а (0–100%)
+ */
 export async function uploadDocument(
   file: File,
   buffer: ArrayBuffer,
   userId: string,
   onProgress?: (pct: number) => void,
 ): Promise<UploadResult> {
-  // 1. SHA-256 хеш
+  // 1. Изчисляваме SHA-256 хеш преди качване — гарантира целостта на файла.
   const hashHex = await computeSha256Hex(buffer);
 
-  // 2. Генерираме уникален път в Storage: {user_id}/{timestamp}-{filename}
+  // 2. Генерираме уникален path: {user_id}/{timestamp}-{sanitized_filename}
+  // Timestamp предотвратява колизии при качване на файл с еднакво име.
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const storagePath = `${userId}/${Date.now()}-${safeName}`;
 
-  // 3. Взимаме access token за XHR upload
+  // 3. Взимаме access token от активната сесия за XHR автентикация.
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('Не сте логнат.');
 
@@ -67,8 +105,8 @@ export async function uploadDocument(
 
   await uploadWithProgress(uploadUrl, file, session.access_token, onProgress ?? (() => {}));
 
-
-  // 3. INSERT в documents таблица
+  // 4. Записваме метаданните в DB.
+  // При грешка изтриваме файла от Storage за да не останат "сираци" (файл без DB ред).
   const { data, error: dbError } = await supabase
     .from('documents')
     .insert({
@@ -82,7 +120,6 @@ export async function uploadDocument(
     .single();
 
   if (dbError || !data) {
-    // Изтриваме файла от Storage ако DB insert е неуспешен
     await supabase.storage.from('documents').remove([storagePath]);
     throw new Error(`Грешка при записване: ${dbError?.message ?? 'неизвестна'}`);
   }
@@ -90,7 +127,13 @@ export async function uploadDocument(
   return { documentId: data.id as string, storagePath, hashHex };
 }
 
-// Генерира временен signed URL за преглед (TTL: 5 минути)
+/**
+ * Генерира временен signed URL за четене на документ от Storage.
+ * TTL е 300 секунди (5 минути) — достатъчно за преглед, но не за постоянно споделяне.
+ *
+ * Signed URL съдържа криптографски токен в query string-а — не изисква
+ * допълнителни auth headers при fetch-ване (подходящо за XHR и pdf.js).
+ */
 export async function getDocumentSignedUrl(storagePath: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from('documents')
@@ -103,16 +146,11 @@ export async function getDocumentSignedUrl(storagePath: string): Promise<string>
   return data.signedUrl;
 }
 
-export interface DocumentRow {
-  id: string;
-  original_filename: string;
-  storage_path: string;
-  status: 'uploaded' | 'signed';
-  created_at: string;
-  signed_at: string | null;
-}
-
-// Soft-изтрива документ — поставя deleted_at, не трие физически
+/**
+ * Soft-изтрива документ — поставя `deleted_at` timestamp.
+ * Физическият файл в Storage и DB редът остават (за одит и евентуално възстановяване).
+ * RLS SELECT политиките филтрират `deleted_at IS NULL`, така документът изчезва от списъка.
+ */
 export async function softDeleteDocument(documentId: string): Promise<void> {
   const { error } = await supabase
     .from('documents')
@@ -122,7 +160,11 @@ export async function softDeleteDocument(documentId: string): Promise<void> {
   if (error) throw new Error(`Грешка при изтриване: ${error.message}`);
 }
 
-// Зарежда всички документи на текущия потребител
+/**
+ * Зарежда всички документи на текущия потребител, сортирани от най-нов към най-стар.
+ * Soft-изтритите документи са автоматично изключени от RLS политиката,
+ * но добавяме `is('deleted_at', null)` и на клиентско ниво за по-явна семантика.
+ */
 export async function fetchUserDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from('documents')

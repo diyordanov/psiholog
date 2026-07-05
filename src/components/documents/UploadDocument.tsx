@@ -1,23 +1,35 @@
+/**
+ * UploadDocument.tsx
+ * Drag-and-drop зона за качване на PDF документи.
+ *
+ * Pipeline при избор на файл:
+ *   validating → scanning → hashing → uploading (с % progress bar) → done
+ *
+ * Всяка стъпка показва съответен текст. При грешка на всяка стъпка
+ * се показва съобщение с X бутон за нулиране.
+ */
 import { useState, useRef, useCallback } from 'react';
 import { Upload, FileText, X, AlertTriangle } from 'lucide-react';
 import { scanPdf } from '../../lib/pdfSanitizer';
 import { uploadDocument } from '../../lib/documentUpload';
 
-const MAX_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+const MAX_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB — лимит на Storage bucket-а
 
+/** Стъпките в процеса на качване. */
 type UploadStage =
-  | 'idle'
-  | 'validating'
-  | 'scanning'
-  | 'hashing'
-  | 'uploading'
-  | 'saving'
-  | 'done'
-  | 'error';
+  | 'idle'       // изчакваме избор на файл
+  | 'validating' // проверка на MIME тип и размер
+  | 'scanning'   // PDF sanitization (сканиране за опасни елементи)
+  | 'hashing'    // изчисляване на SHA-256 хеш
+  | 'uploading'  // XHR upload в Supabase Storage (с реален % прогрес)
+  | 'saving'     // INSERT в базата данни
+  | 'done'       // успех
+  | 'error';     // грешка на някоя от предните стъпки
 
 interface UploadDocumentProps {
   userId: string;
-  onUploaded: () => void; // извиква се след успешно качване — родителят презарежда списъка
+  /** Извиква се след успешно качване — родителят трябва да презареди списъка с документи. */
+  onUploaded: () => void;
 }
 
 export default function UploadDocument({ userId, onUploaded }: UploadDocumentProps) {
@@ -25,9 +37,10 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadPct, setUploadPct] = useState(0); // процент за progress bar (0–100)
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /** Текстове, показвани на потребителя за всяка стъпка. */
   const stageLabels: Record<UploadStage, string> = {
     idle: '',
     validating: 'Проверяваме файла...',
@@ -39,6 +52,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     error: '',
   };
 
+  /** Нулира всички state-ове до начална позиция (след грешка или успех). */
   const reset = () => {
     setStage('idle');
     setErrorMessage(null);
@@ -47,11 +61,16 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  /**
+   * Основният pipeline при избор на файл.
+   * Извиква се и при drag & drop, и при натискане на browse бутона.
+   * Обгърнато в useCallback за да не се предава нова референция при всеки render.
+   */
   const processFile = useCallback(async (file: File) => {
     setErrorMessage(null);
     setSelectedFile(file);
 
-    // 1. Валидация на тип и размер
+    // ── Стъпка 1: Валидация на MIME тип и размер ────────────────────────────
     setStage('validating');
     if (file.type !== 'application/pdf') {
       setErrorMessage('Само PDF файлове са разрешени.');
@@ -64,7 +83,8 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
       return;
     }
 
-    // 2. Прочитаме файла
+    // ── Стъпка 2: Четем файла в памет ───────────────────────────────────────
+    // Нужно и за PDF scan, и за SHA-256 хеша — четем веднъж, ползваме двукратно.
     let buffer: ArrayBuffer;
     try {
       buffer = await file.arrayBuffer();
@@ -74,7 +94,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
       return;
     }
 
-    // 3. PDF Sanitization
+    // ── Стъпка 3: PDF Sanitization ──────────────────────────────────────────
     setStage('scanning');
     const { safe, threats } = scanPdf(buffer);
     if (!safe) {
@@ -85,13 +105,15 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
       return;
     }
 
-    // 4. Hash + Upload
+    // ── Стъпка 4: SHA-256 хеш + Upload ──────────────────────────────────────
     setStage('hashing');
+    // Малка пауза за да успее React да рендира новото stage преди CPU-bound hash операцията.
     await new Promise((r) => setTimeout(r, 50));
 
     setStage('uploading');
     setUploadPct(0);
     try {
+      // onProgress callback обновява progress bar-а в реално време чрез XHR events.
       await uploadDocument(file, buffer, userId, (pct) => setUploadPct(pct));
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Неизвестна грешка при качване.');
@@ -100,6 +122,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     }
 
     setStage('done');
+    // Кратко забавяне за да види потребителят "Качено успешно!" преди нулиране.
     setTimeout(() => {
       reset();
       onUploaded();
@@ -121,11 +144,12 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     if (file) processFile(file);
   };
 
+  // true докато pipeline-ът е в ход — блокираме нови избори на файл
   const isBusy = !['idle', 'error', 'done'].includes(stage);
 
   return (
     <div className="w-full">
-      {/* Drag & Drop зона */}
+      {/* ── Drag & Drop зона ────────────────────────────────────────────────── */}
       <div
         onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
@@ -141,6 +165,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
           }
         `}
       >
+        {/* Скрит file input — задейства се при клик върху зоната */}
         <input
           ref={inputRef}
           type="file"
@@ -158,7 +183,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
           }
         </div>
 
-        {/* Текст */}
+        {/* Начален текст */}
         {stage === 'idle' && (
           <>
             <p className="text-sm font-medium text-neutral-700">
@@ -169,12 +194,14 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
           </>
         )}
 
+        {/* Прогрес при активен pipeline */}
         {isBusy && (
           <div className="flex w-full flex-col items-center gap-2">
             <p className="text-sm text-neutral-600">{stageLabels[stage]}</p>
             {selectedFile && (
               <p className="max-w-full truncate text-xs text-neutral-400">{selectedFile.name}</p>
             )}
+            {/* При uploading — реален progress bar; при останалите стъпки — анимирани точки */}
             {stage === 'uploading' ? (
               <div className="w-full max-w-xs">
                 <div className="mb-1 flex justify-between text-xs text-neutral-400">
@@ -199,11 +226,12 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
         )}
       </div>
 
-      {/* Грешка */}
+      {/* ── Съобщение за грешка ─────────────────────────────────────────────── */}
       {stage === 'error' && errorMessage && (
         <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
           <div className="flex-1">
+            {/* whitespace-pre-line запазва \n от threats списъка */}
             <p className="whitespace-pre-line text-sm text-red-700">{errorMessage}</p>
           </div>
           <button onClick={reset} className="shrink-0 text-red-400 hover:text-red-600">
@@ -215,6 +243,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
   );
 }
 
+/** Три анимирани точки, показвани при бавни стъпки без измерим прогрес. */
 function ProgressDots() {
   return (
     <div className="flex gap-1">

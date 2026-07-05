@@ -1,3 +1,12 @@
+/**
+ * DocumentList.tsx
+ * Главният екран на приложението след login.
+ * Показва upload зона и списък с качените документи на потребителя.
+ *
+ * Всеки документ има:
+ *   - Бутон "Преглед" → генерира 5-минутен signed URL и отваря PdfViewer
+ *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB)
+ */
 import { useEffect, useState, useCallback } from 'react';
 import { FileText, Eye, RefreshCw, Trash2 } from 'lucide-react';
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
@@ -12,13 +21,17 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Viewer state — url е временен (signed, 5 min TTL), cacheId е стабилен (document.id)
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [viewingName, setViewingName] = useState<string>('');
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
-  const [loadingUrl, setLoadingUrl] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const [loadingUrl, setLoadingUrl] = useState<string | null>(null);   // id на документа, за който се генерира URL
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null); // id на документа в режим "потвърди изтриване"
+  const [deletingId, setDeletingId] = useState<string | null>(null);   // id на документа, който в момента се изтрива
+
+  /** Зарежда документите от базата. Извиква се при mount и след качване/изтриване. */
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -34,6 +47,10 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
   useEffect(() => { load(); }, [load]);
 
+  /**
+   * Soft-изтрива документ. Оптимистично го маха от UI веднага,
+   * без да чака презареждане на целия списък.
+   */
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
@@ -47,13 +64,17 @@ export default function DocumentList({ userId }: DocumentListProps) {
     }
   };
 
+  /**
+   * Генерира временен signed URL за документа и отваря PdfViewer.
+   * URL-ът е валиден 5 минути — достатъчно за преглед, но не за споделяне.
+   */
   const handleView = async (doc: DocumentRow) => {
     setLoadingUrl(doc.id);
     try {
       const url = await getDocumentSignedUrl(doc.storage_path);
       setViewingUrl(url);
       setViewingName(doc.original_filename);
-      setViewingDocId(doc.id);
+      setViewingDocId(doc.id); // стабилен ключ за render кеша в PdfViewer
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при отваряне на документа.');
     } finally {
@@ -63,7 +84,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
-      {/* Заглавие */}
+      {/* Заглавие + бутон за ръчно обновяване */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-800">Моите документи</h1>
         <button
@@ -76,17 +97,19 @@ export default function DocumentList({ userId }: DocumentListProps) {
         </button>
       </div>
 
-      {/* Качване */}
+      {/* Upload зона — след успешно качване извиква load() за обновяване на списъка */}
       <div className="mb-8">
         <UploadDocument userId={userId} onUploaded={load} />
       </div>
 
-      {/* Списък */}
+      {/* Грешка при зареждане на списъка */}
       {error && (
         <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       )}
 
+      {/* Списък с документи */}
       {loading && documents.length === 0 ? (
+        // Начално зареждане — само spinner (без "Все още няма документи")
         <div className="flex justify-center py-12 text-neutral-400">
           <RefreshCw size={20} className="animate-spin" />
         </div>
@@ -104,18 +127,19 @@ export default function DocumentList({ userId }: DocumentListProps) {
                 <FileText size={18} className="text-indigo-500" />
               </div>
 
-              {/* Съдържание: 2 реда */}
+              {/* Двуредово съдържание за мобилна съвместимост */}
               <div className="min-w-0 flex-1">
-                {/* Ред 1: Файлово наименование (цяло, с пренос) */}
+                {/* Ред 1: Пълно файлово наименование с пренос (break-all предотвратява overflow) */}
                 <p className="break-all text-sm font-medium leading-snug text-neutral-800">
                   {doc.original_filename}
                 </p>
-                {/* Ред 2: дата + статус + действия */}
+
+                {/* Ред 2: Метаданни и действия — flex-wrap за мобилно */}
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <span className="text-xs text-neutral-400">{formatDate(doc.created_at)}</span>
                   <StatusBadge status={doc.status} />
 
-                  {/* Бутон преглед */}
+                  {/* Бутон Преглед */}
                   <button
                     onClick={() => handleView(doc)}
                     disabled={loadingUrl === doc.id}
@@ -128,7 +152,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
                     Преглед
                   </button>
 
-                  {/* Бутон изтрий — с inline потвърждение */}
+                  {/* Бутон изтрий — с inline потвърждение преди действието */}
                   {confirmDeleteId === doc.id ? (
                     <div className="flex items-center gap-1">
                       <button
@@ -161,7 +185,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
         </div>
       )}
 
-      {/* PDF Viewer модал */}
+      {/* PDF Viewer — fullscreen overlay, показван когато viewingUrl е зададен */}
       {viewingUrl && viewingDocId && (
         <PdfViewer
           url={viewingUrl}
@@ -174,6 +198,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
   );
 }
 
+/** Цветен бадж за статуса на документа. */
 function StatusBadge({ status }: { status: DocumentRow['status'] }) {
   if (status === 'signed') {
     return (
@@ -189,6 +214,7 @@ function StatusBadge({ status }: { status: DocumentRow['status'] }) {
   );
 }
 
+/** Форматира ISO дата като "5 юли 2026 г." на български. */
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('bg-BG', {
@@ -197,6 +223,6 @@ function formatDate(iso: string): string {
       year: 'numeric',
     });
   } catch {
-    return iso;
+    return iso; // fallback при невалидна дата
   }
 }

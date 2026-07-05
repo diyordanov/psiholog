@@ -1,32 +1,66 @@
+/**
+ * PdfViewer.tsx
+ * Fullscreen PDF viewer с двустъпков рендер и session-level кеш.
+ *
+ * Рендер стратегия:
+ *   1. Preview (бързо, ~1–5 сек): рендира при ~80 000 px canvas — достатъчно малко
+ *      за да е бързо дори при 19 MB PDF, показва се веднага на потребителя.
+ *   2. Quality (бавно, в background): рендира при до 4 MP в offscreen canvas,
+ *      след което го копира в главния canvas без видим flash.
+ *
+ * Кеш: module-level Map (не React state) — оцелява при затваряне/отваряне на viewer-а
+ * в рамките на една сесия. Ключ = "{cacheId}:{page}:{label}" (стабилен document.id,
+ * не временния signed URL). Стойност = JPEG data URL на рендирания canvas.
+ *
+ * iOS Safari забележки:
+ *   - Стандартният pdfjs-dist build ползва Map.getOrInsertComputed (не поддържан).
+ *     Затова импортираме legacy build с polyfill-и.
+ *   - Максималната canvas площ на iOS е ~16.7 MP; ограничаваме до 4 MP за безопасност.
+ *
+ * Бутон ↗ (ExternalLink): отваря signed URL в нов tab → iOS/Android native PDF viewer,
+ * hardware-оптимизиран, зарежда 19 MB PDF мигновено.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink } from 'lucide-react';
 // Legacy build — iOS Safari не поддържа Map.getOrInsertComputed от стандартния build
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
+// Указваме на pdf.js worker-а пътя към отделния JS файл (bundled от Vite като ?url import).
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-// ─── Render cache (оцелява при затваряне/отваряне в рамките на сесията) ───────
-const pageCache = new Map<string, string>(); // key → JPEG data URL
-const MAX_CACHE = 30;
+// Module-level кеш: оцелява при unmount/remount на компонента в рамките на сесията.
+// Ключ: "${cacheId}:${page}:${label}" → JPEG data URL на рендираната страница.
+const pageCache = new Map<string, string>();
+const MAX_CACHE = 30; // брой cached страници преди LRU eviction
 
-// iOS Safari: ~16.7M px max за canvas; ползваме 4M за по-бързо рендиране
+// iOS Safari поддържа до ~16.7 MP на canvas; ползваме 4 MP за качество + скорост.
 const MAX_CANVAS_PX = 4_000_000;
-// Preview canvas: максимум ~80 000 px (ultra-fast — рендира за 1-5 сек дори при 19 MB PDF)
+// Preview: ~80 000 px = ~283×283 px еквивалент — рендира за 1–5 сек дори при 19 MB PDF.
 const PREVIEW_MAX_PX = 80_000;
 
+/** Генерира уникален cache ключ за страница при дадено качество. */
 function ck(id: string, page: number, label: string) {
   return `${id}:${page}:${label}`;
 }
 
+/**
+ * Записва рендирания canvas в кеша като JPEG data URL.
+ * JPEG е избран пред PNG — значително по-малък размер при незначителна разлика в качеството.
+ * SecurityError може да се хвърли ако canvas-ът е "tainted" от cross-origin content.
+ */
 function saveCache(key: string, canvas: HTMLCanvasElement) {
   try {
     const url = canvas.toDataURL('image/jpeg', 0.88);
     if (pageCache.size >= MAX_CACHE) pageCache.delete(pageCache.keys().next().value!);
     pageCache.set(key, url);
-  } catch { /* tainted canvas */ }
+  } catch { /* tainted canvas — пропускаме кеширането */ }
 }
 
+/**
+ * Рисува кеширано изображение в canvas.
+ * Промяната на canvas.width/height изчиства съдържанието — правим го преди drawImage.
+ */
 function drawCache(dataUrl: string, canvas: HTMLCanvasElement): Promise<void> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -40,16 +74,20 @@ function drawCache(dataUrl: string, canvas: HTMLCanvasElement): Promise<void> {
   });
 }
 
+/**
+ * Изчислява ефективния скейл така, че canvas площта да не надхвърля maxPx.
+ * Ако wantedScale би произвел твърде голям canvas, го намалява пропорционално.
+ */
 function cappedScale(naturalW: number, naturalH: number, maxPx: number, wantedScale: number) {
   const wouldBe = naturalW * wantedScale * naturalH * wantedScale;
   return wouldBe > maxPx ? Math.sqrt(maxPx / (naturalW * naturalH)) : wantedScale;
 }
 
-// ─── Props ─────────────────────────────────────────────────────────────────────
 interface PdfViewerProps {
   url: string;
   filename: string;
-  cacheId: string; // стабилен document.id — ключ за кеша
+  /** Стабилен document.id — ключ за кеша при повторно отваряне (signed URL се генерира наново). */
+  cacheId: string;
   onClose: () => void;
 }
 

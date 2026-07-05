@@ -1,3 +1,18 @@
+/**
+ * App.tsx
+ * Коренният компонент. Управлява кой екран се показва въз основа на auth state-а.
+ *
+ * Логика на routing-а (в реда, по който се проверява):
+ *   1. loading / checkingPasskeys / processingRecovery → spinner
+ *   2. Логнат + няма passkey → RegisterPasskeyStep (довърши регистрацията)
+ *   3. Не е логнат (или анонимен) → AuthScreen (login / signup / recovery)
+ *   4. Логнат с passkey → DocumentList (главното приложение)
+ *
+ * Recovery flow (?recovery=1):
+ *   Когато потребителят кликне recovery линка от email-а, Supabase го пренасочва
+ *   обратно с ?recovery=1 в URL-а. App.tsx хваща това, изтрива старите passkey-и
+ *   (чрез Edge Function) и показва RegisterPasskeyStep за нов passkey.
+ */
 import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
@@ -7,13 +22,23 @@ import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
 import DocumentList from './components/documents/DocumentList';
 
-// Проверяваме дали URL-ът съдържа ?recovery=1 — поставен от RecoveryFlow при redirect.
+/**
+ * Проверява дали текущият URL съдържа ?recovery=1.
+ * Параметърът се поставя от RecoveryFlow като część от emailRedirectTo.
+ * Използва се като функция (не inline) за да може да се подаде на useState
+ * като initializer — изпълнява се само веднъж при mount.
+ */
 function isRecoveryRedirect(): boolean {
   return new URLSearchParams(window.location.search).get('recovery') === '1';
 }
 
-// Извиква Edge Function delete-user-passkeys с текущия JWT.
-// Връща броя изтрити passkey-и или null при грешка.
+/**
+ * Извиква Edge Function `delete-user-passkeys` с JWT токена на текущия потребител.
+ * Edge Function верифицира токена и изтрива ВСИЧКИ passkey-и на потребителя
+ * чрез SECURITY DEFINER PostgreSQL функция (PostgREST не достъпва auth schema директно).
+ *
+ * @returns Брой изтрити passkey-и, или null при мрежова/сървърна грешка.
+ */
 async function deleteAllUserPasskeys(accessToken: string): Promise<number | null> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
   try {
@@ -36,25 +61,29 @@ function AppContent() {
   const { session, loading } = useAuth();
   const [needsPasskeySetup, setNeedsPasskeySetup] = useState(false);
   const [checkingPasskeys, setCheckingPasskeys] = useState(false);
-  // true докато изтриваме старите passkey-и след recovery redirect
-  // Инициализираме на true веднага ако ?recovery=1 е в URL-а — предотвратява
-  // кратък flash на dashboard-а преди useEffect да се изпълни.
+
+  // Инициализираме на true веднага ако ?recovery=1 е в URL-а.
+  // Ако го инициализираме на false и после го сетваме в useEffect,
+  // има един render, в който dashboard-ът е видим — неприятен flash.
   const [processingRecovery, setProcessingRecovery] = useState(isRecoveryRedirect);
 
   useEffect(() => {
+    // Без активна реална сесия няма нищо за проверяване.
     if (!session || session.user.is_anonymous) {
       setNeedsPasskeySetup(false);
       return;
     }
 
-    // Recovery flow: потребителят е кликнал recovery линка → ?recovery=1 е в URL-а.
-    // Изтриваме всички стари passkey-и, след което го пускаме да регистрира нов.
+    // ── Recovery flow ────────────────────────────────────────────────────────
+    // Потребителят е кликнал recovery линка от email-а → ?recovery=1 е в URL-а.
+    // Изтриваме ВСИЧКИ стари passkey-и преди да пуснем регистрация на нов.
+    // Ако изтриването е неуспешно — прекратяваме recovery и изписваме грешка,
+    // защото не е сигурно да се регистрира нов passkey ако старите са останали.
     if (isRecoveryRedirect()) {
       setProcessingRecovery(true);
 
-      // Почистваме ?recovery=1 от URL без да презареждаме страницата
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, '', cleanUrl);
+      // Почистваме ?recovery=1 от URL без reload, за да не задейства отново при F5.
+      window.history.replaceState({}, '', window.location.pathname);
 
       const token = session.access_token;
       const userId = session.user.id;
@@ -63,8 +92,6 @@ function AppContent() {
 
       deleteAllUserPasskeys(token).then((deletedCount) => {
         if (deletedCount === null) {
-          // Edge Function е върнала грешка — не пускаме регистрация на нов passkey,
-          // защото старите може да не са изтрити (security risk).
           console.error('delete-user-passkeys Edge Function върна грешка — recovery прекратен');
           alert('Възникна грешка при изтриване на старите passkey-и. Опитай отново.');
           supabase.auth.signOut();
@@ -79,10 +106,10 @@ function AppContent() {
       return;
     }
 
-    // Нормален flow: проверяваме дали потребителят има регистриран passkey.
-    // supabase.auth.passkey.list() е единственият надежден начин — не разчитаме на
-    // local state, защото потребителят може да е презаредил страницата по средата
-    // на регистрацията.
+    // ── Нормален flow: проверка за passkey ──────────────────────────────────
+    // Не разчитаме на локален флаг — проверяваме реално в Supabase дали
+    // потребителят има регистриран passkey. Така работи коректно дори при
+    // презареждане на страницата по средата на регистрационния процес.
     setCheckingPasskeys(true);
     supabase.auth.passkey.list().then(({ data, error }) => {
       setNeedsPasskeySetup(!error && (data?.length ?? 0) === 0);
@@ -90,6 +117,7 @@ function AppContent() {
     });
   }, [session?.user.id, session?.user.is_anonymous]);
 
+  // Показваме spinner докато auth state-ът или passkey проверката не са готови.
   if (loading || checkingPasskeys || processingRecovery) {
     return (
       <div className="flex min-h-screen items-center justify-center text-neutral-400">
@@ -98,14 +126,18 @@ function AppContent() {
     );
   }
 
+  // Потребителят е логнат, но няма passkey → трябва да регистрира един.
+  // Това се случва при: нова регистрация или след успешен recovery flow.
   if (session && !session.user.is_anonymous && needsPasskeySetup) {
     return <RegisterPasskeyStep onDone={() => setNeedsPasskeySetup(false)} />;
   }
 
+  // Не е логнат → показваме auth екрана (login / signup / recovery избор).
   if (!session || session.user.is_anonymous) {
     return <AuthScreen />;
   }
 
+  // Логнат с passkey → главното приложение.
   return (
     <main>
       <UserMenu />
