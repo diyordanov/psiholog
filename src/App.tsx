@@ -36,7 +36,9 @@ function AppContent() {
   const [needsPasskeySetup, setNeedsPasskeySetup] = useState(false);
   const [checkingPasskeys, setCheckingPasskeys] = useState(false);
   // true докато изтриваме старите passkey-и след recovery redirect
-  const [processingRecovery, setProcessingRecovery] = useState(false);
+  // Инициализираме на true веднага ако ?recovery=1 е в URL-а — предотвратява
+  // кратък flash на dashboard-а преди useEffect да се изпълни.
+  const [processingRecovery, setProcessingRecovery] = useState(isRecoveryRedirect);
 
   useEffect(() => {
     if (!session || session.user.is_anonymous) {
