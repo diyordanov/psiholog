@@ -1,8 +1,8 @@
 // Edge Function: delete-user-passkeys
 //
-// Изтрива ВСИЧКИ passkey-и (MFA factors от тип 'webauthn') на текущо логнатия потребител.
-// Извиква се само по време на recovery flow — след успешен email OTP, преди регистрация
-// на нов passkey. Целта: устройство, което е изгубено или откраднато, да загуби достъп.
+// Изтрива ВСИЧКИ passkey-и на текущо логнатия потребител от auth.webauthn_credentials.
+// Supabase Passkeys (beta) пази credentials в auth.webauthn_credentials, НЕ в
+// auth.mfa_factors — затова auth.admin.mfa.deleteFactor() не работи тук.
 //
 // Сигурност:
 //   - user_id се взима от JWT токена (не от request body) — не може да се подправи
@@ -33,50 +33,37 @@ Deno.serve(async (req: Request) => {
   }
   const jwt = authHeader.slice(7);
 
-  // Създаваме admin клиент (service_role) за управление на passkey-и
+  // Admin клиент с service_role — има достъп до auth schema
   const supabaseAdmin = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  // Верифицираме JWT-а и извличаме потребителя — без да разчитаме на request body
+  // Верифицираме JWT-а и извличаме потребителя
   const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(jwt);
   if (userError || !user) {
     return jsonError('Invalid or expired token', 401);
   }
 
-  // Взимаме всички MFA factors на потребителя
-  const { data: factorsData, error: listError } =
-    await supabaseAdmin.auth.admin.mfa.listFactors({ userId: user.id });
+  // Изтриваме всички passkey-и от auth.webauthn_credentials
+  // (Supabase Passkeys beta пази credentials тук, не в auth.mfa_factors)
+  const { data: deleted, error: deleteError } = await supabaseAdmin
+    .schema('auth')
+    .from('webauthn_credentials')
+    .delete()
+    .eq('user_id', user.id)
+    .select('id');
 
-  if (listError) {
-    console.error('listFactors грешка:', listError);
-    return jsonError('Failed to list passkeys', 500);
+  if (deleteError) {
+    console.error('webauthn_credentials delete грешка:', deleteError);
+    return jsonError('Failed to delete passkeys', 500);
   }
 
-  // Филтрираме само webauthn factors (passkey-ите)
-  const passkeyFactors = (factorsData?.all ?? []).filter(
-    (f) => f.factor_type === 'webauthn'
-  );
-
-  // Изтриваме всеки passkey
-  let deletedCount = 0;
-  for (const factor of passkeyFactors) {
-    const { error: deleteError } = await supabaseAdmin.auth.admin.mfa.deleteFactor({
-      userId: user.id,
-      id: factor.id,
-    });
-    if (deleteError) {
-      console.error(`Грешка при изтриване на factor ${factor.id}:`, deleteError);
-      // Продължаваме с останалите — не спираме при единична грешка
-    } else {
-      deletedCount++;
-    }
-  }
+  const deletedCount = deleted?.length ?? 0;
 
   return new Response(
-    JSON.stringify({ deleted_count: deletedCount, total_found: passkeyFactors.length }),
+    JSON.stringify({ deleted_count: deletedCount }),
     {
       status: 200,
       headers: { 'Content-Type': 'application/json', ...corsHeaders(ALLOWED_ORIGIN) },

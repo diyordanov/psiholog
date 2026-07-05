@@ -59,12 +59,16 @@ function AppContent() {
       logAuditEvent(userId, 'recovery_otp_verified');
 
       deleteAllUserPasskeys(token).then((deletedCount) => {
-        if (deletedCount !== null) {
-          logAuditEvent(userId, 'old_passkeys_deleted');
-        } else {
-          console.error('delete-user-passkeys Edge Function върна грешка');
+        if (deletedCount === null) {
+          // Edge Function е върнала грешка — не пускаме регистрация на нов passkey,
+          // защото старите може да не са изтрити (security risk).
+          console.error('delete-user-passkeys Edge Function върна грешка — recovery прекратен');
+          alert('Възникна грешка при изтриване на старите passkey-и. Опитай отново.');
+          supabase.auth.signOut();
+          setProcessingRecovery(false);
+          return;
         }
-        // Независимо от резултата — пускаме регистрация на нов passkey
+        logAuditEvent(userId, 'old_passkeys_deleted');
         setNeedsPasskeySetup(true);
         setProcessingRecovery(false);
       });
