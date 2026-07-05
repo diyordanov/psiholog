@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { logAuditEvent } from '../../lib/auditLog';
 
 interface RecoveryFlowProps {
   onCancel: () => void;
