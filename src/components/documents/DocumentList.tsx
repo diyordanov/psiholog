@@ -14,6 +14,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const [error, setError] = useState<string | null>(null);
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [viewingName, setViewingName] = useState<string>('');
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
   const [loadingUrl, setLoadingUrl] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
       const url = await getDocumentSignedUrl(doc.storage_path);
       setViewingUrl(url);
       setViewingName(doc.original_filename);
+      setViewingDocId(doc.id);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при отваряне на документа.');
     } finally {
@@ -160,11 +162,12 @@ export default function DocumentList({ userId }: DocumentListProps) {
       )}
 
       {/* PDF Viewer модал */}
-      {viewingUrl && (
+      {viewingUrl && viewingDocId && (
         <PdfViewer
           url={viewingUrl}
           filename={viewingName}
-          onClose={() => { setViewingUrl(null); setViewingName(''); }}
+          cacheId={viewingDocId}
+          onClose={() => { setViewingUrl(null); setViewingName(''); setViewingDocId(null); }}
         />
       )}
     </div>
