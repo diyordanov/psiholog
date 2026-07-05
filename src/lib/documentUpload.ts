@@ -86,6 +86,16 @@ export interface DocumentRow {
   signed_at: string | null;
 }
 
+// Soft-изтрива документ — поставя deleted_at, не трие физически
+export async function softDeleteDocument(documentId: string): Promise<void> {
+  const { error } = await supabase
+    .from('documents')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', documentId);
+
+  if (error) throw new Error(`Грешка при изтриване: ${error.message}`);
+}
+
 // Зарежда всички документи на текущия потребител
 export async function fetchUserDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase

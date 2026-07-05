@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { FileText, Eye, RefreshCw } from 'lucide-react';
-import { fetchUserDocuments, getDocumentSignedUrl, type DocumentRow } from '../../lib/documentUpload';
+import { FileText, Eye, RefreshCw, Trash2 } from 'lucide-react';
+import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
 
@@ -14,7 +14,9 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const [error, setError] = useState<string | null>(null);
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [viewingName, setViewingName] = useState<string>('');
-  const [loadingUrl, setLoadingUrl] = useState<string | null>(null); // document id
+  const [loadingUrl, setLoadingUrl] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -30,6 +32,19 @@ export default function DocumentList({ userId }: DocumentListProps) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await softDeleteDocument(id);
+      setDocuments((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Грешка при изтриване.');
+    } finally {
+      setDeletingId(null);
+      setConfirmDeleteId(null);
+    }
+  };
 
   const handleView = async (doc: DocumentRow) => {
     setLoadingUrl(doc.id);
@@ -112,6 +127,33 @@ export default function DocumentList({ userId }: DocumentListProps) {
                 }
                 Преглед
               </button>
+
+              {/* Бутон изтрий — с inline потвърждение */}
+              {confirmDeleteId === doc.id ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleDelete(doc.id)}
+                    disabled={deletingId === doc.id}
+                    className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {deletingId === doc.id ? <RefreshCw size={12} className="animate-spin" /> : 'Потвърди'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="rounded-lg px-2 py-1.5 text-xs text-neutral-400 hover:text-neutral-600"
+                  >
+                    Откажи
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteId(doc.id)}
+                  className="rounded-lg p-1.5 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                  title="Изтрий документ"
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
             </div>
           ))}
         </div>
