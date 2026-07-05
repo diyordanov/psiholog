@@ -5,6 +5,7 @@ import { logAuditEvent } from './lib/auditLog';
 import AuthScreen from './components/auth/AuthScreen';
 import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
+import DocumentList from './components/documents/DocumentList';
 
 // Проверяваме дали URL-ът съдържа ?recovery=1 — поставен от RecoveryFlow при redirect.
 function isRecoveryRedirect(): boolean {
@@ -108,9 +109,7 @@ function AppContent() {
   return (
     <main>
       <UserMenu />
-      <div className="flex min-h-[80vh] items-center justify-center px-6 text-center text-neutral-400">
-        Тук ще бъде списъкът с документи (Фаза 2).
-      </div>
+      <DocumentList userId={session.user.id} />
     </main>
   );
 }

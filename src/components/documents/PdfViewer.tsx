@@ -1,0 +1,164 @@
+import { useEffect, useRef, useState } from 'react';
+import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+interface PdfViewerProps {
+  url: string;
+  filename: string;
+  onClose: () => void;
+}
+
+export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const [pageNum, setPageNum] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [scale, setScale] = useState(1.2);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+
+  // Зареждаме PDF документа при промяна на URL
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    setPageNum(1);
+
+    pdfjsLib.getDocument({ url }).promise
+      .then((doc) => {
+        setPdf(doc);
+        setTotalPages(doc.numPages);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Грешка при зареждане на PDF.');
+        setLoading(false);
+      });
+
+    return () => { };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  // Рендираме страницата при промяна на pdf/pageNum/scale
+  useEffect(() => {
+    if (!pdf || !canvasRef.current) return;
+
+    // Отменяме предишно рендиране ако не е приключило
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      renderTaskRef.current = null;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    pdf.getPage(pageNum).then((page) => {
+      const viewport = page.getViewport({ scale });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      const task = page.render({ canvasContext: ctx, viewport, canvas });
+      renderTaskRef.current = task;
+
+      task.promise.catch((e) => {
+        // RenderingCancelledException е нормално при бързо превъртане
+        if (e?.name !== 'RenderingCancelledException') {
+          console.error('PDF render грешка:', e);
+        }
+      });
+    });
+  }, [pdf, pageNum, scale]);
+
+  // Затваряме при Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowRight' && pageNum < totalPages) setPageNum((p) => p + 1);
+      if (e.key === 'ArrowLeft' && pageNum > 1) setPageNum((p) => p - 1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose, pageNum, totalPages]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950/95">
+      {/* Горна лента */}
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
+        <div className="flex items-center gap-3">
+          {/* Навигация по страници */}
+          <button
+            onClick={() => setPageNum((p) => Math.max(1, p - 1))}
+            disabled={pageNum <= 1}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span className="text-sm text-neutral-300">
+            {loading ? '—' : `${pageNum} / ${totalPages}`}
+          </span>
+          <button
+            onClick={() => setPageNum((p) => Math.min(totalPages, p + 1))}
+            disabled={pageNum >= totalPages}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 disabled:opacity-30"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        {/* Файлово наименование */}
+        <p className="absolute left-1/2 -translate-x-1/2 max-w-xs truncate text-sm text-neutral-300">
+          {filename}
+        </p>
+
+        <div className="flex items-center gap-1">
+          {/* Zoom бутони */}
+          <button
+            onClick={() => setScale((s) => Math.max(0.5, +(s - 0.25).toFixed(2)))}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
+          >
+            <ZoomOut size={18} />
+          </button>
+          <span className="min-w-[3rem] text-center text-xs text-neutral-400">
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            onClick={() => setScale((s) => Math.min(3, +(s + 0.25).toFixed(2)))}
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
+          >
+            <ZoomIn size={18} />
+          </button>
+
+          {/* Затваряне */}
+          <button
+            onClick={onClose}
+            className="ml-2 rounded-lg p-1.5 text-neutral-400 hover:bg-white/10"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Canvas зона */}
+      <div className="flex flex-1 items-start justify-center overflow-auto p-6">
+        {loading && (
+          <div className="flex items-center gap-2 self-center text-neutral-400">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            <span className="text-sm">Зареждане...</span>
+          </div>
+        )}
+        {error && (
+          <p className="self-center text-sm text-red-400">{error}</p>
+        )}
+        <canvas
+          ref={canvasRef}
+          className={`shadow-2xl ${loading || error ? 'hidden' : ''}`}
+          style={{ maxWidth: '100%' }}
+        />
+      </div>
+    </div>
+  );
+}
