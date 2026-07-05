@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import SignUpForm from './SignUpForm';
 import SignInForm from './SignInForm';
+import RecoveryFlow from './RecoveryFlow';
 import UnsupportedBrowserNotice from './UnsupportedBrowserNotice';
 import { isPasskeySupported } from '../../lib/webauthnSupport';
 
+type AuthMode = 'signup' | 'signin' | 'recovery';
+
 export default function AuthScreen() {
-  const [tab, setTab] = useState<'signup' | 'signin'>('signup');
+  const [mode, setMode] = useState<AuthMode>('signup');
 
   if (!isPasskeySupported()) {
     return (
@@ -15,13 +18,24 @@ export default function AuthScreen() {
     );
   }
 
+  if (mode === 'recovery') {
+    return (
+      <div className="mx-auto mt-24 max-w-sm px-6">
+        <h2 className="mb-4 text-lg font-semibold text-neutral-900">
+          Възстановяване на достъп
+        </h2>
+        <RecoveryFlow onCancel={() => setMode('signin')} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto mt-24 max-w-sm px-6">
       <div className="mb-6 flex gap-2 border-b border-neutral-200">
         <button
-          onClick={() => setTab('signup')}
+          onClick={() => setMode('signup')}
           className={`px-3 py-2 text-sm font-medium ${
-            tab === 'signup'
+            mode === 'signup'
               ? 'border-b-2 border-neutral-900 text-neutral-900'
               : 'text-neutral-400'
           }`}
@@ -29,9 +43,9 @@ export default function AuthScreen() {
           Регистрация
         </button>
         <button
-          onClick={() => setTab('signin')}
+          onClick={() => setMode('signin')}
           className={`px-3 py-2 text-sm font-medium ${
-            tab === 'signin'
+            mode === 'signin'
               ? 'border-b-2 border-neutral-900 text-neutral-900'
               : 'text-neutral-400'
           }`}
@@ -40,7 +54,10 @@ export default function AuthScreen() {
         </button>
       </div>
 
-      {tab === 'signup' ? <SignUpForm /> : <SignInForm />}
+      {mode === 'signup'
+        ? <SignUpForm />
+        : <SignInForm onStartRecovery={() => setMode('recovery')} />
+      }
     </div>
   );
 }

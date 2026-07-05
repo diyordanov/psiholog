@@ -2,7 +2,7 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ и Фаза 1 ✅ завършени (2026-06-26). Следва Фаза 2.
+## Статус: Фаза 0 ✅ и Фаза 1 ✅ завършени (вкл. recovery flow — 2026-07-05). Следва: deploy на Edge Function + пускане на migration 0003 + Фаза 2.
 
 ## Фаза 1: Passkey автентикация — ЗАВЪРШЕНА ✅ (2026-06-26)
 
@@ -51,6 +51,41 @@ Supabase Passkeys конфигурация (Authentication → Passkeys) има 
 2. **`needsPasskeySetup` проверката не е origin-aware** — гледа "има ли потребителят изобщо passkey" (през `passkey.list()`), не "има ли passkey **за текущия domain**". На практика няма проблем за реални потребители (един production домейн), но създаде объркване при нашите localhost/live тестове днес. `PasskeyListItem` от Supabase не носи domain информация, така че няма лесен fix без промяна в подхода.
 3. **Множество тестови акаунти** в Supabase `auth.users` от дебъгването днес (анонимни тестови потребители, недовършени регистрации) — безвредни (cascade delete е настроен), но може да се изчистят по желание през Authentication → Users.
 4. **Множество запазени passkey-та** в Windows Hello / Chrome Password Manager на тестовата машина от повторните опити — чисто тидиност, не е грешка.
+
+---
+
+## Фаза 1 добавка: Recovery flow — НАПИСАН ✅ (2026-07-05), ЧАКА DEPLOY
+
+### Какво е реализирано
+
+- **`RecoveryFlow.tsx`** — форма "въведи email" → `signInWithOtp` с `emailRedirectTo: origin/?recovery=1` (линк по email, идентично с регистрацията; `shouldCreateUser: false` — не създава нов акаунт)
+- **`?recovery=1` detection в App.tsx** — след redirect App.tsx открива параметъра, извиква Edge Function, изтрива старите passkey-и, показва RegisterPasskeyStep
+- **`delete-user-passkeys` Edge Function** (`supabase/functions/delete-user-passkeys/index.ts`) — взима user_id от JWT, изтрива всички `webauthn` MFA factors чрез `supabase.auth.admin.mfa.deleteFactor()`, ползва service_role key
+- **Audit log** — `recovery_otp_verified`, `old_passkeys_deleted`, `new_passkey_registered`
+- **`AuthScreen.tsx`** — добавен `recovery` mode; `SignInForm` получи `onStartRecovery` prop
+- **`auditLog.ts`** — добавен `AuditAction` union type за type safety
+
+### Архитектурни бележки
+
+- `shouldCreateUser: false` при recovery OTP: Supabase ще върне грешка ако email-ът не съществува — показваме общо съобщение (не разкриваме дали акаунтът съществува)
+- Старите passkey-и се изтриват **преди** регистрацията на нов — изгубено/откраднато устройство незабавно губи достъп
+- `?recovery=1` се почиства от URL с `history.replaceState` без reload
+
+### ЧАКА РЪЧНИ СТЪПКИ (преди да работи на production)
+
+1. **Пусни migration 0003 в Supabase SQL Editor:**
+   - Файл: `supabase/migrations/0003_soft_delete_and_key_columns.sql`
+   - Добавя `deleted_at` колони + нови колони на `signing_keys` + обновени RLS policies
+
+2. **Deploy на Edge Function:**
+   ```
+   npx supabase functions deploy delete-user-passkeys --project-ref dwrcpsdmoeiughxyaxvz
+   ```
+   Или от Supabase Dashboard → Edge Functions → Deploy.
+   Edge Function чете `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` автоматично от проекта.
+   Задай env variable `ALLOWED_ORIGIN=https://psiholog.pages.dev` в Edge Function настройките.
+
+3. **Тествай recovery flow** след deploy.
 
 ### Следваща стъпка: Фаза 2 — Качване на PDF + визуализация
 

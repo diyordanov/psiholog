@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { logAuditEvent } from '../../lib/auditLog';
 
-export default function SignInForm() {
+interface SignInFormProps {
+  onStartRecovery: () => void;
+}
+
+export default function SignInForm({ onStartRecovery }: SignInFormProps) {
   const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -31,6 +35,13 @@ export default function SignInForm() {
         className="rounded-md bg-neutral-900 px-4 py-2 font-medium text-white disabled:opacity-50"
       >
         {status === 'signing-in' ? 'Влизаме...' : 'Влез с passkey'}
+      </button>
+      <button
+        type="button"
+        onClick={onStartRecovery}
+        className="text-sm text-neutral-400 hover:text-neutral-700"
+      >
+        Забравих си passkey
       </button>
     </div>
   );

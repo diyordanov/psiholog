@@ -27,7 +27,9 @@ export default function RegisterPasskeyStep({ onDone }: RegisterPasskeyStepProps
 
     const { data } = await supabase.auth.getSession();
     if (data.session) {
-      await logAuditEvent(data.session.user.id, 'signup');
+      await logAuditEvent(data.session.user.id, 'new_passkey_registered');
+      // signup се логва само при първоначална регистрация (не при recovery)
+      // — разграничаваме в App.tsx, тук логваме само регистрацията на passkey-а
     }
     onDone();
   }

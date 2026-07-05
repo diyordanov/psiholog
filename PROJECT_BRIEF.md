@@ -75,6 +75,20 @@
 - При проверка — извличаме оригиналния PDF (без последния update), хешираме, сравняваме.
 - Документирай в README какво е реализирано и какво не (пълен PAdES не).
 
+### 3.6 Soft deletion
+
+**Решено от ръководителя:** никакви реални DELETE операции за потребителски данни.
+
+- Таблиците `profiles`, `signing_keys`, `documents`, `signatures` имат `deleted_at TIMESTAMPTZ NULL`
+- „Изтриване" = `UPDATE ... SET deleted_at = NOW()`
+- Всички нормални queries филтрират `WHERE deleted_at IS NULL`
+- RLS policies обновени съответно
+- `audit_log` е изключение — тя е immutable (без `deleted_at`), записите не се изтриват никога
+- Стари подписи остават валидни завинаги — публичният ключ се embed-ва в PDF-а
+- При verify, ако подписващият е soft-deleted → показва „Валиден. Акаунтът е закрит на [дата]."
+
+---
+
 ### 3.5 Криптиране на файлове
 
 Supabase Storage предоставя server-side encryption at rest по подразбиране. Допълнителен access control:
@@ -93,14 +107,22 @@ profiles
   id (uuid, FK to auth.users)
   display_name
   created_at
+  deleted_at (timestamptz, nullable)
 
 signing_keys
   id (uuid)
   user_id (uuid, FK)
   algorithm ('ed25519' | 'ml-dsa-65')
   public_key (bytea)
-  -- private key се пази в клиента (IndexedDB), не в БД
+  -- Подход B (fallback): ако PRF не е наличен, частният ключ се пази в БД криптиран
+  encrypted_private_key (bytea, nullable)
+  kdf_salt (bytea, nullable)
+  kdf_iterations (int, default 600000, nullable)
+  aes_iv (bytea, nullable)
+  certificate (bytea, nullable)
+  -- private key по подразбиране се пази в клиента (IndexedDB) — виж Section 3.2
   created_at
+  deleted_at (timestamptz, nullable)
 
 documents
   id (uuid)
@@ -111,6 +133,7 @@ documents
   original_hash_sha256 (bytea)
   status ('uploaded' | 'signed')
   created_at, signed_at
+  deleted_at (timestamptz, nullable)
 
 signatures
   id (uuid)
@@ -123,12 +146,14 @@ signatures
   visual_marker_page (int)
   visual_marker_x (numeric)
   visual_marker_y (numeric)
+  deleted_at (timestamptz, nullable)
 
 audit_log
   id, user_id, action, resource_id, ip_address, user_agent, created_at
+  -- IMMUTABLE: няма deleted_at — записите не се изтриват никога (виж Section 3.6)
 ```
 
-**RLS policies на всяка таблица:** `auth.uid() = user_id` за SELECT/INSERT/UPDATE/DELETE.
+**RLS policies:** `auth.uid() = user_id` за SELECT/INSERT/UPDATE/DELETE. SELECT и UPDATE policies добавят `AND deleted_at IS NULL` (виж Section 3.6).
 
 ---
 
@@ -162,6 +187,18 @@ audit_log
 - [ ] Fallback съобщение, ако браузърът не поддържа WebAuthn — линк към user guide
 - [ ] Audit log за login
 
+#### Recovery flow (забравен/изгубен passkey)
+
+- [ ] „Забравих си passkey" линк на login страница
+- [ ] Email OTP recovery: потребителят въвежда email → получава **линк** по email (идентично на регистрацията — `signInWithOtp` с `emailRedirectTo: window.location.origin + '?recovery=1'`)
+- [ ] След клик на линка — App.tsx открива `?recovery=1` в URL → извиква Edge Function `delete-user-passkeys` → изтрива **всички** съществуващи passkey-и (задължително: изгубено/откраднато устройство да загуби достъп)
+- [ ] След изтриването → показва `<RegisterPasskeyStep/>` за регистрация на нов passkey
+- [ ] Edge Function `delete-user-passkeys` — приема user_id от JWT (authenticated context), изтрива всички passkey-и чрез Supabase admin API; използва `service_role` key — **никога не се вика от frontend директно**
+- [ ] Audit log записи: `recovery_requested`, `recovery_otp_verified`, `old_passkeys_deleted`, `new_passkey_registered`
+- [ ] Rate limit: разчита на Supabase вградения (max 3 опита на час на email)
+
+**Бележка:** Само email OTP recovery. Без резервни passkey-и и без „добави втори passkey" в settings.
+
 ### Фаза 2: Качване на PDF + визуализация
 
 - [ ] `<UploadDocument/>` — drag & drop, валидация на размер (max 25 MB) и MIME
@@ -173,6 +210,8 @@ audit_log
 
 ### Фаза 3: Криптографски модул
 
+> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
+
 - [ ] `<KeyManagement/>` — потребителят генерира ключ (Ed25519 по default)
 - [ ] Опция за генериране на ML-DSA-65 ключ (по-голям, дълга бутон секунди)
 - [ ] Запази public key в `signing_keys`, private key в IndexedDB (виж 3.2 за обяснение)
@@ -180,6 +219,8 @@ audit_log
 - [ ] Unit тестове на helper-ите (vitest)
 
 ### Фаза 4: Подписване на PDF
+
+> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
 
 - [ ] UI: избор на алгоритъм + клик върху страница за позиция на визуалния маркер
 - [ ] Изчисли финален хеш = SHA-256(оригинал + metadata JSON)
@@ -192,6 +233,8 @@ audit_log
 - [ ] Update `documents.signed_storage_path`, insert в `signatures`
 
 ### Фаза 5: Проверка на подпис
+
+> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
 
 - [ ] `<VerifyDocument/>` — качване на подписан PDF (без login изискване — публичен инструмент)
 - [ ] Извлечи embedded metadata + signature
