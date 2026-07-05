@@ -24,9 +24,14 @@ const DANGEROUS_PATTERNS: [string, string][] = [
 ];
 
 export function scanPdf(buffer: ArrayBuffer): SanitizationResult {
-  // Декодираме байтовете като Latin-1 (1:1 byte mapping) — безопасно за ASCII търсене
+  // String.fromCharCode(...allBytes) crashes on large files (stack overflow).
+  // Build the string in 8 KB chunks instead.
   const bytes = new Uint8Array(buffer);
-  const text = String.fromCharCode(...bytes);
+  const CHUNK = 8192;
+  let text = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    text += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
 
   const foundThreats: string[] = [];
   const seen = new Set<string>();
