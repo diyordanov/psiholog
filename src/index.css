@@ -12,7 +12,8 @@
   }
 
   body {
-    @apply bg-white text-neutral-900 font-sans antialiased;
+    @apply text-neutral-900 font-sans antialiased;
+    background-color: #fafaf9;
     margin: 0;
     padding: 0;
   }
