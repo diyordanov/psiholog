@@ -18,57 +18,47 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.2);
   const [loading, setLoading] = useState(true);
-  const [loadingLabel, setLoadingLabel] = useState('Изтегляме документа...');
+  const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
-  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const docRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
 
-  // Зареждаме PDF: първо fetch байтовете сами, после ги подаваме на pdf.js.
-  // Директен URL към pdf.js прави вътрешни range-request-и и може да рендира
-  // бяла страница заради CORS/credential ограничения на Supabase Storage.
+  // Зареждаме PDF чрез URL — pdf.js прави range requests и изтегля само данните
+  // за текущата страница, без да чака целия файл.
+  // withCredentials: false е критично за cross-origin Supabase Storage URLs.
   useEffect(() => {
     let cancelled = false;
-
     setLoading(true);
     setError(null);
     setPageNum(1);
     setPdf(null);
-    pdfRef.current = null;
 
-    (async () => {
-      try {
-        // 1. Изтегляме PDF данните сами
-        setLoadingLabel('Изтегляме документа...');
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const buffer = await response.arrayBuffer();
-        if (cancelled) return;
+    const loadingTask = pdfjsLib.getDocument(
+      { url, withCredentials: false } as Parameters<typeof pdfjsLib.getDocument>[0]
+    );
 
-        // 2. Подаваме байтовете директно на pdf.js (избягваме range-request CORS проблем)
-        setLoadingLabel('Обработваме документа...');
-        const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+    loadingTask.promise
+      .then((doc) => {
         if (cancelled) { (doc as unknown as { destroy(): void }).destroy(); return; }
-
-        pdfRef.current = doc;
+        docRef.current = doc;
         setPdf(doc);
         setTotalPages(doc.numPages);
-      } catch (e) {
+        setLoading(false);
+      })
+      .catch((e) => {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Грешка при зареждане на PDF.');
+          setLoading(false);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+      });
 
     return () => {
       cancelled = true;
-      (pdfRef.current as unknown as { destroy(): void } | null)?.destroy();
-      pdfRef.current = null;
+      loadingTask.destroy();
     };
   }, [url]);
 
-  // Рендираме страницата при промяна на pdf/pageNum/scale
+  // Рендираме страницата при промяна на pdf / pageNum / scale
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
 
@@ -81,20 +71,30 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    setRendering(true);
+
     pdf.getPage(pageNum).then((page) => {
       const viewport = page.getViewport({ scale });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
 
-      // canvasContext + viewport са достатъчни; 'canvas' param е само за OffscreenCanvas
-      const task = page.render({ canvasContext: ctx, viewport } as Parameters<typeof page.render>[0]);
+      // Не подаваме 'canvas' параметър — той е само за OffscreenCanvas рендиране.
+      // Подаването на HTMLCanvasElement там причинява бяла страница в pdf.js v4.
+      const task = page.render({
+        canvasContext: ctx,
+        viewport,
+      } as Parameters<typeof page.render>[0]);
+
       renderTaskRef.current = task;
 
-      task.promise.catch((e) => {
-        if (e?.name !== 'RenderingCancelledException') {
-          console.error('PDF render грешка:', e);
-        }
-      });
+      task.promise
+        .then(() => setRendering(false))
+        .catch((e) => {
+          if (e?.name !== 'RenderingCancelledException') {
+            console.error('PDF render грешка:', e);
+          }
+          setRendering(false);
+        });
     });
   }, [pdf, pageNum, scale]);
 
@@ -135,6 +135,9 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
 
         <p className="absolute left-1/2 -translate-x-1/2 max-w-xs truncate text-sm text-neutral-300">
           {filename}
+          {rendering && !loading && (
+            <span className="ml-2 text-xs text-neutral-500">Рендираме...</span>
+          )}
         </p>
 
         <div className="flex items-center gap-1">
@@ -170,12 +173,13 @@ export default function PdfViewer({ url, filename, onClose }: PdfViewerProps) {
         {loading && (
           <div className="flex items-center gap-2 self-center text-neutral-400">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            <span className="text-sm">{loadingLabel}</span>
+            <span className="text-sm">Зареждаме документа...</span>
           </div>
         )}
         {error && (
           <p className="self-center text-sm text-red-400">{error}</p>
         )}
+        {/* Canvas остава монтиран дори при зареждане — показваме го само след loading */}
         <canvas
           ref={canvasRef}
           className={`shadow-2xl ${loading || error ? 'hidden' : ''}`}
