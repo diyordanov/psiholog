@@ -38,7 +38,7 @@
 - Ключовата парола НЕ се записва никъде — само при криптиране, след това се изчиства с `.fill(0)`
 - `fetchKeyDecryptData()` добавена за Фаза 4 (декриптиране при подписване)
 
-### Тествано (vitest)
+### Тествано (vitest — автоматично)
 
 | Тест | Резултат |
 |---|---|
@@ -56,13 +56,41 @@
 | Thumbprint: различен за различни ключове | ✅ |
 | Thumbprint: format (base64url, ~11 chars) | ✅ |
 
-**Резултат: 13/13 тестове ✅ · `npm run build` ✅**
+### Тествано (ръчно от потребителя — production)
+
+| Сценарий | Резултат |
+|---|---|
+| Ed25519 генериране (позитивен) | ✅ |
+| ML-DSA-65 генериране (позитивен) | ✅ |
+| ML-DSA-65 генериране — отмяна с бутон | ✅ |
+| Password validation — слаба парола (под 12 символа) | ✅ |
+| Password validation — несъвпадащи пароли | ✅ |
+| Warning при втори ключ от същия алгоритъм | ✅ |
+| Rate limiting (double-click защита, 5 сек throttle) | ✅ |
+| Soft delete + проверка в DB (deleted_at попълнен) | ✅ |
+| RLS изолация — друг акаунт не вижда ключовете | ✅ |
+| DB проверка — signing_keys съдържание (bytea полета) | ✅ |
+| Парола не изтича (LocalStorage / SessionStorage / Network) | ✅ |
+| `npm run build` без грешки | ✅ |
+| `npm test` (13/13 vitest) | ✅ |
+
+**Резултат: 13/13 автоматични + 13/13 ръчни теста ✅**
+
+### Бъг открит и оправен по време на тестване
+
+**RLS soft-delete блокировка** (`supabase/migrations/0005_fix_signing_keys_update_rls.sql`):
+Миграция 0003 добави UPDATE политика само с `USING (... AND deleted_at IS NULL)` без `WITH CHECK`. PostgreSQL прилага `USING` и върху новия ред след update — след `deleted_at = now()` редът не удовлетворява `IS NULL` и базата отказваше. Fix: разделихме `USING (auth.uid() = user_id)` от `WITH CHECK (auth.uid() = user_id)`.
+
+**Открит API breaking change в noble/post-quantum v0.6:**
+`ml_dsa65.sign(msg, secretKey)` — съобщението е ПЪРВО (не secretKey).
+`ml_dsa65.verify(signature, msg, publicKey)` — подписът е ПЪРВО.
+Документирано в `signing.ts` с коментар.
 
 ### Технически дълг
 
-1. **Ключова парола vs WebAuthn PRF**: В момента използваме парола → PBKDF2 (Approach B). Ако ръководителят реши да мигрираме към PRF extension (Approach A), само `keyProtection.ts` се сменя.
-2. **`fetchKeyDecryptData()` не е тествано в браузъра** — ще се тества при Фаза 4 при реално подписване.
-3. **ML-DSA-65 performance на мобилно** — Worker не е тестван на реален mobile device.
+1. **Ключова парола vs WebAuthn PRF**: В момента Approach B (парола → PBKDF2). При миграция към Approach A (PRF extension) само `keyProtection.ts` се сменя — всичко останало е изолирано.
+2. **`fetchKeyDecryptData()` не е ползвана в production** — написана и готова за Фаза 4.
+3. **ML-DSA-65 performance на мобилно** — Worker работи, но не е профилиран на реален mobile device.
 
 ---
 
