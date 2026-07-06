@@ -2,7 +2,67 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ завършени и тествани. Следва: Фаза 3 (подписване с passkey).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ завършени. Следва: Фаза 4 (подписване на PDF).
+
+---
+
+## Фаза 3: Криптографски модул — ЗАВЪРШЕНА ✅ (2026-07-06)
+
+### Какво е реализирано
+
+**Нови пакети:** `@noble/ed25519` v3.1, `@noble/post-quantum` v0.6, `@noble/hashes` v2.2, `vitest` v4.1
+
+**Нови файлове:**
+- `src/lib/crypto/keyGeneration.ts` — `generateEd25519Keypair()`, `generateMlDsaKeypair()`
+- `src/lib/crypto/keyProtection.ts` — `deriveKeyFromPassword()` (PBKDF2-SHA256, 600 000 iter), `encryptPrivateKey()`, `decryptPrivateKey()` (AES-256-GCM)
+- `src/lib/crypto/signing.ts` — `signWithEd25519()`, `verifyEd25519()`, `signWithMlDsa()`, `verifyMlDsa()`
+- `src/lib/crypto/thumbprint.ts` — `computePublicKeyThumbprint()` (SHA-256 first 8 bytes, base64url)
+- `src/lib/crypto/index.ts` — re-exports
+- `src/workers/mlDsaKeygen.worker.ts` — Web Worker за ML-DSA-65 keygen (Vite `?worker` import)
+- `src/lib/signingKeyStore.ts` — `saveSigningKey()`, `fetchUserSigningKeys()`, `softDeleteSigningKey()`, `fetchKeyDecryptData()`
+- `src/components/keys/KeyCard.tsx` — ред в списъка (badge, thumbprint, дата, soft delete с inline потвърждение)
+- `src/components/keys/GenerateKeyModal.tsx` — модал с live password validation, Web Worker за ML-DSA-65, rate limit 5s, warning при дублиран алгоритъм
+- `src/components/keys/KeyManagement.tsx` — страница "Мои ключове"
+- `src/__tests__/crypto.test.ts` — 13 vitest теста
+
+**Промени в съществуващи файлове:**
+- `src/App.tsx` — добавена таб навигация Документи / Ключове
+- `src/lib/auditLog.ts` — добавен `signing_key_deleted` action тип
+- `vite.config.ts` — добавена vitest конфигурация (`environment: 'node'`)
+- `package.json` — добавен `"test": "vitest run"` script
+
+**Технически решения:**
+- noble/post-quantum v0.6+ API: `sign(msg, secretKey)` и `verify(sig, msg, publicKey)` — обратен ред от очакваното
+- Web Crypto API TypeScript: `Uint8Array<ArrayBufferLike>` изисква `as unknown as Uint8Array<ArrayBuffer>` cast
+- ML-DSA-65 в Web Worker: bundled отделно от Vite (`mlDsaKeygen.worker-xxx.js`), прехвърляме buffers с transfer за ефективност
+- Ключовата парола НЕ се записва никъде — само при криптиране, след това се изчиства с `.fill(0)`
+- `fetchKeyDecryptData()` добавена за Фаза 4 (декриптиране при подписване)
+
+### Тествано (vitest)
+
+| Тест | Резултат |
+|---|---|
+| Ed25519: keygen (размери) | ✅ |
+| Ed25519: sign → verify (positive) | ✅ |
+| Ed25519: verify с променено съобщение (negative) | ✅ |
+| Ed25519: verify с грешен public key (negative) | ✅ |
+| ML-DSA-65: keygen (размери: pub 1952, sec 4032) | ✅ |
+| ML-DSA-65: sign → verify (positive) | ✅ |
+| ML-DSA-65: verify с променено съобщение (negative) | ✅ |
+| ML-DSA-65: verify с грешен public key (negative) | ✅ |
+| PBKDF2 + AES-GCM roundtrip (правилна парола) | ✅ |
+| PBKDF2 + AES-GCM: грешна парола → хвърля | ✅ |
+| Thumbprint: deterministic | ✅ |
+| Thumbprint: различен за различни ключове | ✅ |
+| Thumbprint: format (base64url, ~11 chars) | ✅ |
+
+**Резултат: 13/13 тестове ✅ · `npm run build` ✅**
+
+### Технически дълг
+
+1. **Ключова парола vs WebAuthn PRF**: В момента използваме парола → PBKDF2 (Approach B). Ако ръководителят реши да мигрираме към PRF extension (Approach A), само `keyProtection.ts` се сменя.
+2. **`fetchKeyDecryptData()` не е тествано в браузъра** — ще се тества при Фаза 4 при реално подписване.
+3. **ML-DSA-65 performance на мобилно** — Worker не е тестван на реален mobile device.
 
 ---
 
@@ -100,15 +160,17 @@ Supabase Passkeys → Relying Party ID поддържа само **един** д
 
 ---
 
-## За следващата сесия: Фаза 3 — Подписване с passkey
+## За следващата сесия: Фаза 4 — Подписване на PDF
 
-**Цел:** потребителят избира качен документ → подписва го с passkey → подписът и хеш-ът се записват → статусът на документа се сменя на "Подписан".
+**Цел:** потребителят избира качен документ + активен ключ → въвежда ключова парола → подписва PDF → signed PDF се качва в `signed-documents` → статусът на документа се сменя на "Подписан".
 
 **Прочети преди да започнеш:**
-- `PROJECT_BRIEF.md` Section 3.4 (подписване) и Section 4 (схема) — `signatures` таблицата, `signing_keys` таблицата
-- ⚠️ Предупрежденията в Section 5 за Фаза 3 (крипто в браузъра)
-- Текущото поле `status` в `documents` е `'uploaded' | 'signed'` — вече е подготвено
+- `PROJECT_BRIEF.md` Section 3.4 (PAdES-inspired подход) и Section 4 (схема на `signatures` таблицата)
+- `src/lib/signingKeyStore.ts` — `fetchKeyDecryptData()` е готова за Фаза 4
+- `src/lib/crypto/` — всички signing функции са готови
+- `pdf-lib` трябва да се инсталира (за incremental update на PDF)
 
-**Непокрити зависимости:**
-- `signing_keys` таблицата е създадена (с `encrypted_private_key`, `kdf_salt`, `kdf_iterations`, `aes_iv`, `certificate`) но все още не се попълва
-- Фаза 3 ще изисква: генериране на key pair при регистрация или при първо подписване, AES-GCM криптиране на private key с passkey-derived secret, запис в `signing_keys`
+**Зависимости (вече готови):**
+- `signing_keys` таблица е попълваема (Фаза 3 ✅)
+- `documents.status` поддържа `'uploaded' | 'signed'`
+- `signatures` таблицата съществува от 0001 миграция

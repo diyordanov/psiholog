@@ -21,6 +21,7 @@ export type AuditAction =
   | 'document_downloaded'
   | 'document_deleted'
   | 'signing_key_generated'
+  | 'signing_key_deleted'
   | 'signature_verified';
 
 /**

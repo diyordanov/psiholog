@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
@@ -13,5 +13,9 @@ export default defineConfig({
     // друг порт, ако 3000 вече е заето — иначе пак ще се разминем.
     port: 3000,
     strictPort: true,
+  },
+  test: {
+    // Node среда: crypto.subtle достъпен в Node 18+ (изисква се от @noble/ed25519)
+    environment: 'node',
   },
 });

@@ -21,6 +21,9 @@ import AuthScreen from './components/auth/AuthScreen';
 import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
 import DocumentList from './components/documents/DocumentList';
+import KeyManagement from './components/keys/KeyManagement';
+
+type ActiveTab = 'documents' | 'keys';
 
 /**
  * Проверява дали текущият URL съдържа ?recovery=1.
@@ -138,10 +141,45 @@ function AppContent() {
   }
 
   // Логнат с passkey → главното приложение.
+  return <MainApp userId={session.user.id} />;
+}
+
+/** Главното приложение с таб навигация: Документи | Ключове. */
+function MainApp({ userId }: { userId: string }) {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('documents');
+
   return (
     <main>
       <UserMenu />
-      <DocumentList userId={session.user.id} />
+
+      {/* Таб навигация */}
+      <div className="border-b border-neutral-200 bg-white">
+        <nav className="mx-auto flex max-w-3xl gap-1 px-4">
+          {(
+            [
+              ['documents', 'Документи'],
+              ['keys', 'Ключове'],
+            ] as [ActiveTab, string][]
+          ).map(([tab, label]) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+                activeTab === tab
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {activeTab === 'documents'
+        ? <DocumentList userId={userId} />
+        : <KeyManagement userId={userId} />
+      }
     </main>
   );
 }
