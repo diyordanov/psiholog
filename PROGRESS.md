@@ -6,17 +6,36 @@
 
 ---
 
-## Фаза 3.5-pre: Миграция от парола към PRF — НЕ ЗАПОЧНАТА ⏳
+## Фаза 3.5-pre: Миграция от парола към PRF — ИМПЛЕМЕНТИРАНА, ЧАКА РЪЧЕН ТЕСТ ⏳
 
 Финално архитектурно решение (2026-07-07): подписващите ключове се защитават с WebAuthn PRF extension вместо парола. Фаза 3 (парола-базирано) е **superseded**.
 
-**Задачи:**
-- [ ] `keyProtection.ts` — замени PBKDF2 с `deriveKeyFromPasskeyPRF(credentialId, prfSalt)`
-- [ ] Migration `0006_prf_schema.sql` — добави `prf_salt`, `wrapped_key_iv`, `credential_id`; премахни `kdf_salt`, `kdf_iterations`, `aes_iv`; soft-delete на съществуващи парола-базирани ключове
-- [ ] `GenerateKeyModal.tsx` — премахни password fields; passkey ceremony вместо парола
-- [ ] `signing.ts` — функциите приемат `signingKeyId`, вътрешно правят PRF ceremony
-- [ ] Vitest тестове с mock `navigator.credentials.get()`
-- [ ] Ръчно тестване на всички браузъри (Chrome, Firefox 148+, Safari 18+)
+### Какво е реализирано (2026-07-07)
+
+**Нови/обновени файлове:**
+- `supabase/migrations/0006_prf_schema.sql` — добавя `prf_salt` (bytea), `wrapped_key_iv` (bytea), `credential_id` (text); старите колони остават за историята на soft-deleted ключове
+- `src/lib/crypto/keyProtection.ts` — пренаписан: PBKDF2 премахнато; нов `deriveAesKeyFromPRF(prfSalt, rpId, credentialId?, extractPrf?)` с injectable `PrfExtractor` за тестове; `browserPrfExtractor` вика `navigator.credentials.get()` с PRF extension
+- `src/lib/signingKeyStore.ts` — обновен `SaveKeyParams` (prfSalt, wrappedKeyIv, credentialId); `SigningKeyRow` добавя `isPrfBased: boolean`; нова `softDeleteLegacyPasswordKeys()` за migration banner
+- `src/components/keys/GenerateKeyModal.tsx` — пренаписан: без password полета; flow: keypair gen → passkey ceremony → PRF → AES encrypt → DB запис; нови stage-ове (generating-key / awaiting-passkey / encrypting)
+- `src/lib/crypto/signing.ts` — добавена `signWithStoredKey(signingKeyId, data, rpId, extractPrf?)` — интегрирана функция за Фаза 4
+- `src/components/keys/KeyManagement.tsx` — добавен migration banner за парола-базирани ключове с inline потвърждение
+- `src/__tests__/crypto.test.ts` — PBKDF2 тестове заменени с PRF mock тестове (injectable PrfExtractor); общо 14 теста
+
+**Технически решения:**
+- Injectable `PrfExtractor` тип: тестовете подават mock, браузърът ползва `browserPrfExtractor`
+- `allowCredentials` при генериране е `undefined` (unguided ceremony) — credential_id идва от response
+- `allowCredentials` при декриптиране е `[{ id: credentialId }]` (guided ceremony) — директна биометрия
+- TypeScript cast: `credentialId as unknown as Uint8Array<ArrayBuffer>` за Web Crypto API
+- HKDF info label: `'signshield-signing-key-v1'` — контекстно изолиране на ключовете
+
+**Тестове:**
+- 14/14 vitest ✅ (включително 3 нови PRF mock теста)
+- `npm run build` ✅
+
+**Чака:**
+- Прилагане на migration `0006` в Supabase
+- Ръчен тест в браузъра (виж чеклист по-долу)
+- Ръчен тест на всички браузъри (Chrome, Firefox 148+, Safari 18+)
 
 **Зависимости:** Фаза 3.5 (Mini-CA) чака края на Фаза 3.5-pre.
 

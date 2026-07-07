@@ -5,13 +5,18 @@
  * Тествани сценарии:
  *   Ed25519: keygen → sign → verify (positive + negative)
  *   ML-DSA-65: keygen → sign → verify (positive + negative)
- *   PBKDF2 + AES-GCM: roundtrip (правилна парола), грешна парола хвърля
+ *   PRF + AES-GCM: mock extractor → roundtrip, грешен PRF → хвърля
  *   Thumbprint: deterministic за един ключ, различен за друг ключ
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { generateEd25519Keypair, generateMlDsaKeypair } from '../lib/crypto/keyGeneration';
 import { signWithEd25519, verifyEd25519, signWithMlDsa, verifyMlDsa } from '../lib/crypto/signing';
-import { deriveKeyFromPassword, encryptPrivateKey, decryptPrivateKey } from '../lib/crypto/keyProtection';
+import {
+  deriveAesKeyFromPRF,
+  encryptPrivateKey,
+  decryptPrivateKey,
+  type PrfExtractor,
+} from '../lib/crypto/keyProtection';
 import { computePublicKeyThumbprint } from '../lib/crypto/thumbprint';
 
 // ─── Ed25519 ───────────────────────────────────────────────────────────────────
@@ -47,7 +52,6 @@ describe('Ed25519', () => {
     const kp2 = await generateEd25519Keypair();
     const message = new TextEncoder().encode('тест');
     const sig = await signWithEd25519(kp1.secretKey, message);
-    // Верифицираме с ГРЕШЕН public key
     const valid = await verifyEd25519(kp2.publicKey, message, sig);
     expect(valid).toBe(false);
   });
@@ -91,35 +95,64 @@ describe('ML-DSA-65', () => {
   });
 });
 
-// ─── PBKDF2 + AES-GCM ─────────────────────────────────────────────────────────
+// ─── PRF + AES-GCM ────────────────────────────────────────────────────────────
 
-describe('PBKDF2 + AES-GCM roundtrip', () => {
-  it('декриптира с правилна парола и дава bit-for-bit еднакъв резултат', async () => {
-    const password = 'TestPassword123!';
-    const salt = crypto.getRandomValues(new Uint8Array(16));
+/** Помощна функция: прави mock PrfExtractor с фиксиран PRF output. */
+function makeMockExtractor(prfOutputBytes: Uint8Array): PrfExtractor {
+  const fixedCredentialId = new Uint8Array(16).fill(1);
+  return vi.fn().mockResolvedValue({
+    prfOutput: prfOutputBytes.buffer,
+    credentialId: fixedCredentialId,
+  });
+}
+
+describe('PRF + AES-GCM', () => {
+  it('deriveAesKeyFromPRF с mock extractor връща CryptoKey', async () => {
+    const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+    const mockExtractor = makeMockExtractor(new Uint8Array(32).fill(42));
+
+    const { aesKey, credentialId } = await deriveAesKeyFromPRF(
+      prfSalt,
+      'test.localhost',
+      undefined,
+      mockExtractor,
+    );
+
+    expect(aesKey).toBeDefined();
+    expect(credentialId).toBeInstanceOf(Uint8Array);
+    expect(credentialId.length).toBe(16);
+  });
+
+  it('roundtrip: encrypt → decrypt с правилен PRF output дава оригиналния ключ', async () => {
+    const prfSalt = crypto.getRandomValues(new Uint8Array(32));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const secretKey = crypto.getRandomValues(new Uint8Array(32));
+    const prfOutput = new Uint8Array(32).fill(99);
 
-    const derivedKey = await deriveKeyFromPassword(password, salt, 100); // 100 iter за скорост в тестове
-    const encrypted = await encryptPrivateKey(secretKey, derivedKey, iv);
+    const mockExtractor = makeMockExtractor(prfOutput);
 
-    // Деривираме отново с СЪЩАТА парола и salt
-    const derivedKey2 = await deriveKeyFromPassword(password, salt, 100);
-    const decrypted = await decryptPrivateKey(encrypted, derivedKey2, iv);
+    const { aesKey } = await deriveAesKeyFromPRF(prfSalt, 'test.localhost', undefined, mockExtractor);
+    const encrypted = await encryptPrivateKey(secretKey, aesKey, iv);
+
+    // Деривираме отново с ЕДИН И СЪЩИ PRF output (детерминиран)
+    const { aesKey: aesKey2 } = await deriveAesKeyFromPRF(prfSalt, 'test.localhost', undefined, mockExtractor);
+    const decrypted = await decryptPrivateKey(encrypted, aesKey2, iv);
 
     expect(decrypted).toEqual(secretKey);
   });
 
-  it('хвърля при грешна парола', async () => {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
+  it('хвърля при грешен PRF output (симулирана грешна passkey)', async () => {
+    const prfSalt = crypto.getRandomValues(new Uint8Array(32));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const secretKey = crypto.getRandomValues(new Uint8Array(32));
 
-    const correctKey = await deriveKeyFromPassword('CorrectPass123!', salt, 100);
-    const encrypted = await encryptPrivateKey(secretKey, correctKey, iv);
+    const correctExtractor = makeMockExtractor(new Uint8Array(32).fill(11));
+    const wrongExtractor = makeMockExtractor(new Uint8Array(32).fill(22));
 
-    const wrongKey = await deriveKeyFromPassword('WrongPass456!', salt, 100);
-    // Трябва да хвърли DOMException или Error при грешна парола
+    const { aesKey } = await deriveAesKeyFromPRF(prfSalt, 'test.localhost', undefined, correctExtractor);
+    const encrypted = await encryptPrivateKey(secretKey, aesKey, iv);
+
+    const { aesKey: wrongKey } = await deriveAesKeyFromPRF(prfSalt, 'test.localhost', undefined, wrongExtractor);
     await expect(decryptPrivateKey(encrypted, wrongKey, iv)).rejects.toThrow();
   });
 });
@@ -147,7 +180,6 @@ describe('computePublicKeyThumbprint', () => {
     const thumb = computePublicKeyThumbprint(kp.publicKey);
     expect(thumb.length).toBeGreaterThanOrEqual(8);
     expect(thumb.length).toBeLessThanOrEqual(14);
-    // base64url: само букви, цифри, -, _
     expect(thumb).toMatch(/^[A-Za-z0-9\-_]+$/);
   });
 });

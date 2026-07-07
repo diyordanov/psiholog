@@ -1,56 +1,121 @@
 /**
  * keyProtection.ts
- * Деривация на ключ от парола (PBKDF2-SHA256) и AES-256-GCM криптиране на private key.
- * Ползва само Web Crypto API (вградено в браузъра/Node 18+) — без external зависимости.
+ * Защита на подписващи ключове чрез WebAuthn PRF extension (Section 3.2).
  *
- * Архитектурна бележка (PROJECT_BRIEF.md Section 3.2 — Approach B):
- * Парола → PBKDF2 → AES-GCM ключ → криптиран secretKey в DB.
- * При бъдеща миграция към WebAuthn PRF extension (Approach A) само тази функция се сменя;
- * генерирането, подписването и UI остават непроменени.
+ * Архитектура:
+ *   navigator.credentials.get() с PRF extension
+ *   → PRF output (32 bytes, детерминиран за дадена passkey + prf_salt)
+ *   → HKDF-SHA256 (IKM = PRF output, salt = prf_salt, info = контекстен label)
+ *   → AES-256-GCM ключ
+ *   → AES-GCM encrypt на signing key → encrypted_private_key в DB
+ *
+ * Тестване: подай mockPrfExtractor вместо browserPrfExtractor.
+ * В тестове никога не се вика реален navigator.credentials.get().
  */
 
-const PBKDF2_HASH = 'SHA-256';
-const AES_KEY_LENGTH = 256;
+/** Резултат от PRF ceremony: суровите байтове от PRF и credential ID. */
+export interface PrfResult {
+  prfOutput: ArrayBuffer;
+  credentialId: Uint8Array;
+}
 
 /**
- * Извежда AES-256-GCM ключ от парола чрез PBKDF2-SHA256.
- * Параметри по подразбиране: 600 000 итерации — NIST SP 800-63B препоръка за 2024.
- *
- * @param password    Паролата в plain text
- * @param salt        16-byte random salt — генерирай с crypto.getRandomValues(new Uint8Array(16))
- * @param iterations  Брой итерации (default 600 000)
+ * Функция, която изпълнява PRF ceremony и връща PRF output + credential ID.
+ * По подразбиране: browserPrfExtractor (реален WebAuthn).
+ * При тестове: mock, който връща фиксирани стойности.
  */
-export async function deriveKeyFromPassword(
-  password: string,
-  salt: Uint8Array,
-  iterations = 600_000,
-): Promise<CryptoKey> {
-  const keyMaterial = await crypto.subtle.importKey(
+export type PrfExtractor = (
+  prfSalt: Uint8Array,
+  rpId: string,
+  credentialId?: Uint8Array,
+) => Promise<PrfResult>;
+
+/**
+ * Реалната PRF ceremony чрез браузърния WebAuthn API.
+ * Не се вика при тестове (vitest environment: 'node' няма navigator).
+ */
+export const browserPrfExtractor: PrfExtractor = async (prfSalt, rpId, credentialId) => {
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId,
+      allowCredentials: credentialId
+        ? [{ id: credentialId as unknown as Uint8Array<ArrayBuffer>, type: 'public-key' as const }]
+        : undefined, // unguided: браузърът показва всички passkeys за rpId
+      userVerification: 'required',
+      extensions: {
+        prf: { eval: { first: prfSalt } },
+      } as AuthenticationExtensionsClientInputs,
+    },
+  }) as PublicKeyCredential;
+
+  const prfOutput = (credential.getClientExtensionResults() as Record<string, unknown> & {
+    prf?: { results?: { first?: ArrayBuffer } };
+  })?.prf?.results?.first;
+
+  if (!prfOutput) {
+    throw new Error(
+      'PRF не се поддържа от този браузър или passkey. ' +
+      'Използвайте Chrome, Firefox 148+ или Safari 18+.',
+    );
+  }
+
+  return {
+    prfOutput,
+    credentialId: new Uint8Array(credential.rawId),
+  };
+};
+
+/**
+ * Извежда AES-256-GCM ключ от WebAuthn PRF output чрез HKDF-SHA256.
+ *
+ * При генериране на нов ключ: credentialId е undefined → unguided ceremony
+ *   (браузърът показва passkey chooser). Credential ID идва от response-а.
+ * При декриптиране: credentialId е известен от DB → guided ceremony
+ *   (браузърът директно иска биометрия за конкретния passkey).
+ *
+ * @param prfSalt      32 random bytes, уникален per-key (взима се от DB или се генерира)
+ * @param rpId         WebAuthn Relying Party ID (window.location.hostname в браузъра)
+ * @param credentialId Опционален — credential ID за guided ceremony
+ * @param extractPrf   Injectable за тестове; default: browserPrfExtractor
+ */
+export async function deriveAesKeyFromPRF(
+  prfSalt: Uint8Array,
+  rpId: string,
+  credentialId?: Uint8Array,
+  extractPrf: PrfExtractor = browserPrfExtractor,
+): Promise<{ aesKey: CryptoKey; credentialId: Uint8Array }> {
+  const { prfOutput, credentialId: returnedCredentialId } =
+    await extractPrf(prfSalt, rpId, credentialId);
+
+  // HKDF: IKM = PRF output, salt = prf_salt, info = контекстен label
+  const hkdfKey = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
+    prfOutput,
+    'HKDF',
     false,
     ['deriveKey'],
   );
-  // Cast: Web Crypto API изисква Uint8Array<ArrayBuffer>, но noble връща Uint8Array<ArrayBufferLike>
-  const saltBuf = salt as unknown as Uint8Array<ArrayBuffer>;
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: saltBuf, iterations, hash: PBKDF2_HASH },
-    keyMaterial,
-    { name: 'AES-GCM', length: AES_KEY_LENGTH },
+
+  const aesKey = await crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: prfSalt as unknown as Uint8Array<ArrayBuffer>,
+      info: new TextEncoder().encode('signshield-signing-key-v1'),
+    },
+    hkdfKey,
+    { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   );
+
+  return { aesKey, credentialId: credentialId ?? returnedCredentialId };
 }
 
 /**
  * Криптира secretKey с AES-256-GCM.
- * JPEG analogия: AES-GCM е authenticated encryption — ако derivedKey или IV са различни
- * при декриптиране, операцията хвърля OperationError (не връща garbage bytes).
- *
- * @param secretKey   Байтовете на private key-а за криптиране
- * @param derivedKey  AES ключ от deriveKeyFromPassword()
- * @param iv          12-byte random IV — генерирай с crypto.getRandomValues(new Uint8Array(12))
+ * GCM е authenticated encryption — грешен ключ или IV хвърля OperationError.
  */
 export async function encryptPrivateKey(
   secretKey: Uint8Array,
@@ -65,12 +130,7 @@ export async function encryptPrivateKey(
 
 /**
  * Декриптира secretKey с AES-256-GCM.
- * Хвърля DOMException(OperationError) ако derivedKey е грешен (грешна парола).
- * Caller трябва да хване грешката и да покаже "Грешна парола".
- *
- * @param encryptedKey  Криптираните байтове от encryptPrivateKey()
- * @param derivedKey    AES ключ — трябва да е от СЪЩАТА парола и salt
- * @param iv            IV-то, ползвано при криптиране
+ * Хвърля DOMException(OperationError) ако derivedKey е грешен (грешна passkey / wrong prf_salt).
  */
 export async function decryptPrivateKey(
   encryptedKey: Uint8Array,

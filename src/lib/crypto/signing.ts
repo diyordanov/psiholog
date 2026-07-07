@@ -2,14 +2,16 @@
  * signing.ts
  * Подписване и верификация за Ed25519 и ML-DSA-65.
  *
- * Всички функции са async за еднаков интерфейс — ML-DSA вътрешно е sync,
- * но Promise.resolve() го обгръща без overhead.
+ * Чисти функции (signWithEd25519, signWithMlDsa, verify*): приемат raw bytes.
+ * Интегрирана функция (signWithStoredKey): PRF ceremony → decrypt → sign → clear.
  *
  * Конвенция: data е вече хеширан (SHA-256) масив от байтове.
  * Тук не хешираме — отговорността е на caller-а.
  */
 import { signAsync, verifyAsync } from '@noble/ed25519';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
+import { type PrfExtractor, deriveAesKeyFromPRF, decryptPrivateKey } from './keyProtection';
+import { fetchKeyDecryptData } from '../signingKeyStore';
 
 /** Подписва data с Ed25519 secretKey. Връща 64-byte подпис. */
 export async function signWithEd25519(
@@ -60,5 +62,37 @@ export async function verifyMlDsa(
     return Promise.resolve(ml_dsa65.verify(signature, data, publicKey));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Интегрирана функция за Фаза 4: зарежда ключ от DB, прави PRF ceremony,
+ * декриптира secretKey, подписва data, изчиства паметта.
+ *
+ * @param signingKeyId  UUID на ключа в signing_keys таблицата
+ * @param data          SHA-256 хеш на документа (32 bytes)
+ * @param rpId          WebAuthn RP ID (window.location.hostname в браузъра)
+ * @param extractPrf    Injectable за тестове; default: browserPrfExtractor
+ */
+export async function signWithStoredKey(
+  signingKeyId: string,
+  data: Uint8Array,
+  rpId: string,
+  extractPrf?: PrfExtractor,
+): Promise<Uint8Array> {
+  const { encryptedSecretKey, prfSalt, wrappedKeyIv, credentialId, algorithm } =
+    await fetchKeyDecryptData(signingKeyId);
+
+  const { aesKey } = await deriveAesKeyFromPRF(prfSalt, rpId, credentialId, extractPrf);
+  const secretKey = await decryptPrivateKey(encryptedSecretKey, aesKey, wrappedKeyIv);
+
+  try {
+    if (algorithm === 'ed25519') {
+      return await signWithEd25519(secretKey, data);
+    } else {
+      return await signWithMlDsa(secretKey, data);
+    }
+  } finally {
+    secretKey.fill(0); // изчистваме от паметта независимо от изхода
   }
 }
