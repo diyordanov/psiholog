@@ -54,7 +54,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
-      await softDeleteDocument(id);
+      await softDeleteDocument(id, userId);
       setDocuments((prev) => prev.filter((d) => d.id !== id));
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при изтриване.');
@@ -71,7 +71,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const handleView = async (doc: DocumentRow) => {
     setLoadingUrl(doc.id);
     try {
-      const url = await getDocumentSignedUrl(doc.storage_path);
+      const url = await getDocumentSignedUrl(doc.storage_path, userId, doc.id);
       setViewingUrl(url);
       setViewingName(doc.original_filename);
       setViewingDocId(doc.id); // стабилен ключ за render кеша в PdfViewer

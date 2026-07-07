@@ -101,7 +101,7 @@
 **Библиотеки / нови файлове:**
 - `pdfjs-dist` инсталирана (legacy build — задължително за iOS Safari)
 - `src/lib/pdfSanitizer.ts` — сканира raw PDF байтове (chunked, 8 KB) за опасни елементи: `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/SubmitForm`, `/ImportData`
-- `src/lib/documentUpload.ts` — SHA-256 хеш (Web Crypto API), XHR upload с onProgress callback, DB insert, `softDeleteDocument`, `fetchUserDocuments`, `getDocumentSignedUrl`
+- `src/lib/documentUpload.ts` — SHA-256 хеш (Web Crypto API), XHR upload с onProgress callback, DB insert, `softDeleteDocument`, `fetchUserDocuments`, `getDocumentSignedUrl`; audit logging за `document_uploaded`, `document_deleted`, `document_downloaded`
 - `src/components/documents/UploadDocument.tsx` — drag & drop зона, стъпков прогрес (validating → scanning → hashing → uploading с реален % progress bar → done), грешки с X бутон
 - `src/components/documents/DocumentList.tsx` — таблица с документи, двуредов layout (filename на ред 1, дата + статус + действия на ред 2), бутон Преглед, inline soft delete с потвърждение
 - `src/components/documents/PdfViewer.tsx` — fullscreen viewer, двустъпков рендер (preview ~80 000 px бързо + quality в background), module-level JPEG кеш (instant при повторно отваряне), ExternalLink бутон за native браузъров PDF viewer, iOS-safe canvas size guard (4 MP), keyboard навигация
@@ -143,6 +143,13 @@
 5. **Storage достъп при soft-deleted документ** — `deleted_at` е в DB, но файлът в Storage остава. Ако потребителят знае точния storage path, може да генерира нов signed URL за изтрит документ (ако RLS на storage.objects го позволява). Проверено само на ниво документна таблица, не storage policies.
 
 6. **Мобилна версия на upload UI** — drag & drop не работи на мобилни браузъри, но натискането на зоната отваря file picker. Функционира коректно.
+
+### Допълнение (2026-07-07): Document audit logging
+
+Добавено след първоначалното завършване на Фаза 2. `documentUpload.ts` вече вика `logAuditEvent` при:
+- `document_uploaded` — след успешен DB insert в `uploadDocument()`
+- `document_deleted` — след успешен soft delete в `softDeleteDocument()` (добавен `userId` параметър)
+- `document_downloaded` — при генериране на signed URL в `getDocumentSignedUrl()` (добавени `userId` и `documentId` параметри)
 
 ---
 

@@ -9,6 +9,7 @@
  *   4. При DB грешка — изтриваме физическия файл от Storage (rollback)
  */
 import { supabase } from './supabase';
+import { logAuditEvent } from './auditLog';
 
 /** Резултат от успешно качване. */
 export interface UploadResult {
@@ -124,6 +125,7 @@ export async function uploadDocument(
     throw new Error(`Грешка при записване: ${dbError?.message ?? 'неизвестна'}`);
   }
 
+  await logAuditEvent(userId, 'document_uploaded', data.id as string);
   return { documentId: data.id as string, storagePath, hashHex };
 }
 
@@ -134,7 +136,11 @@ export async function uploadDocument(
  * Signed URL съдържа криптографски токен в query string-а — не изисква
  * допълнителни auth headers при fetch-ване (подходящо за XHR и pdf.js).
  */
-export async function getDocumentSignedUrl(storagePath: string): Promise<string> {
+export async function getDocumentSignedUrl(
+  storagePath: string,
+  userId: string,
+  documentId: string,
+): Promise<string> {
   const { data, error } = await supabase.storage
     .from('documents')
     .createSignedUrl(storagePath, 300);
@@ -143,6 +149,7 @@ export async function getDocumentSignedUrl(storagePath: string): Promise<string>
     throw new Error(`Неуспешно генериране на URL: ${error?.message ?? 'неизвестна'}`);
   }
 
+  await logAuditEvent(userId, 'document_downloaded', documentId);
   return data.signedUrl;
 }
 
@@ -151,13 +158,15 @@ export async function getDocumentSignedUrl(storagePath: string): Promise<string>
  * Физическият файл в Storage и DB редът остават (за одит и евентуално възстановяване).
  * RLS SELECT политиките филтрират `deleted_at IS NULL`, така документът изчезва от списъка.
  */
-export async function softDeleteDocument(documentId: string): Promise<void> {
+export async function softDeleteDocument(documentId: string, userId: string): Promise<void> {
   const { error } = await supabase
     .from('documents')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', documentId);
 
   if (error) throw new Error(`Грешка при изтриване: ${error.message}`);
+
+  await logAuditEvent(userId, 'document_deleted', documentId);
 }
 
 /**
