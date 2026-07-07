@@ -2,11 +2,38 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ завършени. Следва: Фаза 4 (подписване на PDF).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) завършени. Следва: Фаза 3.5-pre (миграция към PRF).
 
 ---
 
-## Фаза 3: Криптографски модул — ЗАВЪРШЕНА ✅ (2026-07-06)
+## Фаза 3.5-pre: Миграция от парола към PRF — НЕ ЗАПОЧНАТА ⏳
+
+Финално архитектурно решение (2026-07-07): подписващите ключове се защитават с WebAuthn PRF extension вместо парола. Фаза 3 (парола-базирано) е **superseded**.
+
+**Задачи:**
+- [ ] `keyProtection.ts` — замени PBKDF2 с `deriveKeyFromPasskeyPRF(credentialId, prfSalt)`
+- [ ] Migration `0006_prf_schema.sql` — добави `prf_salt`, `wrapped_key_iv`, `credential_id`; премахни `kdf_salt`, `kdf_iterations`, `aes_iv`; soft-delete на съществуващи парола-базирани ключове
+- [ ] `GenerateKeyModal.tsx` — премахни password fields; passkey ceremony вместо парола
+- [ ] `signing.ts` — функциите приемат `signingKeyId`, вътрешно правят PRF ceremony
+- [ ] Vitest тестове с mock `navigator.credentials.get()`
+- [ ] Ръчно тестване на всички браузъри (Chrome, Firefox 148+, Safari 18+)
+
+**Зависимости:** Фаза 3.5 (Mini-CA) чака края на Фаза 3.5-pre.
+
+---
+
+## Фаза 3.5: Mini-CA — НЕ ЗАПОЧНАТА ⏳
+
+**Задачи:**
+- [ ] Root CA генериране (script) — Ed25519, 10-годишен срок
+- [ ] Edge Function `issue-certificate` — X.509 leaf certs за Ed25519 (стандартен) и ML-DSA-65 (custom OID)
+- [ ] Frontend интеграция при генериране на ключ
+
+**Зависимости:** Фаза 3.5-pre.
+
+---
+
+## Фаза 3: Криптографски модул — ЗАВЪРШЕНА ✅ (2026-07-06) · SUPERSEDED от Фаза 3.5-pre
 
 ### Какво е реализирано
 
@@ -86,10 +113,10 @@
 `ml_dsa65.verify(signature, msg, publicKey)` — подписът е ПЪРВО.
 Документирано в `signing.ts` с коментар.
 
-### Технически дълг
+### Технически дълг (superseded от Фаза 3.5-pre)
 
-1. **Ключова парола vs WebAuthn PRF**: В момента Approach B (парола → PBKDF2). При миграция към Approach A (PRF extension) само `keyProtection.ts` се сменя — всичко останало е изолирано.
-2. **`fetchKeyDecryptData()` не е ползвана в production** — написана и готова за Фаза 4.
+1. ~~**Ключова парола vs WebAuthn PRF**~~ — **Решено**: Фаза 3.5-pre ще преработи `keyProtection.ts` изцяло. Паролата се премахва.
+2. **`fetchKeyDecryptData()`** — ще се обнови да ползва PRF вместо PBKDF2 в Фаза 3.5-pre.
 3. **ML-DSA-65 performance на мобилно** — Worker работи, но не е профилиран на реален mobile device.
 
 ---
@@ -195,17 +222,15 @@ Supabase Passkeys → Relying Party ID поддържа само **един** д
 
 ---
 
-## За следващата сесия: Фаза 4 — Подписване на PDF
-
-**Цел:** потребителят избира качен документ + активен ключ → въвежда ключова парола → подписва PDF → signed PDF се качва в `signed-documents` → статусът на документа се сменя на "Подписан".
+## За следващата сесия: Фаза 3.5-pre — Миграция от парола към PRF
 
 **Прочети преди да започнеш:**
-- `PROJECT_BRIEF.md` Section 3.4 (PAdES-inspired подход) и Section 4 (схема на `signatures` таблицата)
-- `src/lib/signingKeyStore.ts` — `fetchKeyDecryptData()` е готова за Фаза 4
-- `src/lib/crypto/` — всички signing функции са готови
-- `pdf-lib` трябва да се инсталира (за incremental update на PDF)
+- `PROJECT_BRIEF.md` Section 3.2 (PRF архитектура) и Section 6 Фаза 3.5-pre (пълен task list)
+- `src/lib/crypto/keyProtection.ts` — ще се пренапише изцяло
+- `src/components/keys/GenerateKeyModal.tsx` — password fields се премахват
+- `src/lib/signingKeyStore.ts` — `saveSigningKey()` ще приеме `prf_salt`, `credential_id` вместо `kdf_salt`, `aes_iv`
 
-**Зависимости (вече готови):**
-- `signing_keys` таблица е попълваема (Фаза 3 ✅)
-- `documents.status` поддържа `'uploaded' | 'signed'`
-- `signatures` таблицата съществува от 0001 миграция
+**Ключови въпроси при имплементация:**
+- `navigator.credentials.get()` изисква `rpId` — трябва да съвпада с Supabase RP ID (`psiholog.pages.dev`)
+- credential_id се вика от `CredentialPublicKeyOptions.allowCredentials` или се взима от response-а при unguided ceremony
+- Vitest mock: `vi.stubGlobal('navigator', { credentials: { get: vi.fn() } })`

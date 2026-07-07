@@ -47,14 +47,54 @@
 
 Спецификацията на места пише, че частните ключове "се пазят в БД криптирани". Това е грешно за WebAuthn — частните WebAuthn ключове **никога** не напускат устройството на потребителя. Supabase Auth пази само публичния ключ.
 
-### 3.2 Подписни ключове (Ed25519 / Dilithium) — два възможни подхода
+### 3.2 Подписни ключове — WebAuthn PRF защита
 
-Има два валидни подхода. **Подразбиращ се за този проект — Подход A (client-side):**
+**Финално архитектурно решение (2026-07-07):** Подписващите ключове се защитават чрез WebAuthn PRF extension, не с парола.
 
-- **Подход A (препоръчителен):** Подписващите ключове се генерират и пазят **в клиента**, в `IndexedDB`, криптирани със симетричен ключ, който се извежда от passkey ceremony (PRF extension на WebAuthn, ако е наличен в браузъра — fallback на парола за encryption, която потребителят задава отделно). Този подход е по-чист криптографски — частният ключ не вижда сървъра никога.
-- **Подход B (fallback):** Ако PRF extension не е наличен — ключовете се пазят в Supabase, криптирани с AES-GCM, като ключът за криптиране е изведен от парола на потребителя през PBKDF2. Това е по-слабо, но работещо.
+**Архитектура:**
 
-Документирай в README какъв подход е избран и защо.
+- Частният ключ (Ed25519 или ML-DSA-65) се генерира в браузъра
+- AES-256 ключът за криптиране на подписващия ключ се извежда от passkey чрез WebAuthn PRF extension
+- Криптираният ключ + PRF salt се записват в `signing_keys` таблицата
+- Сървърът никога не вижда криптиращия ключ в plaintext
+- При подписване: passkey ceremony (Face ID / Touch ID / PIN) → PRF derived key → декриптира ключа → подписва → изчиства от паметта
+
+**Технически детайли:**
+
+- Използваме `navigator.credentials.get()` директно (не Supabase Passkeys API) — Supabase не експонира PRF extension
+- PRF salt = 32 random bytes, per-key (уникален за всеки подписващ ключ), пазен в `signing_keys.prf_salt`
+- PRF output (32 bytes) → HKDF-SHA256 → AES-256 ключ + 12-byte IV (`wrapped_key_iv`)
+- При генериране: пазим `credential_id` на passkey-а, ползван за PRF — нужен е при декриптиране
+
+**Browser поддръжка (актуална за 2026):**
+
+- Chrome / Edge: пълна поддръжка ✓
+- Firefox 148+: пълна поддръжка ✓
+- Safari 18+ (macOS 15+): PRF през Touch ID / Face ID / iCloud Keychain ✓
+- Android: пълна поддръжка ✓
+
+**Fallback:** Ако браузърът не поддържа PRF, UI показва ясно съобщение „Този браузър не поддържа сигурно съхранение на подписващи ключове. Използвайте Chrome, Firefox 148+ или Safari 18+." — без fallback на парола.
+
+**UI следствие:**
+
+- При генериране на ключ: НЯМА поле за парола. Просто клик „Генерирай" → passkey ceremony → готово.
+- При подписване: passkey ceremony (както при login) → подписване. Без парола.
+- НЯМА „ключова парола" никъде в UI-a.
+
+**Recovery последствие (важно!):**
+
+- При passkey recovery flow (Фаза 1), всички стари passkeys се изтриват
+- Новият passkey има различен PRF output → не може да декриптира старите подписващи ключове
+- Всички подписващи ключове на потребителя стават неизползваеми след recovery
+- Стари подписи ОСТАВАТ верифицируеми (публичните ключове са embedded в PDF-те)
+- Потребителят трябва да генерира нови подписващи ключове след recovery
+
+**Warning UI в recovery flow:** Задължителен confirmation dialog преди recovery:
+
+> ⚠️ Внимание! Ако възстановиш достъп през email, ще загубиш възможността да ползваш съществуващите си подписващи ключове.
+> Вече подписани документи → остават валидни завинаги.
+> Нови подписи → трябва да генерираш нови ключове след възстановяване.
+> Продължаваш ли?
 
 ### 3.3 PDF Sanitization при качване
 
@@ -66,14 +106,28 @@
 
 Отхвърли файла с ясно съобщение, ако намериш такива елементи. Размер: максимум 25 MB.
 
-### 3.4 PAdES — приближение, не пълна имплементация
+### 3.4 PAdES-B-Basic + хибридни подписи (Ed25519 + ML-DSA-65)
 
-Пълен PAdES стандарт изисква CMS обвивка, qualified timestamps и др. — извън обхвата на курсова работа. Имплементираме **"PAdES-inspired"** подход:
+**Финално решение (2026-07-07):** всеки подписан PDF съдържа два подписа наведнъж.
 
-- Подписът се вгражда в PDF като incremental update с signature dictionary.
-- Подписват се: SHA-256 хеш на оригиналния документ + метаданни (потребител, време, алгоритъм).
-- При проверка — извличаме оригиналния PDF (без последния update), хешираме, сравняваме.
-- Документирай в README какво е реализирано и какво не (пълен PAdES не).
+**Механика:**
+
+1. Изчисляваме SHA-256 хеш на PDF документа
+2. Подписваме хеша с Ed25519 → вграждаме в PDF signature dictionary (PAdES-B-Basic формат, `SubFilter: adbe.pkcs7.detached`, X.509 сертификат за Ed25519 ключа)
+3. Подписваме същия хеш с ML-DSA-65 → вграждаме като custom metadata в PDF (namespace `/PostQuantumSignature`)
+4. Adobe Reader чете само Ed25519 подписа → показва „Signed by [name]"
+5. Нашето приложение при верификация чете и двата → показва статус за всеки поотделно
+
+**UI за подписване:**
+
+1. Потребителят избира документ → кликва „Подпиши"
+2. Passkey ceremony (отключва двата ключа чрез PRF)
+3. Спинер „Подписваме…" (~2–3 сек — Ed25519 е бърз, ML-DSA-65 е бавен)
+4. „Документът е подписан хибридно (Ed25519 + пост-квантов)"
+
+**Ключово изискване:** потребителят трябва да има И двата типа ключове (Ed25519 + ML-DSA-65) преди да може да подписва. Ако липсва единият — UI предлага „Първо генерирайте ML-DSA-65 ключ".
+
+**Бележка за пълен PAdES:** пълен стандарт изисква qualified timestamps и др. — извън обхвата. Документирай в README.
 
 ### 3.6 Soft deletion
 
@@ -114,15 +168,14 @@ signing_keys
   user_id (uuid, FK)
   algorithm ('ed25519' | 'ml-dsa-65')
   public_key (bytea)
-  -- Подход B (fallback): ако PRF не е наличен, частният ключ се пази в БД криптиран
-  encrypted_private_key (bytea, nullable)
-  kdf_salt (bytea, nullable)
-  kdf_iterations (int, default 600000, nullable)
-  aes_iv (bytea, nullable)
-  certificate (bytea, nullable)
-  -- private key по подразбиране се пази в клиента (IndexedDB) — виж Section 3.2
+  encrypted_private_key (bytea)  -- AES-256-GCM криптиран с PRF-derived key
+  prf_salt (bytea, 32 bytes)      -- per-key salt за PRF ceremony
+  wrapped_key_iv (bytea, 12 bytes) -- IV за AES-GCM
+  credential_id (text)            -- WebAuthn credential ID, ползван при генериране
+  certificate (bytea, nullable)   -- X.509 cert (добавя се в Фаза 3.5)
   created_at
   deleted_at (timestamptz, nullable)
+  -- Забележка: колоните kdf_salt, kdf_iterations, aes_iv са премахнати в migration 0006
 
 documents
   id (uuid)
@@ -196,6 +249,8 @@ audit_log
 - [ ] Edge Function `delete-user-passkeys` — приема user_id от JWT (authenticated context), изтрива всички passkey-и чрез Supabase admin API; използва `service_role` key — **никога не се вика от frontend директно**
 - [ ] Audit log записи: `recovery_requested`, `recovery_otp_verified`, `old_passkeys_deleted`, `new_passkey_registered`
 - [ ] Rate limit: разчита на Supabase вградения (max 3 опита на час на email)
+- [ ] **Warning dialog преди recovery** — задължителен confirmation (виж Section 3.2 за пълния текст)
+- [ ] При soft-delete на passkey: свързаните `signing_keys` НЕ се soft-delete автоматично — просто стават неизползваеми, остават в базата за история
 
 **Бележка:** Само email OTP recovery. Без резервни passkey-и и без „добави втори passkey" в settings.
 
@@ -208,40 +263,61 @@ audit_log
 - [ ] `<DocumentList/>` — списък на own документи
 - [ ] `<PdfViewer/>` — рендер с pdfjs-dist
 
-### Фаза 3: Криптографски модул
+### Фаза 3: Криптографски модул — ЗАВЪРШЕНА ✅ (парола-базирано, superseded)
 
-> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
+> **⚠️ SUPERSEDED:** Реализирано с PBKDF2 + парола (Approach B). Заменено от Фаза 3.5-pre (PRF-базирано). Кодът остава в историята, но ще бъде преработен. Виж PROGRESS.md.
 
-- [ ] `<KeyManagement/>` — потребителят генерира ключ (Ed25519 по default)
-- [ ] Опция за генериране на ML-DSA-65 ключ (по-голям, дълга бутон секунди)
-- [ ] Запази public key в `signing_keys`, private key в IndexedDB (виж 3.2 за обяснение)
-- [ ] Helper функции: `signWithEd25519()`, `signWithMlDsa()`, `verifyEd25519()`, `verifyMlDsa()`
-- [ ] Unit тестове на helper-ите (vitest)
+- [x] `<KeyManagement/>` — генериране на Ed25519 и ML-DSA-65 ключове
+- [x] Web Worker за ML-DSA-65 keygen
+- [x] Запазване в `signing_keys` (криптиран с парола → ще се мигрира към PRF)
+- [x] Helper функции: `signWithEd25519()`, `signWithMlDsa()`, `verifyEd25519()`, `verifyMlDsa()`
+- [x] 13 vitest unit теста
+
+### Фаза 3.5-pre: Миграция от парола към PRF
+
+> Трябва да завърши ПРЕДИ Фаза 3.5 (Mini-CA).
+
+- [ ] Обнови `keyProtection.ts`: премахни PBKDF2 логиката, добави `deriveKeyFromPasskeyPRF(credentialId, prfSalt)`
+- [ ] Обнови `signing_keys` schema: добави `prf_salt` (bytea, 32 bytes), `wrapped_key_iv` (bytea, 12 bytes), `credential_id` (text); премахни `kdf_salt`, `kdf_iterations`, `aes_iv`
+- [ ] Миграция `0006_prf_schema.sql` + soft-delete на всички съществуващи парола-базирани ключове
+- [ ] Обнови `GenerateKeyModal.tsx`: без password fields; при клик „Генерирай" → passkey ceremony → PRF → encrypt → save
+- [ ] Обнови `signing.ts`: функциите вземат `signingKeyId`, вътрешно правят PRF ceremony → decrypt → sign → clear
+- [ ] Vitest тестове с mock `navigator.credentials.get()`
+- [ ] Ръчен тест на всички браузъри от Section 3.2
+
+### Фаза 3.5: Mini-CA (X.509 сертификати)
+
+> Зависи от Фаза 3.5-pre (PRF). Да започне след нея.
+
+- [ ] Root CA генериране (script) — Ed25519 root cert, 10-годишен срок
+- [ ] Edge Function `issue-certificate` — приема public key + algorithm, издава X.509 leaf cert
+  - Ed25519: стандартен X.509 (`@peculiar/x509`)
+  - ML-DSA-65: X.509 с custom OID (IETF Dilithium OID, само за нашия verifier)
+- [ ] Frontend вика Edge Function при генериране на ключ
 
 ### Фаза 4: Подписване на PDF
 
-> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
+> Зависи от Фаза 3.5 (Mini-CA). Изисква `pdf-lib`.
 
-- [ ] UI: избор на алгоритъм + клик върху страница за позиция на визуалния маркер
-- [ ] Изчисли финален хеш = SHA-256(оригинал + metadata JSON)
-- [ ] Подпиши с избрания ключ
-- [ ] С `pdf-lib`:
-  - Добави incremental update със signature dictionary
-  - Embed metadata: подписващ user_id, време, алгоритъм, signature (base64), public_key (base64)
-  - Добави визуален маркер (текст: "Подписано от {name} на {date}")
-- [ ] Качи signed PDF в `signed-documents` bucket
-- [ ] Update `documents.signed_storage_path`, insert в `signatures`
+- [ ] UI: избор на документ, клик „Подпиши", избор на позиция за визуален маркер
+- [ ] Passkey ceremony → PRF → decrypt Ed25519 ключ → SHA-256 на PDF → CMS wrapping → embed в PDF signature dictionary (PAdES-B-Basic)
+- [ ] Passkey ceremony → PRF → decrypt ML-DSA-65 ключ → подпис на същия хеш → embed в custom PDF metadata (`/PostQuantumSignature`)
+- [ ] Визуален маркер (текст: „Подписано от {name} на {date}")
+- [ ] Качи signed PDF в `signed-documents` bucket; update `documents`, insert в `signatures`
+- [ ] Проверка: Adobe Reader показва „Signed by [name]" ✅
 
 ### Фаза 5: Проверка на подпис
 
-> **⚠️ ЧАКА ОТГОВОР ОТ РЪКОВОДИТЕЛЯ:** Има отворени архитектурни въпроси за подписването (PAdES обхват, съхранение на подписните ключове, Dilithium съвместимост). НЕ започвай тези фази до получаване на решения. Виж `FOLLOWUP_QUESTIONS.md`.
+> Публичен модул — без login.
 
-- [ ] `<VerifyDocument/>` — качване на подписан PDF (без login изискване — публичен инструмент)
-- [ ] Извлечи embedded metadata + signature
-- [ ] Реконструирай оригиналния hash
-- [ ] Верифицирай signature с embedded public key
-- [ ] UI индикация: ✅ Валиден / ❌ Невалиден / ⚠️ Документът е променян след подписване
-- [ ] Покажи: кой е подписал, кога, с какъв алгоритъм
+- [ ] `<VerifyDocument/>` — качване на подписан PDF
+- [ ] Чете Ed25519 подпис + X.509 cert → валидира срещу Root CA
+- [ ] Чете ML-DSA-65 подпис от custom metadata → валидира срещу public key
+- [ ] UI показва статус поотделно:
+  - „Ed25519 подпис: ✅ валиден / ❌ невалиден"
+  - „Пост-квантов подпис (ML-DSA-65): ✅ валиден / ❌ невалиден"
+  - „Общ статус: ✅ Документът е автентичен и непроменян"
+- [ ] При soft-deleted акаунт: „Валиден. Акаунтът е закрит на [дата]."
 
 ### Фаза 6: Полиране и сигурност
 
