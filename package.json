@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate-root-ca": "node scripts/generate-root-ca.mjs"
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",
@@ -23,6 +24,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@peculiar/webcrypto": "^1.7.1",
+    "@peculiar/x509": "^1.14.3",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

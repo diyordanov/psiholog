@@ -1,11 +1,17 @@
 /**
  * KeyCard.tsx
  * Единичен ред в списъка с ключове.
- * Показва: algorithm badge, thumbprint, дата, бутон soft delete с inline потвърждение.
+ * Показва: algorithm badge, cert status badge, thumbprint, дата, soft delete.
+ *
+ * certStatus визуализация:
+ *   ok           → зелена точка (без текст, за да не претрупва UI)
+ *   expiring-soon → amber badge "Сертификатът изтича скоро"
+ *   expired       → червен badge "Сертификатът е изтекъл"
+ *   missing       → amber badge "⚠ Липсва сертификат" (retrofit в ход или неуспешен)
  */
 import { useState } from 'react';
-import { KeyRound, Trash2, RefreshCw } from 'lucide-react';
-import type { SigningKeyRow } from '../../lib/signingKeyStore';
+import { KeyRound, Trash2, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import type { SigningKeyRow, CertStatus } from '../../lib/signingKeyStore';
 
 interface KeyCardProps {
   signingKey: SigningKeyRow;
@@ -35,9 +41,10 @@ export default function KeyCard({ signingKey, onDelete }: KeyCardProps) {
 
       {/* Съдържание */}
       <div className="min-w-0 flex-1">
-        {/* Ред 1: алгоритъм badge + thumbprint */}
+        {/* Ред 1: алгоритъм badge + cert status + thumbprint */}
         <div className="flex flex-wrap items-center gap-2">
           <AlgorithmBadge algorithm={signingKey.algorithm} />
+          <CertStatusBadge status={signingKey.certStatus} expiresAt={signingKey.certificateExpiresAt} />
           <span className="font-mono text-xs text-neutral-500">{signingKey.thumbprint}</span>
         </div>
 
@@ -76,6 +83,8 @@ export default function KeyCard({ signingKey, onDelete }: KeyCardProps) {
   );
 }
 
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
 function AlgorithmBadge({ algorithm }: { algorithm: 'ed25519' | 'ml-dsa-65' }) {
   if (algorithm === 'ed25519') {
     return (
@@ -87,6 +96,43 @@ function AlgorithmBadge({ algorithm }: { algorithm: 'ed25519' | 'ml-dsa-65' }) {
   return (
     <span className="rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700">
       ML-DSA-65
+    </span>
+  );
+}
+
+function CertStatusBadge({ status, expiresAt }: { status: CertStatus; expiresAt: string | null }) {
+  if (status === 'ok') {
+    return (
+      <span className="flex items-center gap-1 text-xs text-green-600" title={`Сертификат валиден до ${expiresAt ? formatDate(expiresAt) : ''}`}>
+        <CheckCircle2 size={12} />
+        <span className="hidden sm:inline">Сертификат</span>
+      </span>
+    );
+  }
+
+  if (status === 'expiring-soon') {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+        <AlertTriangle size={11} />
+        Изтича скоро
+      </span>
+    );
+  }
+
+  if (status === 'expired') {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+        <AlertTriangle size={11} />
+        Сертификатът е изтекъл
+      </span>
+    );
+  }
+
+  // missing
+  return (
+    <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+      <AlertTriangle size={11} />
+      Липсва сертификат
     </span>
   );
 }

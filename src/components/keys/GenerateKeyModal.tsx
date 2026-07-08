@@ -19,6 +19,7 @@ import MlDsaWorker from '../../workers/mlDsaKeygen.worker.ts?worker';
 import { generateEd25519Keypair } from '../../lib/crypto/keyGeneration';
 import { deriveAesKeyFromPRF, encryptPrivateKey } from '../../lib/crypto/keyProtection';
 import { saveSigningKey } from '../../lib/signingKeyStore';
+import { issueCertificate } from '../../lib/certificateService';
 
 // Module-level: предотвратява double-click двойно генериране (5 сек throttle)
 let lastGenerationAttempt = 0;
@@ -86,7 +87,7 @@ export default function GenerateKeyModal({
       const encryptedSecretKey = await encryptPrivateKey(keypair.secretKey, aesKey, iv);
       keypair.secretKey.fill(0); // изчистваме secretKey веднага след криптиране
 
-      await saveSigningKey({
+      const signingKeyId = await saveSigningKey({
         userId,
         algorithm,
         publicKey: keypair.publicKey,
@@ -94,6 +95,12 @@ export default function GenerateKeyModal({
         prfSalt,
         wrappedKeyIv: iv,
         credentialId,
+      });
+
+      // Издаване на сертификат — fire-and-forget.
+      // При провал: KeyManagement ще покаже ⚠️ и ще retry при следващо зареждане.
+      issueCertificate(signingKeyId).catch((err) => {
+        console.warn('Сертификатът не беше издаден автоматично:', err);
       });
 
       onKeyGenerated();

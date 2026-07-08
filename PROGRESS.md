@@ -2,13 +2,57 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) завършени. Следва: Фаза 3.5-pre (миграция към PRF).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ИМПЛЕМЕНТИРАНА ⏳. Следва: ръчен тест + Root CA setup.
 
 ---
 
-## Фаза 3.5-pre: Миграция от парола към PRF — ИМПЛЕМЕНТИРАНА, ЧАКА РЪЧЕН ТЕСТ ⏳
+## Фаза 3.5: Mini-CA — ИМПЛЕМЕНТИРАНА, ЧАКА ROOT CA SETUP + РЪЧЕН ТЕСТ ⏳
 
-Финално архитектурно решение (2026-07-07): подписващите ключове се защитават с WebAuthn PRF extension вместо парола. Фаза 3 (парола-базирано) е **superseded**.
+### Какво е реализирано (2026-07-08)
+
+**Нови файлове:**
+- `supabase/migrations/0007_add_certificate_column.sql` — добавя `certificate BYTEA NULL` и `certificate_expires_at TIMESTAMPTZ NULL` към signing_keys
+- `scripts/generate-root-ca.mjs` — еднократен скрипт за генериране на Root CA Ed25519 keypair + self-signed X.509 cert (10 години)
+- `src/lib/crypto/rootCaCert.ts` — placeholder за Root CA PEM (попълва се от скрипта)
+- `supabase/functions/issue-certificate/index.ts` — Edge Function: издава X.509 (Ed25519) или JSON attestation (ML-DSA-65), записва в DB; идемпотентна, rate limited 10/min
+- `src/lib/certificateService.ts` — `issueCertificate()` и `retrofitMissingCerts()` за frontend
+- `docs/pq-attestation-format.md` — документация на ML-DSA-65 attestation формата
+
+**Обновени файлове:**
+- `src/lib/auditLog.ts` — добавен `certificate_issued` action
+- `src/lib/signingKeyStore.ts` — `SigningKeyRow` добавя `hasCertificate`, `certificateExpiresAt`, `certStatus`; нов `computeCertStatus()` helper; `fetchUserSigningKeys()` зарежда `certificate_expires_at`
+- `src/components/keys/KeyCard.tsx` — cert status badge (ok / expiring-soon / expired / missing)
+- `src/components/keys/KeyManagement.tsx` — auto-retrofit при page load за ключове без cert
+- `src/components/keys/GenerateKeyModal.tsx` — вика `issueCertificate()` след `saveSigningKey()`
+- `package.json` — добавени `@peculiar/x509` + `@peculiar/webcrypto` в devDependencies; нов `generate-root-ca` script
+- `src/__tests__/certificate.test.ts` — 8 нови теста (certStatus + attestation format + partial failure)
+
+**Архитектурни решения:**
+- Ed25519: стандартен X.509 leaf cert (DER в BYTEA), подписан от Root CA
+- ML-DSA-65: custom JSON attestation, подписана с Root CA Ed25519 ключ (виж `docs/pq-attestation-format.md`)
+- Root CA private key: PKCS8, base64 → Supabase Secret `ROOT_CA_PRIVATE_KEY_B64`
+- Root CA cert: PEM → в repo `supabase/root-ca/root-ca-cert.pem` и `src/lib/crypto/rootCaCert.ts`
+- Идемпотентност: Edge Function проверява `certificate IS NULL` преди издаване
+- Rate limit: 10 `certificate_issued` events / минута / потребител (audit_log based)
+- Auto-retrofit: тих, при провал → ⚠️ badge в KeyCard
+- 30-дневно предупреждение: `certStatus === 'expiring-soon'` → amber badge
+
+**Тестове:**
+- 22/22 vitest ✅ (14 стари + 8 нови)
+- `npm run typecheck` ✅
+- `npm run build` ✅
+
+**Чака:**
+- Root CA setup (виж секцията по-долу)
+- Прилагане на migration 0007 в Supabase
+- Deploy на Edge Function: `supabase functions deploy issue-certificate`
+- Ръчен тест по чеклист
+
+---
+
+## Фаза 3.5-pre: Миграция от парола към PRF — ЗАВЪРШЕНА ✅ (2026-07-07)
+
+Ръчно тествано (2026-07-07/08): Ed25519 + ML-DSA-65 генериране с PRF ✅ · Migration banner ✅ · DB схема ✅ · Audit log ✅
 
 ### Какво е реализирано (2026-07-07)
 
@@ -41,14 +85,7 @@
 
 ---
 
-## Фаза 3.5: Mini-CA — НЕ ЗАПОЧНАТА ⏳
-
-**Задачи:**
-- [ ] Root CA генериране (script) — Ed25519, 10-годишен срок
-- [ ] Edge Function `issue-certificate` — X.509 leaf certs за Ed25519 (стандартен) и ML-DSA-65 (custom OID)
-- [ ] Frontend интеграция при генериране на ключ
-
-**Зависимости:** Фаза 3.5-pre.
+## Фаза 3.5: Mini-CA — виж секцията по-горе (ИМПЛЕМЕНТИРАНА ⏳)
 
 ---
 

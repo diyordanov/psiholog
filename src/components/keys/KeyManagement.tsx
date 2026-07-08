@@ -4,8 +4,11 @@
  *
  * Migration banner: ако потребителят има парола-базирани ключове (prf_salt IS NULL),
  * показваме предупреждение и бутон за soft-delete на всички стари ключове.
+ *
+ * Auto-retrofit: при зареждане автоматично вика issue-certificate за ключове
+ * без сертификат (certificate IS NULL). Провалите се показват с ⚠️ в KeyCard.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, RefreshCw, KeyRound, AlertTriangle, Fingerprint } from 'lucide-react';
 import {
   fetchUserSigningKeys,
@@ -13,6 +16,7 @@ import {
   softDeleteLegacyPasswordKeys,
   type SigningKeyRow,
 } from '../../lib/signingKeyStore';
+import { retrofitMissingCerts } from '../../lib/certificateService';
 import KeyCard from './KeyCard';
 import GenerateKeyModal from './GenerateKeyModal';
 
@@ -28,19 +32,41 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
   const [migrating, setMigrating] = useState(false);
   const [confirmMigration, setConfirmMigration] = useState(false);
 
+  // Предотвратява двойно извикване на retrofit при StrictMode double-mount
+  const retrofitRunRef = useRef(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setKeys(await fetchUserSigningKeys());
+      const fetched = await fetchUserSigningKeys();
+      setKeys(fetched);
+      return fetched;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Грешка при зареждане.');
+      return [] as SigningKeyRow[];
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // При първоначално зареждане: fetch → retrofit на ключове без сертификат
+  useEffect(() => {
+    if (retrofitRunRef.current) return;
+    retrofitRunRef.current = true;
+
+    load().then(async (fetched) => {
+      const missingCertIds = fetched
+        .filter((k) => k.isPrfBased && k.certStatus === 'missing')
+        .map((k) => k.id);
+
+      if (missingCertIds.length === 0) return;
+
+      await retrofitMissingCerts(missingCertIds);
+      // Презареждаме за да отразим новите certificate_expires_at стойности
+      await load();
+    });
+  }, [load]);
 
   const handleDelete = async (keyId: string) => {
     await softDeleteSigningKey(keyId, userId);
@@ -72,7 +98,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
         <h1 className="text-xl font-semibold text-neutral-800">Мои ключове</h1>
         <div className="flex gap-2">
           <button
-            onClick={load}
+            onClick={() => { retrofitRunRef.current = false; load(); }}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
           >
@@ -176,7 +202,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
         <GenerateKeyModal
           userId={userId}
           existingAlgorithms={existingAlgorithms}
-          onKeyGenerated={() => { load(); }}
+          onKeyGenerated={() => { retrofitRunRef.current = false; load(); }}
           onClose={() => setShowModal(false)}
         />
       )}

@@ -23,6 +23,24 @@ export interface SigningKeyRow {
   deleted_at: string | null;
   thumbprint: string;        // изчислен локално
   isPrfBased: boolean;       // true = PRF ключ; false = стар парола-базиран (migration needed)
+  // Фаза 3.5 — сертификат
+  hasCertificate: boolean;          // true ако certificate IS NOT NULL в DB
+  certificateExpiresAt: string | null; // ISO timestamp
+  certStatus: CertStatus;           // изчислен локално при зареждане
+}
+
+/** Статус на сертификата — изчислява се клиентски от certificate_expires_at. */
+export type CertStatus = 'ok' | 'expiring-soon' | 'expired' | 'missing';
+
+/** Изчислява certStatus от certificate_expires_at (или null ако липсва). */
+export function computeCertStatus(expiresAt: string | null): CertStatus {
+  if (!expiresAt) return 'missing';
+  const expiry = new Date(expiresAt);
+  const now = new Date();
+  if (expiry < now) return 'expired';
+  const thirtyDays = new Date(now.getTime() + 30 * 24 * 3600 * 1000);
+  if (expiry < thirtyDays) return 'expiring-soon';
+  return 'ok';
 }
 
 export interface SaveKeyParams {
@@ -92,19 +110,26 @@ export async function saveSigningKey(params: SaveKeyParams): Promise<string> {
 export async function fetchUserSigningKeys(): Promise<SigningKeyRow[]> {
   const { data, error } = await supabase
     .from('signing_keys')
-    .select('id, user_id, algorithm, public_key, kdf_iterations, prf_salt, created_at, deleted_at')
+    .select('id, user_id, algorithm, public_key, kdf_iterations, prf_salt, certificate_expires_at, created_at, deleted_at')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
 
-  return ((data ?? []) as (Omit<SigningKeyRow, 'thumbprint' | 'isPrfBased'> & {
+  return ((data ?? []) as (Omit<SigningKeyRow, 'thumbprint' | 'isPrfBased' | 'hasCertificate' | 'certificateExpiresAt' | 'certStatus'> & {
     prf_salt: string | null;
-  })[]).map((row) => ({
-    ...row,
-    thumbprint: computePublicKeyThumbprint(fromByteaHex(row.public_key as string)),
-    isPrfBased: row.prf_salt !== null,
-  }));
+    certificate_expires_at: string | null;
+  })[]).map((row) => {
+    const expiresAt = row.certificate_expires_at ?? null;
+    return {
+      ...row,
+      thumbprint: computePublicKeyThumbprint(fromByteaHex(row.public_key as string)),
+      isPrfBased: row.prf_salt !== null,
+      hasCertificate: expiresAt !== null,
+      certificateExpiresAt: expiresAt,
+      certStatus: computeCertStatus(expiresAt),
+    };
+  });
 }
 
 /** Soft-изтрива ключ — поставя deleted_at timestamp. */
