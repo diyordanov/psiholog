@@ -220,7 +220,7 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
   prfSalt: Uint8Array;
   wrappedKeyIv: Uint8Array;
   credentialId: Uint8Array;
-  algorithm: 'ed25519' | 'ml-dsa-65';
+  algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256';
 }> {
   const { data, error } = await supabase
     .from('signing_keys')

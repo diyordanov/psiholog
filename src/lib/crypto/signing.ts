@@ -14,12 +14,12 @@ export async function signWithEcdsaP256(
 ): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey(
     'pkcs8',
-    secretKey,
+    new Uint8Array(secretKey),
     { name: 'ECDSA', namedCurve: 'P-256' },
     false,
     ['sign'],
   );
-  const sigBuf = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, data);
+  const sigBuf = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, new Uint8Array(data));
   return new Uint8Array(sigBuf); // P1363: 64 байта
 }
 
@@ -37,12 +37,12 @@ export async function verifyEcdsaP256(
   try {
     const key = await crypto.subtle.importKey(
       'raw',
-      publicKey,
+      new Uint8Array(publicKey),
       { name: 'ECDSA', namedCurve: 'P-256' },
       false,
       ['verify'],
     );
-    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, signature, data);
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, new Uint8Array(signature), new Uint8Array(data));
   } catch {
     return false;
   }

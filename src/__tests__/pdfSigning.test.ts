@@ -206,8 +206,6 @@ describe('computeByteRanges', () => {
     // contentsOffset = позиция на '<' = 10 (след '/Contents ')
     const contentsOffset = '/Contents '.length; // = 10, позиция на '<'
     // byteRangeNumOffset = позиция след '[' в '/ByteRange ['
-    const byteRangeStart = prefix.length + CONT_HEX_LEN + suffix.indexOf('[') + 1;
-    // Намираме offset на '[0 999...' след prefix + hex + '>':
     const afterContents = prefix.length + CONT_HEX_LEN + '>'.length;
     const brHeader = '/ByteRange [';
     const byteRangeNumOffset = afterContents + brHeader.length;
