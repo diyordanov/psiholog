@@ -16,7 +16,7 @@ import { computePublicKeyThumbprint } from './crypto/thumbprint';
 export interface SigningKeyRow {
   id: string;
   user_id: string;
-  algorithm: 'ed25519' | 'ml-dsa-65';
+  algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256';
   public_key: string;       // \xhex от Postgres bytea
   kdf_iterations: number | null;
   created_at: string;
@@ -45,7 +45,7 @@ export function computeCertStatus(expiresAt: string | null): CertStatus {
 
 export interface SaveKeyParams {
   userId: string;
-  algorithm: 'ed25519' | 'ml-dsa-65';
+  algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256';
   publicKey: Uint8Array;
   encryptedSecretKey: Uint8Array;
   prfSalt: Uint8Array;       // 32 bytes, per-key PRF input
@@ -181,6 +181,38 @@ export async function softDeleteLegacyPasswordKeys(userId: string): Promise<numb
 }
 
 /**
+ * Soft-изтрива всички Ed25519 PRF-базирани ключове на потребителя.
+ * Вика се от Ed25519 legacy banner когато потребителят потвърди миграция към ECDSA P-256.
+ */
+export async function softDeleteEd25519Keys(userId: string): Promise<number> {
+  const { data: ed25519Keys, error: fetchError } = await supabase
+    .from('signing_keys')
+    .select('id')
+    .is('deleted_at', null)
+    .eq('algorithm', 'ed25519');
+
+  if (fetchError) throw new Error(`Грешка при зареждане: ${fetchError.message}`);
+  if (!ed25519Keys || ed25519Keys.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from('signing_keys')
+    .update({ deleted_at: now })
+    .is('deleted_at', null)
+    .eq('algorithm', 'ed25519');
+
+  if (updateError) throw new Error(`Грешка при изтриване: ${updateError.message}`);
+
+  await Promise.all(
+    ed25519Keys.map((k: { id: string }) =>
+      logAuditEvent(userId, 'signing_key_deleted', k.id),
+    ),
+  );
+
+  return ed25519Keys.length;
+}
+
+/**
  * Зарежда криптираните PRF данни за декриптиране на secret key при подписване (Фаза 4).
  */
 export async function fetchKeyDecryptData(keyId: string): Promise<{
@@ -215,6 +247,6 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
     prfSalt: fromByteaHex(data.prf_salt as string),
     wrappedKeyIv: fromByteaHex(data.wrapped_key_iv as string),
     credentialId: credentialIdBytes,
-    algorithm: data.algorithm as 'ed25519' | 'ml-dsa-65',
+    algorithm: data.algorithm as 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256',
   };
 }

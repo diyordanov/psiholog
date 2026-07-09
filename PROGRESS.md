@@ -2,11 +2,42 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ИМПЛЕМЕНТИРАНА ⏳. Следва: ръчен тест + Root CA setup.
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅. Следва: Фаза 4 Ден 2 (Cyrillic visual marker).
 
 ---
 
-## Фаза 3.5: Mini-CA — ИМПЛЕМЕНТИРАНА, ЧАКА ROOT CA SETUP + РЪЧЕН ТЕСТ ⏳
+## Фаза 4: Хибридно подписване на PDF — Ден 1 ЗАВЪРШЕН ✅ (2026-07-09)
+
+### Какво е реализирано (2026-07-09)
+
+**Нови файлове:**
+- `src/lib/pdf/cmsBuilder.ts` — Чисто CMS DER строене (PKCS#7 / PAdES-B-Basic) без npm ASN.1 зависимости. Функции: `extractCertInfo()`, `buildSignedAttrs()`, `buildCmsDetached()`.
+- `src/lib/pdf/pdfSigner.ts` — PDF подготовка, byte range математика, инжектиране. Функции: `preparePdfForSigning()`, `computeByteRanges()`, `hashByteRanges()`, `injectSignatureAndPQ()`, + helpers.
+- `src/__tests__/pdfSigning.test.ts` — 29 Vitest unit теста (DER структура, byte range, SHA-256 изолация).
+
+**Инсталирани пакети:**
+- `pdf-lib` — PDF манипулация с `useObjectStreams: false` за searchable обекти
+- `@noble/hashes` — вече беше; ползваме `sha2.js` субмодул (синхронен SHA-256)
+
+**Архитектурни решения:**
+- PAdES-B-Basic: `adbe.pkcs7.detached` SubFilter, byte range signing (НЕ хеш на целия файл)
+- Placeholder: `/Contents <000...>` = 8192 нулеви байта = 16384 hex символа в PDF
+- /ByteRange placeholder: `0 999999999 999999999 999999999` (31 chars), патчва се in-place
+- CMS: ръчно ASN.1 DER — IssuerAndSerialNumber, signedAttrs SET→[0]IMPLICIT, Ed25519 OCTET STRING
+- /PostQuantumSignature: JSON stream в PDF incremental update (ML-DSA-65 данни)
+- Import fix: `@noble/hashes/sha2.js` (с .js разширение) заради package exports в тази версия
+
+**Тестове:**
+- 29/29 vitest ✅ (нови) + 22/22 стари = 51 total
+- Покрити: extractCertInfo, buildSignedAttrs, buildCmsDetached, findPattern, computeByteRanges, hashByteRanges, formatPdfDate
+
+**Следващи стъпки (Ден 2):**
+- Cyrillic visual marker: вгради NotoSans-Regular.ttf в PDF (pdf-lib font embedding)
+- Покажи timestamp + signer name в подписното поле на страница 1
+
+---
+
+## Фаза 3.5: Mini-CA — ЗАВЪРШЕНА ✅ (2026-07-08)
 
 ### Какво е реализирано (2026-07-08)
 

@@ -16,7 +16,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { X, AlertTriangle, RefreshCw, Fingerprint } from 'lucide-react';
 import MlDsaWorker from '../../workers/mlDsaKeygen.worker.ts?worker';
-import { generateEd25519Keypair } from '../../lib/crypto/keyGeneration';
+import { generateEcdsaKeypair } from '../../lib/crypto/keyGeneration';
 import { deriveAesKeyFromPRF, encryptPrivateKey } from '../../lib/crypto/keyProtection';
 import { saveSigningKey } from '../../lib/signingKeyStore';
 import { issueCertificate } from '../../lib/certificateService';
@@ -26,7 +26,7 @@ let lastGenerationAttempt = 0;
 
 interface GenerateKeyModalProps {
   userId: string;
-  existingAlgorithms: ('ed25519' | 'ml-dsa-65')[];
+  existingAlgorithms: ('ecdsa-p256' | 'ml-dsa-65')[];
   onKeyGenerated: () => void;
   onClose: () => void;
 }
@@ -39,7 +39,7 @@ export default function GenerateKeyModal({
   onKeyGenerated,
   onClose,
 }: GenerateKeyModalProps) {
-  const [algorithm, setAlgorithm] = useState<'ed25519' | 'ml-dsa-65'>('ed25519');
+  const [algorithm, setAlgorithm] = useState<'ecdsa-p256' | 'ml-dsa-65'>('ecdsa-p256');
   const [stage, setStage] = useState<Stage>('form');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -156,11 +156,11 @@ export default function GenerateKeyModal({
       worker.postMessage(null);
     } else {
       try {
-        const keypair = await generateEd25519Keypair();
+        const keypair = await generateEcdsaKeypair();
         await finalizeKeyGeneration(keypair);
       } catch (err) {
         setStage('error');
-        setErrorMessage(err instanceof Error ? err.message : 'Грешка при генериране на Ed25519 ключ.');
+        setErrorMessage(err instanceof Error ? err.message : 'Грешка при генериране на ECDSA P-256 ключ.');
       }
     }
   };
@@ -186,13 +186,13 @@ export default function GenerateKeyModal({
             <p className="mb-2.5 text-sm font-medium text-neutral-700">Алгоритъм</p>
             <div className="grid grid-cols-2 gap-3">
               <AlgorithmOption
-                id="ed25519"
-                selected={algorithm === 'ed25519'}
-                onClick={() => setAlgorithm('ed25519')}
+                id="ecdsa-p256"
+                selected={algorithm === 'ecdsa-p256'}
+                onClick={() => setAlgorithm('ecdsa-p256')}
                 disabled={isGenerating}
-                title="Ed25519"
-                description="Бърз · компактен (32-byte ключ)"
-                tag="Класически"
+                title="ECDSA P-256"
+                description="Adobe Reader съвместим · компактен"
+                tag="Препоръчан"
               />
               <AlgorithmOption
                 id="ml-dsa-65"
@@ -211,7 +211,7 @@ export default function GenerateKeyModal({
             <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2.5">
               <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-500" />
               <p className="text-xs text-amber-700">
-                Вече имате активен <strong>{algorithm === 'ed25519' ? 'Ed25519' : 'ML-DSA-65'}</strong> ключ.
+                Вече имате активен <strong>{algorithm === 'ecdsa-p256' ? 'ECDSA P-256' : 'ML-DSA-65'}</strong> ключ.
                 Препоръчваме един ключ на алгоритъм. При подписване се ползва най-новият активен ключ.
               </p>
             </div>
@@ -235,7 +235,7 @@ export default function GenerateKeyModal({
                 <RefreshCw size={14} className="animate-spin" />
                 {algorithm === 'ml-dsa-65'
                   ? 'Генерираме пост-квантов ключ… (може да отнеме до 15 сек)'
-                  : 'Генерираме ключ…'}
+                  : 'Генерираме ECDSA P-256 ключ…'}
               </div>
               {algorithm === 'ml-dsa-65' && (
                 <button

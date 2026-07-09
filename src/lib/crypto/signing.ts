@@ -1,38 +1,48 @@
-/**
- * signing.ts
- * Подписване и верификация за Ed25519 и ML-DSA-65.
- *
- * Чисти функции (signWithEd25519, signWithMlDsa, verify*): приемат raw bytes.
- * Интегрирана функция (signWithStoredKey): PRF ceremony → decrypt → sign → clear.
- *
- * Конвенция: data е вече хеширан (SHA-256) масив от байтове.
- * Тук не хешираме — отговорността е на caller-а.
- */
-import { signAsync, verifyAsync } from '@noble/ed25519';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { type PrfExtractor, deriveAesKeyFromPRF, decryptPrivateKey } from './keyProtection';
 import { fetchKeyDecryptData } from '../signingKeyStore';
 
-/** Подписва data с Ed25519 secretKey. Връща 64-byte подпис. */
-export async function signWithEd25519(
+/**
+ * Подписва data с ECDSA P-256.
+ * secretKey = PKCS8 DER байтове (от generateEcdsaKeypair или дешифриран от DB).
+ * Връща P1363 подпис (64 байта: r||s) — WebCrypto native формат.
+ * buildCmsDetached() конвертира P1363 → DER при нужда.
+ */
+export async function signWithEcdsaP256(
   secretKey: Uint8Array,
   data: Uint8Array,
 ): Promise<Uint8Array> {
-  return signAsync(data, secretKey);
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    secretKey,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+  const sigBuf = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, data);
+  return new Uint8Array(sigBuf); // P1363: 64 байта
 }
 
 /**
- * Верифицира Ed25519 подпис.
- * Връща false при невалиден подпис — не хвърля, за да може caller-ът да
- * покаже ясно "невалиден" вместо да handle-ва exception.
+ * Верифицира ECDSA P-256 подпис.
+ * publicKey = 65-байта raw uncompressed point (0x04 || x || y).
+ * signature = P1363 (64 байта r||s).
+ * Връща false при невалиден подпис — не хвърля.
  */
-export async function verifyEd25519(
+export async function verifyEcdsaP256(
   publicKey: Uint8Array,
   data: Uint8Array,
   signature: Uint8Array,
 ): Promise<boolean> {
   try {
-    return await verifyAsync(signature, data, publicKey);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      publicKey,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, signature, data);
   } catch {
     return false;
   }
@@ -66,11 +76,11 @@ export async function verifyMlDsa(
 }
 
 /**
- * Интегрирана функция за Фаза 4: зарежда ключ от DB, прави PRF ceremony,
+ * Интегрирана функция: зарежда ключ от DB, прави PRF ceremony,
  * декриптира secretKey, подписва data, изчиства паметта.
  *
  * @param signingKeyId  UUID на ключа в signing_keys таблицата
- * @param data          SHA-256 хеш на документа (32 bytes)
+ * @param data          Байтовете за подписване (напр. signedAttrs SET за CMS)
  * @param rpId          WebAuthn RP ID (window.location.hostname в браузъра)
  * @param extractPrf    Injectable за тестове; default: browserPrfExtractor
  */
@@ -87,12 +97,12 @@ export async function signWithStoredKey(
   const secretKey = await decryptPrivateKey(encryptedSecretKey, aesKey, wrappedKeyIv);
 
   try {
-    if (algorithm === 'ed25519') {
-      return await signWithEd25519(secretKey, data);
+    if (algorithm === 'ecdsa-p256') {
+      return await signWithEcdsaP256(secretKey, data);
     } else {
       return await signWithMlDsa(secretKey, data);
     }
   } finally {
-    secretKey.fill(0); // изчистваме от паметта независимо от изхода
+    secretKey.fill(0);
   }
 }

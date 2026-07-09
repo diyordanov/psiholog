@@ -30,10 +30,10 @@ const projectRoot = join(__dirname, '..');
 const nodeCrypto = new Crypto();
 x509.cryptoProvider.set(nodeCrypto);
 
-console.log('🔑 Генерираме Root CA Ed25519 keypair…');
+console.log('🔑 Генерираме Root CA ECDSA P-256 keypair…');
 
 const keys = await nodeCrypto.subtle.generateKey(
-  { name: 'Ed25519' },
+  { name: 'ECDSA', namedCurve: 'P-256' },
   true,       // extractable = true, за да можем да exportKey
   ['sign', 'verify'],
 );
@@ -42,14 +42,14 @@ const keys = await nodeCrypto.subtle.generateKey(
 const notBefore = new Date();
 const notAfter = new Date(notBefore.getTime() + 10 * 365.25 * 24 * 3600 * 1000);
 
-console.log('📜 Генерираме self-signed X.509 сертификат…');
+console.log('📜 Генерираме self-signed X.509 сертификат (ECDSA P-256 / SHA-256)…');
 
 const caCert = await x509.X509CertificateGenerator.createSelfSigned({
   serialNumber: '00',
   name: 'CN=SignShield Root CA v1, O=SignShield, C=BG',
   notBefore,
   notAfter,
-  signingAlgorithm: { name: 'Ed25519' },
+  signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
   keys,
   extensions: [
     new x509.BasicConstraintsExtension(true /* isCA */, 0 /* pathLen */, true /* critical */),
@@ -87,7 +87,7 @@ writeFileSync(srcCertPath, tsContent);
 // ─── Изходна информация ────────────────────────────────────────────────────
 
 console.log('\n' + '═'.repeat(70));
-console.log('✅ Root CA генериран успешно!');
+console.log('✅ Root CA ECDSA P-256 генериран успешно!');
 console.log('═'.repeat(70));
 console.log('\n📁 Файлове записани:');
 console.log('   supabase/root-ca/root-ca-cert.pem  → commit в repo');

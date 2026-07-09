@@ -85,11 +85,18 @@ export default function KeyCard({ signingKey, onDelete }: KeyCardProps) {
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function AlgorithmBadge({ algorithm }: { algorithm: 'ed25519' | 'ml-dsa-65' }) {
-  if (algorithm === 'ed25519') {
+function AlgorithmBadge({ algorithm }: { algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256' }) {
+  if (algorithm === 'ecdsa-p256') {
     return (
       <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-        Ed25519
+        ECDSA P-256
+      </span>
+    );
+  }
+  if (algorithm === 'ed25519') {
+    return (
+      <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-500">
+        Ed25519 (legacy)
       </span>
     );
   }

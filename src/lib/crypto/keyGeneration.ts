@@ -1,15 +1,3 @@
-/**
- * keyGeneration.ts
- * Keypair generation за Ed25519 и ML-DSA-65 (Dilithium / FIPS-204).
- *
- * Ed25519:   32-byte secretKey → 32-byte publicKey, async (ползва crypto.subtle вътрешно)
- * ML-DSA-65: 4032-byte secretKey → 1952-byte publicKey, sync (CRYSTALS-Dilithium level 3)
- *
- * ⚠ ML-DSA-65 в браузъра: keygen е CPU-bound и замразява UI thread за 2–15 сек.
- *   В UI контексти ползвайте mlDsaKeygen.worker.ts.
- *   Тук функцията е достъпна директно за тестове и server-side употреба.
- */
-import { keygenAsync } from '@noble/ed25519';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 
 export interface Keypair {
@@ -18,11 +6,22 @@ export interface Keypair {
 }
 
 /**
- * Генерира Ed25519 keypair.
- * Async защото getPublicKey ползва crypto.subtle SHA-512 вътрешно.
+ * Генерира ECDSA P-256 keypair чрез WebCrypto.
+ * publicKey  = 65 байта, uncompressed point (0x04 || x || y) — пази се в DB
+ * secretKey  = PKCS8 DER байтове — криптират се с AES-GCM преди пазене
  */
-export async function generateEd25519Keypair(): Promise<Keypair> {
-  return keygenAsync();
+export async function generateEcdsaKeypair(): Promise<Keypair> {
+  const { privateKey, publicKey } = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const pkcs8 = await crypto.subtle.exportKey('pkcs8', privateKey);
+  const raw   = await crypto.subtle.exportKey('raw',   publicKey);
+  return {
+    publicKey: new Uint8Array(raw),   // 65 байта
+    secretKey: new Uint8Array(pkcs8), // ~138 байта PKCS8 DER
+  };
 }
 
 /**

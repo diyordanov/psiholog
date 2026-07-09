@@ -22,3 +22,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Test artifacts — генерирани локално, не за commit
+test-signed.pdf
+test-signed-*.pdf

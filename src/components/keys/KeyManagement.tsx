@@ -14,6 +14,7 @@ import {
   fetchUserSigningKeys,
   softDeleteSigningKey,
   softDeleteLegacyPasswordKeys,
+  softDeleteEd25519Keys,
   type SigningKeyRow,
 } from '../../lib/signingKeyStore';
 import { retrofitMissingCerts } from '../../lib/certificateService';
@@ -31,6 +32,8 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
   const [showModal, setShowModal] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [confirmMigration, setConfirmMigration] = useState(false);
+  const [migratingEd25519, setMigratingEd25519] = useState(false);
+  const [confirmEd25519Migration, setConfirmEd25519Migration] = useState(false);
 
   // Предотвратява двойно извикване на retrofit при StrictMode double-mount
   const retrofitRunRef = useRef(false);
@@ -87,9 +90,27 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
     }
   };
 
-  const existingAlgorithms = keys.map((k) => k.algorithm);
-  const legacyKeys = keys.filter((k) => !k.isPrfBased);
+  const handleMigrateEd25519 = async () => {
+    setMigratingEd25519(true);
+    setError(null);
+    try {
+      await softDeleteEd25519Keys(userId);
+      setConfirmEd25519Migration(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Грешка при изтриване на Ed25519 ключове.');
+    } finally {
+      setMigratingEd25519(false);
+    }
+  };
+
+  const existingAlgorithms = keys
+    .map((k) => k.algorithm)
+    .filter((a): a is 'ecdsa-p256' | 'ml-dsa-65' => a !== 'ed25519');
+  const legacyKeys    = keys.filter((k) => !k.isPrfBased);
   const hasLegacyKeys = legacyKeys.length > 0;
+  const ed25519Keys    = keys.filter((k) => k.algorithm === 'ed25519' && k.isPrfBased);
+  const hasEd25519Keys = ed25519Keys.length > 0;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
@@ -161,6 +182,50 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
         </div>
       )}
 
+      {/* Ed25519 → ECDSA P-256 migration banner */}
+      {hasEd25519Keys && !hasLegacyKeys && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+          <div className="flex gap-3">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800">
+                Имате {ed25519Keys.length} Ed25519 {ed25519Keys.length === 1 ? 'ключ' : 'ключа'} — надстройте до ECDSA P-256
+              </p>
+              <p className="mt-1 text-xs text-amber-700">
+                Ed25519 не се поддържа от Adobe Reader при PDF подписване. Генерирайте нов ECDSA P-256 ключ и изтрийте Ed25519 ключовете. Вече подписани документи остават валидни завинаги.
+              </p>
+
+              {!confirmEd25519Migration ? (
+                <button
+                  onClick={() => setConfirmEd25519Migration(true)}
+                  className="mt-3 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+                >
+                  Изтрий Ed25519 ключовете
+                </button>
+              ) : (
+                <div className="mt-3 flex items-center gap-2">
+                  <p className="text-xs font-medium text-amber-800">Сигурни ли сте?</p>
+                  <button
+                    onClick={handleMigrateEd25519}
+                    disabled={migratingEd25519}
+                    className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {migratingEd25519 && <RefreshCw size={10} className="animate-spin" />}
+                    Да, изтрий ги
+                  </button>
+                  <button
+                    onClick={() => setConfirmEd25519Migration(false)}
+                    className="rounded-lg px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100"
+                  >
+                    Откажи
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Грешка */}
       {error && (
         <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
@@ -177,7 +242,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
           <p className="text-sm">Все още нямате генерирани ключове</p>
           <p className="max-w-xs text-center text-xs text-neutral-400">
             Ключовете се ползват за криптографско подписване на документи.
-            Генерирайте поне един Ed25519 и един ML-DSA-65 ключ, за да можете да подписвате.
+            Генерирайте поне един ECDSA P-256 и един ML-DSA-65 ключ, за да можете да подписвате.
           </p>
           <div className="flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
             <Fingerprint size={13} />
