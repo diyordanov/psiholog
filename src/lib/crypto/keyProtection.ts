@@ -19,6 +19,24 @@ export interface PrfResult {
   credentialId: Uint8Array;
 }
 
+/** Резултат от dual PRF ceremony (eval.first + eval.second). */
+export interface DualPrfResult {
+  prfOutput1: ArrayBuffer; // eval.first → за ECDSA ключа
+  prfOutput2: ArrayBuffer; // eval.second → за ML-DSA-65 ключа
+  credentialId: Uint8Array;
+}
+
+/**
+ * Dual PRF extractor: единичен tap → два PRF output-а (eval.first + eval.second).
+ * Ползва се само когато двата ключа са от един и същи credential_id.
+ */
+export type DualPrfExtractor = (
+  prfSalt1: Uint8Array,
+  prfSalt2: Uint8Array,
+  rpId: string,
+  credentialId: Uint8Array,
+) => Promise<DualPrfResult>;
+
 /**
  * Функция, която изпълнява PRF ceremony и връща PRF output + credential ID.
  * По подразбиране: browserPrfExtractor (реален WebAuthn).
@@ -29,6 +47,37 @@ export type PrfExtractor = (
   rpId: string,
   credentialId?: Uint8Array,
 ) => Promise<PrfResult>;
+
+/**
+ * Реалната dual PRF ceremony: един биометричен tap → два ключа.
+ * eval.first = prfSalt1, eval.second = prfSalt2 — и двата от един authenticator.
+ */
+export const browserDualPrfExtractor: DualPrfExtractor = async (prfSalt1, prfSalt2, rpId, credentialId) => {
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId,
+      allowCredentials: [{ id: credentialId as unknown as Uint8Array<ArrayBuffer>, type: 'public-key' as const }],
+      userVerification: 'required',
+      extensions: {
+        prf: { eval: { first: prfSalt1, second: prfSalt2 } },
+      } as AuthenticationExtensionsClientInputs,
+    },
+  }) as PublicKeyCredential;
+
+  const prf = (credential.getClientExtensionResults() as Record<string, unknown> & {
+    prf?: { results?: { first?: ArrayBuffer; second?: ArrayBuffer } };
+  })?.prf?.results;
+
+  if (!prf?.first)  throw new Error('PRF не се поддържа от този passkey.');
+  if (!prf?.second) throw new Error('PRF eval.second не е върнат — authenticator-ът не поддържа dual PRF.');
+
+  return {
+    prfOutput1: prf.first,
+    prfOutput2: prf.second,
+    credentialId: new Uint8Array(credential.rawId),
+  };
+};
 
 /**
  * Реалната PRF ceremony чрез браузърния WebAuthn API.
@@ -126,6 +175,43 @@ export async function encryptPrivateKey(
   const keyBuf = secretKey as unknown as Uint8Array<ArrayBuffer>;
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivBuf }, derivedKey, keyBuf);
   return new Uint8Array(encrypted);
+}
+
+/**
+ * Извежда два AES-256-GCM ключа от единичен dual PRF ceremony (eval.first/second).
+ * Ползва се когато ECDSA и ML-DSA-65 ключовете са от един и същи passkey credential.
+ * → един биометричен отпечатък вместо два.
+ */
+export async function deriveDualAesKeysFromPRF(
+  prfSalt1: Uint8Array,
+  prfSalt2: Uint8Array,
+  rpId: string,
+  credentialId: Uint8Array,
+  extractDualPrf: DualPrfExtractor = browserDualPrfExtractor,
+): Promise<{ aesKey1: CryptoKey; aesKey2: CryptoKey }> {
+  const { prfOutput1, prfOutput2 } = await extractDualPrf(prfSalt1, prfSalt2, rpId, credentialId);
+
+  const deriveOne = async (prfOutput: ArrayBuffer, salt: Uint8Array): Promise<CryptoKey> => {
+    const hkdfKey = await crypto.subtle.importKey('raw', prfOutput, 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: salt as unknown as Uint8Array<ArrayBuffer>,
+        info: new TextEncoder().encode('signshield-signing-key-v1'),
+      },
+      hkdfKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    );
+  };
+
+  const [aesKey1, aesKey2] = await Promise.all([
+    deriveOne(prfOutput1, prfSalt1),
+    deriveOne(prfOutput2, prfSalt2),
+  ]);
+  return { aesKey1, aesKey2 };
 }
 
 /**

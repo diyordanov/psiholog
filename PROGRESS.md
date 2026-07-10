@@ -2,7 +2,74 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅. Следва: Фаза 4 Ден 2 (Cyrillic visual marker).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅. Следва: Фаза 4 Ден 4 (UI компоненти — SignDocumentModal).
+
+---
+
+## Фаза 4: Ден 3 — Signing orchestration service — ЗАВЪРШЕН ✅ (2026-07-10)
+
+### E2E верифициран в Adobe Reader (2026-07-10)
+
+- ✅ „Signed and all signatures are valid" (зелена валидация)
+- ✅ Chain: leaf cert → SignShield Root CA v1 (успешно построен)
+- ✅ „Document has not been modified"
+- ✅ Кирилски визуален маркер долу вляво (NotoSans, ECDSA P-256 · ML-DSA-65)
+- ✅ Hybrid signature: ECDSA в PAdES/CMS + ML-DSA-65 в /PostQuantumSignature stream
+
+### Нови файлове
+
+- `src/lib/signingService.ts` — Оркестрация на пълния signing flow в 5 стъпки (вижте по-долу). Включва `resolveSigningKeys()` и `getSignedDownloadUrl()`.
+- `src/__tests__/signingService.test.ts` — 12/12 unit теста (Vitest).
+- `supabase/migrations/0009_hybrid_signatures.sql` — Hybrid schema: `ecdsa_key_id`, `ml_dsa_key_id`, `signed_storage_path` с backfill, NOT NULL, CHECK constraint (signed_at), UNIQUE index.
+- `scripts/test-e2e-signing.ts` — E2E интеграционен тест с реален Root CA chain (изисква `ROOT_CA_PRIVATE_KEY_B64` в `.env.local`).
+
+### Архитектурни решения
+
+**Ред на операциите в `signDocument()` (гарантира UX коректност):**
+1. Fetch документа → `status === 'signed'` → throw (ПРЕДИ биометрия)
+2. Grace period: `signatures WHERE signed_at >= now() - 30s` → throw (ПРЕДИ биометрия)
+3. `resolveSigningKeys()` → fetchBestKeyId × 2 → fetchKeyDecryptData × 2 → cert validation
+4. PRF ceremony (единичен tap ако credential_id съвпадат, иначе два)
+5. Sign ECDSA + ML-DSA → CMS inject → upload → DB update
+
+**`resolveSigningKeys()` → `ResolvedKeys`:** Връща пълните данни на двата ключа (encryptedSecretKey, prfSalt, wrappedKeyIv, credentialId, certificateDer). Хвърля ако ECDSA cert е NULL. Единична PRF detection чрез bytesEqual на credential_id.
+
+**Тестов принцип:** Early-stage throw тестове (status=signed, grace period) не mock-ват key lookup — потвърдено с `expect(fetchBestKeyId).not.toHaveBeenCalled()`.
+
+**Migration 0009:** `signed_at` (не `created_at`) е timestamp колоната в signatures. CHECK constraint позволява NULL за стари редове (signed_at < 2026-07-10).
+
+### Тестове — 12/12 ✅
+
+| Тест | Покрива |
+|---|---|
+| resolveSigningKeys: хвърля без ECDSA ключ | fetchBestKeyId → null |
+| resolveSigningKeys: хвърля без ECDSA cert | certificateDer: null |
+| resolveSigningKeys: singlePrf=true | credential_id съвпадат |
+| resolveSigningKeys: singlePrf=false | credential_id се различават |
+| resolveSigningKeys: mlDsaKeyId=null | без ML-DSA-65 |
+| signDocument: хвърля status=signed БЕЗ key lookup | стъпка 1 |
+| signDocument: хвърля grace period БЕЗ key lookup | стъпка 2 |
+| signDocument: хвърля без ECDSA cert | стъпка 3 |
+| signDocument: pqSkipped=false (ECDSA + ML-DSA) | стъпка 9 |
+| signDocument: pqSkipped=true (само ECDSA) | стъпка 9 |
+| signDocument: единичен PRF ceremony | deriveDualAesKeysFromPRF × 1 |
+| signDocument: двоен PRF ceremony | deriveAesKeyFromPRF × 2 |
+
+---
+
+## Фаза 4: Ден 2 — Cyrillic visual marker — ЗАВЪРШЕН ✅ (2026-07-09)
+
+### Верифициран в Adobe Reader (2026-07-09)
+
+- ✅ Кирилица се вижда правилно (NotoSans-Regular.ttf, не „??????")
+- ✅ „Document has not been modified"
+- ✅ Визуален маркер: 4 реда текст (Подписано от / Дима Йорданов / Дата / Алгоритъм)
+
+### Нови/обновени файлове
+
+- `public/fonts/NotoSans-Regular.ttf` (569 208 байта) — зарежда се on-demand при подписване
+- `src/lib/pdf/pdfSigner.ts` — добавени: `SignOptions` интерфейс, fontkit регистрация, `formatDisplayDate()`, visual marker rendering (background rect + 4 text lines)
+- `package.json` — добавен `@pdf-lib/fontkit`
 
 ---
 

@@ -326,7 +326,7 @@ export function injectSignatureAndPQ(
   prepared: PreparedPdf,
   byteRange: [number, number, number, number],
   cmsDer: Uint8Array,
-  pqData: PqSignatureData,
+  pqData?: PqSignatureData | null,
 ): Uint8Array {
   if (cmsDer.length > CONTENTS_PLACEHOLDER_BYTES) {
     throw new Error(
@@ -343,15 +343,14 @@ export function injectSignatureAndPQ(
 
   // 2. /ByteRange е вече patch-нат от patchByteRangeInPlace() (задължително преди хеширане).
   // result е копие на prepared.bytes, което вече съдържа реалните ByteRange стойности.
-  // Нищо допълнително не е нужно тук.
 
-  // 3. /PostQuantumSignature като incremental update в края на PDF
+  // 3. /PostQuantumSignature като incremental update — само ако pqData е подаден
+  if (!pqData) return result;
+
   const pqJsonStr = JSON.stringify({ ...pqData, byteRange });
   const pqJsonBytes = new TextEncoder().encode(pqJsonStr);
-
   const pqUpdate = buildPqIncrementalUpdate(result, pqJsonBytes);
 
-  // Конкатенираме подписания PDF с PQ incremental update
   const finalPdf = new Uint8Array(result.length + pqUpdate.length);
   finalPdf.set(result, 0);
   finalPdf.set(pqUpdate, result.length);

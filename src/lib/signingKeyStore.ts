@@ -213,7 +213,26 @@ export async function softDeleteEd25519Keys(userId: string): Promise<number> {
 }
 
 /**
+ * Зарежда id на най-новия активен ключ за дадения алгоритъм.
+ * Връща null ако няма такъв ключ.
+ */
+export async function fetchBestKeyId(
+  algorithm: 'ecdsa-p256' | 'ml-dsa-65',
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('signing_keys')
+    .select('id')
+    .is('deleted_at', null)
+    .eq('algorithm', algorithm)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+/**
  * Зарежда криптираните PRF данни за декриптиране на secret key при подписване (Фаза 4).
+ * Включва X.509 сертификат (DER) ако е наличен.
  */
 export async function fetchKeyDecryptData(keyId: string): Promise<{
   encryptedSecretKey: Uint8Array;
@@ -221,10 +240,11 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
   wrappedKeyIv: Uint8Array;
   credentialId: Uint8Array;
   algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256';
+  certificateDer: Uint8Array | null;
 }> {
   const { data, error } = await supabase
     .from('signing_keys')
-    .select('encrypted_private_key, prf_salt, wrapped_key_iv, credential_id, algorithm')
+    .select('encrypted_private_key, prf_salt, wrapped_key_iv, credential_id, algorithm, certificate')
     .eq('id', keyId)
     .is('deleted_at', null)
     .single();
@@ -248,5 +268,6 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
     wrappedKeyIv: fromByteaHex(data.wrapped_key_iv as string),
     credentialId: credentialIdBytes,
     algorithm: data.algorithm as 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256',
+    certificateDer: data.certificate ? fromByteaHex(data.certificate as string) : null,
   };
 }
