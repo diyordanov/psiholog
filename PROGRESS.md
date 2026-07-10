@@ -2,7 +2,57 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅. Следва: Фаза 4 Ден 4 (UI компоненти — SignDocumentModal).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅. Следва: Фаза 5 (верификация / портал).
+
+---
+
+## Фаза 4: Ден 4 — SignDocumentModal UI — ЗАВЪРШЕН ✅ (2026-07-10)
+
+### E2E верифициран в Adobe Reader (2026-07-10)
+
+- ✅ „Signed and all signatures are valid" (зелена лента)
+- ✅ „Signature is VALID, signed by Dimo."
+- ✅ „The document has not been modified since this signature was applied."
+- ✅ Визуален маркер долу вляво (кирилица, NotoSans)
+
+### Нови/обновени файлове
+
+- `src/components/documents/SignDocumentModal.tsx` (~400 реда) — 3-стъпков модал:
+  - **Step 1 (StepPosition):** PDF thumbnail 300 px, click-to-place маркер, page buttons (първите 3 + поле „Отиди към страница" при >3), бутон „Позиция по подразбиране"
+  - **Step 2 (StepConfirm):** Preflight — предупреждение при липса на ML-DSA, блокер при липса на cert
+  - **Step 3 (StepSigning):** Progress bar + 7-стъпков чеклист, done-state с „Свали подписания документ" + „Затвори", error-state с retry
+  - Exported: `clickToMarkerPos()` (pure function), `DEFAULT_MARKER = { page: 0, x: 30, y: 30 }`
+  - `usePdfThumbnail` hook — session-level JPEG кеш `Map<${docId}:${page}, dataURL>`
+- `src/components/documents/DocumentList.tsx` — обновен:
+  - Pre-flight ECDSA key check преди отваряне на модала (inline грешка ако липсва)
+  - Бутон „Подпиши" (indigo) за неподписани документи
+  - Бутон „Свали подписан" (emerald) за `status='signed' && signed_storage_path IS NOT NULL`
+  - Зелена `CheckCircle` икона за подписани документи
+  - Toast (fixed bottom-center, auto-dismiss 3 сек) при успех
+  - `onDone` callback: `load()` + `showToast()`
+- `src/lib/documentUpload.ts` — добавено `signed_storage_path: string | null` в `DocumentRow` и SELECT
+- `src/lib/signingService.ts` — добавен `onProgress?: (pct: number, label: string) => void` (9-ти параметър), 6 progress точки (5%→15%→35%→55%→70%→85%)
+- `src/__tests__/signing.test.ts` — 8 нови теста: `clickToMarkerPos` (5), `DEFAULT_MARKER` (1), `signDocument onProgress` (2)
+
+### Архитектурни решения
+
+- **Coordinate mapping:** `x = round(clickX/W * pageWidthPt)`, `y = round((1 - clickY/H) * pageHeightPt)` — CSS Y=0 горе, PDF Y=0 долу
+- **pdfjs-dist legacy build:** За iOS Safari (липсва `Map.getOrInsertComputed`) — следва паттерна на PdfViewer
+- **Pre-flight без биометрия:** `resolveSigningKeys()` се вика при mount на модала — валидира ключове и cert ПРЕДИ Step 1; PRF ceremony се стартира само при „Подпиши" в Step 3
+- **Thumbnail кеш:** session-level `Map<string, string>`, ключ `${docId}:${page}`, споделен между отваряния
+
+### Тестове — 73/73 ✅
+
+| Нови тестове (Ден 4) | Покрива |
+|---|---|
+| clickToMarkerPos: CSS горен-ляв → PDF горе (Y=842) | Y-ос инверсия |
+| clickToMarkerPos: CSS долен-ляв → PDF долу (Y=0) | Y=0 долно-ляво |
+| clickToMarkerPos: CSS център → PDF център (X=298, Y=421) | Math.round детерминизъм |
+| clickToMarkerPos: CSS десен-долен → PDF дясно-долу | граничен случай |
+| clickToMarkerPos: X и Y са цели числа | Number.isInteger |
+| DEFAULT_MARKER: page=0, x=30, y=30 | константа |
+| signDocument onProgress: строго нарастващи %, първи=5%, последен≥85% | progress ред |
+| signDocument onProgress: работи без callback (undefined) | опционален параметър |
 
 ---
 
