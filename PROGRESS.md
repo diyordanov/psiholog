@@ -2,7 +2,67 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅. Следва: Фаза 5 (верификация / портал).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅. Следва: Фаза 5 Ден 2 (Verify UI).
+
+---
+
+## Фаза 5: Ден 1 — Core verification service — ЗАВЪРШЕН ✅ (2026-07-11)
+
+### Резултати
+
+- ✅ 130/130 теста (нула регресии)
+- ✅ 92% code coverage на verify code paths
+- ✅ Детерминистичен fixture generator (верифициран с 3 последователни runs)
+- ✅ Всички 10 сценария покрити
+
+### Нови файлове
+
+- `src/lib/verify/types.ts` — `OverallStatus`, `SignatureStatus`, `CertChainStatus`, `EcdsaVerifyResult`, `MlDsaVerifyResult`, `VerifyResult`
+- `src/lib/verify/verifyService.ts` — оркестратор `verifyDocument(pdfBytes, { rootCaCertDer? })` с injectable test Root CA; sub-functions: `verifyCertChain`, `verifyEcdsaSignature`, `verifyMlDsaSignature`
+- `src/lib/pdf/cmsParser.ts` — мини ASN.1 DER walker: `parseCms`, `derToP1363`, `makeSignedAttrsSet`, `iterChildren`, `rebuildTlv`
+- `src/lib/pdf/pdfVerifier.ts` — `extractByteRange`, `extractCmsDer`, `extractPqStream`, `extractSigningDate`, `computeSignedHash`, `decodeBase64url`
+- `src/__tests__/verifyService.test.ts` — 33 теста × 10 fixture сценария
+- `src/__tests__/pdfVerifier.test.ts` — unit тестове за extraction функции
+- `src/__tests__/cmsParser.test.ts` — unit тестове за DER парсер
+- `src/__tests__/helpers/signingFixtures.ts` — детерминистичен fixture generator (10 PDF сценария)
+
+### Обновени файлове
+
+- `src/lib/signingKeyStore.ts` — `fetchKeyDecryptData()` включва `public_key` в SELECT
+- `src/lib/signingService.ts` — `ResolvedKeyData` с `publicKey`, embed на ML-DSA public key в подписани документи
+- `package.json` — `@peculiar/x509` преместен от devDependencies → dependencies
+
+### Fixture матрица (10 сценария)
+
+| Fixture | Overall | ECDSA | ML-DSA | Cert |
+|---|---|---|---|---|
+| valid-hybrid | authentic | valid | valid | ok |
+| valid-ecdsa-only | authentic | valid | not_included | ok |
+| modified-body | tampered | invalid | — | — |
+| modified-signature | invalid | invalid | — | ok |
+| expired-cert | authentic | valid | not_included | expired |
+| untrusted-ca | invalid | valid | not_included | chain_invalid |
+| unsigned | unsigned | — | — | — |
+| malicious (/JavaScript) | error | — | — | — |
+| old-format (empty pubkey) | authentic | valid | not_included | ok |
+| ml-dsa-invalid | invalid | valid | invalid | ok |
+
+### Бъгове намерени и оправени
+
+- `@noble/post-quantum/ml-dsa` без `.js` — не се резолвира в Node/Vitest; всички import пътища сега с `.js`
+- `parseCms`: `digestAlgorithms SET (0x31)` се вземаше вместо `signerInfos SET (0x31)` (и двата са `0x31` в SignedData); фиксирано да взима последния `0x31`
+- `determineOverall`: `chain_invalid` не се映射ваше към `'invalid'`; добавен explicit check
+- `makeModifiedSignaturePdf`: hex flip в DER struct → parse error; преписан да корумпира P1363 bytes при construction
+- `makeMlDsaInvalidPdf`: TextDecoder/TextEncoder roundtrip на бинарен PDF → корупция; преписан да вгражда corrupted PQ sig при construction
+
+### Reusable за Фаза 5 Ден 2 (Verify UI)
+
+```typescript
+import { verifyDocument } from '@/lib/verify/verifyService';
+const result = await verifyDocument(pdfBytes); // работи offline, без backend
+// result.overall: 'authentic' | 'tampered' | 'invalid' | 'unsigned' | 'error'
+// result.ecdsa, result.mlDsa, result.documentHash, result.byteRange
+```
 
 ---
 

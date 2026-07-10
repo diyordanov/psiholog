@@ -49,6 +49,7 @@ export interface ResolvedKeyData {
   prfSalt: Uint8Array;
   wrappedKeyIv: Uint8Array;
   credentialId: Uint8Array;
+  publicKey: Uint8Array | null;
 }
 
 /**
@@ -111,6 +112,7 @@ export async function resolveSigningKeys(): Promise<ResolvedKeys> {
       prfSalt:            mlRaw.prfSalt,
       wrappedKeyIv:       mlRaw.wrappedKeyIv,
       credentialId:       mlRaw.credentialId,
+      publicKey:          mlRaw.publicKey,
       certificateDer:     mlRaw.certificateDer,
     };
   }
@@ -126,6 +128,7 @@ export async function resolveSigningKeys(): Promise<ResolvedKeys> {
       prfSalt:            ecdsaRaw.prfSalt,
       wrappedKeyIv:       ecdsaRaw.wrappedKeyIv,
       credentialId:       ecdsaRaw.credentialId,
+      publicKey:          ecdsaRaw.publicKey,
       certificateDer:     ecdsaRaw.certificateDer,  // non-null — validated above
     },
     mlDsaData,
@@ -271,7 +274,7 @@ export async function signDocument(
         algorithm:       'ml-dsa-65',
         signedHash:      encodeBase64url(messageDigest),
         signatureB64url: encodeBase64url(mlDsaSig),
-        publicKeyB64url: encodeBase64url(new Uint8Array(0)),  // TODO: добави public_key в fetchKeyDecryptData
+        publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
         attestation: keys.mlDsaData.certificateDer
           ? { hasCert: true }
           : { hasCert: false },

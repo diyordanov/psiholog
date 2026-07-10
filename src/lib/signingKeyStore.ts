@@ -232,7 +232,7 @@ export async function fetchBestKeyId(
 
 /**
  * Зарежда криптираните PRF данни за декриптиране на secret key при подписване (Фаза 4).
- * Включва X.509 сертификат (DER) ако е наличен.
+ * Включва X.509 сертификат (DER) и публичен ключ ако са налични.
  */
 export async function fetchKeyDecryptData(keyId: string): Promise<{
   encryptedSecretKey: Uint8Array;
@@ -241,10 +241,11 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
   credentialId: Uint8Array;
   algorithm: 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256';
   certificateDer: Uint8Array | null;
+  publicKey: Uint8Array | null;
 }> {
   const { data, error } = await supabase
     .from('signing_keys')
-    .select('encrypted_private_key, prf_salt, wrapped_key_iv, credential_id, algorithm, certificate')
+    .select('encrypted_private_key, prf_salt, wrapped_key_iv, credential_id, algorithm, certificate, public_key')
     .eq('id', keyId)
     .is('deleted_at', null)
     .single();
@@ -269,5 +270,6 @@ export async function fetchKeyDecryptData(keyId: string): Promise<{
     credentialId: credentialIdBytes,
     algorithm: data.algorithm as 'ed25519' | 'ml-dsa-65' | 'ecdsa-p256',
     certificateDer: data.certificate ? fromByteaHex(data.certificate as string) : null,
+    publicKey: data.public_key ? fromByteaHex(data.public_key as string) : null,
   };
 }
