@@ -26,6 +26,7 @@ export interface DocumentRow {
   status: 'uploaded' | 'signed';
   created_at: string;
   signed_at: string | null;
+  signed_storage_path: string | null;
 }
 
 /**
@@ -177,7 +178,7 @@ export async function softDeleteDocument(documentId: string, userId: string): Pr
 export async function fetchUserDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from('documents')
-    .select('id, original_filename, storage_path, status, created_at, signed_at')
+    .select('id, original_filename, storage_path, status, created_at, signed_at, signed_storage_path')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 

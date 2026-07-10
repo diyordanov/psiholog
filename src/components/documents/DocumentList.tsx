@@ -5,13 +5,18 @@
  *
  * Всеки документ има:
  *   - Бутон "Преглед" → генерира 5-минутен signed URL и отваря PdfViewer
+ *   - Бутон "Подпиши" → pre-flight key check → SignDocumentModal (3 стъпки)
+ *   - Бутон "Свали подписан" → при status='signed', сваля подписания PDF
  *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB)
  */
 import { useEffect, useState, useCallback } from 'react';
-import { FileText, Eye, RefreshCw, Trash2 } from 'lucide-react';
+import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle } from 'lucide-react';
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
+import { fetchBestKeyId } from '../../lib/signingKeyStore';
+import { getSignedDownloadUrl } from '../../lib/signingService';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
+import SignDocumentModal from './SignDocumentModal';
 
 interface DocumentListProps {
   userId: string;
@@ -22,16 +27,26 @@ export default function DocumentList({ userId }: DocumentListProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Viewer state — url е временен (signed, 5 min TTL), cacheId е стабилен (document.id)
+  // Viewer state
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [viewingName, setViewingName] = useState<string>('');
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
-  const [loadingUrl, setLoadingUrl] = useState<string | null>(null);   // id на документа, за който се генерира URL
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null); // id на документа в режим "потвърди изтриване"
-  const [deletingId, setDeletingId] = useState<string | null>(null);   // id на документа, който в момента се изтрива
+  // Signing state
+  const [signingDoc, setSigningDoc] = useState<DocumentRow | null>(null);
+  const [signPreflight, setSignPreflight] = useState<string | null>(null); // inline error bellow doc
+  const [signPreflightId, setSignPreflightId] = useState<string | null>(null);
 
-  /** Зарежда документите от базата. Извиква се при mount и след качване/изтриване. */
+  // Loading/action states
+  const [loadingUrl, setLoadingUrl] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingSignedId, setDownloadingSignedId] = useState<string | null>(null);
+
+  // Toast state
+  const [toast, setToast] = useState<string | null>(null);
+
+  /** Зарежда документите от базата. */
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -47,10 +62,13 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
   useEffect(() => { load(); }, [load]);
 
-  /**
-   * Soft-изтрива документ. Оптимистично го маха от UI веднага,
-   * без да чака презареждане на целия списък.
-   */
+  /** Показва toast за 3 секунди. */
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  /** Soft-изтрива документ. */
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
@@ -64,21 +82,57 @@ export default function DocumentList({ userId }: DocumentListProps) {
     }
   };
 
-  /**
-   * Генерира временен signed URL за документа и отваря PdfViewer.
-   * URL-ът е валиден 5 минути — достатъчно за преглед, но не за споделяне.
-   */
+  /** Генерира signed URL и отваря PdfViewer. */
   const handleView = async (doc: DocumentRow) => {
     setLoadingUrl(doc.id);
     try {
       const url = await getDocumentSignedUrl(doc.storage_path, userId, doc.id);
       setViewingUrl(url);
       setViewingName(doc.original_filename);
-      setViewingDocId(doc.id); // стабилен ключ за render кеша в PdfViewer
+      setViewingDocId(doc.id);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при отваряне на документа.');
     } finally {
       setLoadingUrl(null);
+    }
+  };
+
+  /**
+   * Pre-flight преди отваряне на SignDocumentModal.
+   * Проверява дали има ECDSA P-256 ключ — ако не, показва inline съобщение.
+   * Не проверява cert (ще се провери в StepConfirm).
+   */
+  const handleSignClick = async (doc: DocumentRow) => {
+    setSignPreflightId(doc.id);
+    setSignPreflight(null);
+    try {
+      const ecdsaKeyId = await fetchBestKeyId('ecdsa-p256');
+      if (!ecdsaKeyId) {
+        setSignPreflight('Първо генерирайте ECDSA P-256 ключ в „Ключове".');
+        return;
+      }
+      setSigningDoc(doc);
+    } catch {
+      setSignPreflight('Грешка при проверка на ключовете.');
+    } finally {
+      setSignPreflightId(null);
+    }
+  };
+
+  /** Сваля подписания PDF за вече подписан документ. */
+  const handleDownloadSigned = async (doc: DocumentRow) => {
+    if (!doc.signed_storage_path) return;
+    setDownloadingSignedId(doc.id);
+    try {
+      const url = await getSignedDownloadUrl(doc.signed_storage_path);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.original_filename.replace(/\.pdf$/i, '_signed.pdf');
+      a.click();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Грешка при сваляне.');
+    } finally {
+      setDownloadingSignedId(null);
     }
   };
 
@@ -97,19 +151,18 @@ export default function DocumentList({ userId }: DocumentListProps) {
         </button>
       </div>
 
-      {/* Upload зона — след успешно качване извиква load() за обновяване на списъка */}
+      {/* Upload зона */}
       <div className="mb-8">
         <UploadDocument userId={userId} onUploaded={load} />
       </div>
 
-      {/* Грешка при зареждане на списъка */}
+      {/* Грешка при зареждане */}
       {error && (
         <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       )}
 
-      {/* Списък с документи */}
+      {/* Списък */}
       {loading && documents.length === 0 ? (
-        // Начално зареждане — само spinner (без "Все още няма документи")
         <div className="flex justify-center py-12 text-neutral-400">
           <RefreshCw size={20} className="animate-spin" />
         </div>
@@ -123,18 +176,21 @@ export default function DocumentList({ userId }: DocumentListProps) {
           {documents.map((doc) => (
             <div key={doc.id} className="flex gap-3 px-4 py-3">
               {/* Икона */}
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50">
-                <FileText size={18} className="text-indigo-500" />
+              <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                doc.status === 'signed' ? 'bg-emerald-50' : 'bg-indigo-50'
+              }`}>
+                {doc.status === 'signed'
+                  ? <CheckCircle size={18} className="text-emerald-500" />
+                  : <FileText size={18} className="text-indigo-500" />
+                }
               </div>
 
-              {/* Двуредово съдържание за мобилна съвместимост */}
+              {/* Двуредово съдържание */}
               <div className="min-w-0 flex-1">
-                {/* Ред 1: Пълно файлово наименование с пренос (break-all предотвратява overflow) */}
                 <p className="break-all text-sm font-medium leading-snug text-neutral-800">
                   {doc.original_filename}
                 </p>
 
-                {/* Ред 2: Метаданни и действия — flex-wrap за мобилно */}
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <span className="text-xs text-neutral-400">{formatDate(doc.created_at)}</span>
                   <StatusBadge status={doc.status} />
@@ -152,7 +208,37 @@ export default function DocumentList({ userId }: DocumentListProps) {
                     Преглед
                   </button>
 
-                  {/* Бутон изтрий — с inline потвърждение преди действието */}
+                  {/* Бутон Подпиши (само за неподписани) */}
+                  {doc.status !== 'signed' && (
+                    <button
+                      onClick={() => handleSignClick(doc)}
+                      disabled={signPreflightId === doc.id}
+                      className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2.5 py-1 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50"
+                    >
+                      {signPreflightId === doc.id
+                        ? <RefreshCw size={11} className="animate-spin" />
+                        : <PenLine size={11} />
+                      }
+                      Подпиши
+                    </button>
+                  )}
+
+                  {/* Бутон Свали подписан (само за подписани) */}
+                  {doc.status === 'signed' && doc.signed_storage_path && (
+                    <button
+                      onClick={() => handleDownloadSigned(doc)}
+                      disabled={downloadingSignedId === doc.id}
+                      className="flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-50 disabled:opacity-50"
+                    >
+                      {downloadingSignedId === doc.id
+                        ? <RefreshCw size={11} className="animate-spin" />
+                        : <Download size={11} />
+                      }
+                      Свали подписан
+                    </button>
+                  )}
+
+                  {/* Бутон изтриване */}
                   {confirmDeleteId === doc.id ? (
                     <div className="flex items-center gap-1">
                       <button
@@ -179,13 +265,18 @@ export default function DocumentList({ userId }: DocumentListProps) {
                     </button>
                   )}
                 </div>
+
+                {/* Inline preflight error под бутоните */}
+                {signPreflightId !== doc.id && signPreflight && signingDoc === null && (
+                  <p className="mt-1.5 text-xs text-red-600">{signPreflight}</p>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* PDF Viewer — fullscreen overlay, показван когато viewingUrl е зададен */}
+      {/* PDF Viewer */}
       {viewingUrl && viewingDocId && (
         <PdfViewer
           url={viewingUrl}
@@ -194,11 +285,35 @@ export default function DocumentList({ userId }: DocumentListProps) {
           onClose={() => { setViewingUrl(null); setViewingName(''); setViewingDocId(null); }}
         />
       )}
+
+      {/* Sign Document Modal */}
+      {signingDoc && (
+        <SignDocumentModal
+          documentId={signingDoc.id}
+          storagePath={signingDoc.storage_path}
+          filename={signingDoc.original_filename}
+          userId={userId}
+          onDone={() => {
+            setSigningDoc(null);
+            load();
+            showToast('Документът е подписан успешно.');
+          }}
+          onClose={() => setSigningDoc(null)}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-neutral-900 px-5 py-3 text-sm text-white shadow-xl">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Цветен бадж за статуса на документа. */
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
 function StatusBadge({ status }: { status: DocumentRow['status'] }) {
   if (status === 'signed') {
     return (
@@ -214,15 +329,12 @@ function StatusBadge({ status }: { status: DocumentRow['status'] }) {
   );
 }
 
-/** Форматира ISO дата като "5 юли 2026 г." на български. */
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('bg-BG', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
+      day: 'numeric', month: 'long', year: 'numeric',
     });
   } catch {
-    return iso; // fallback при невалидна дата
+    return iso;
   }
 }

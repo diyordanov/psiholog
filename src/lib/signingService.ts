@@ -153,10 +153,12 @@ export async function signDocument(
   fontBytes: Uint8Array,
   extractPrf?: PrfExtractor,
   extractDualPrf?: DualPrfExtractor,
+  onProgress?: (pct: number, label: string) => void,
 ): Promise<SignDocumentResult> {
   const signingDate = new Date();
 
   // ── 1. Fetch документа + validate status ──────────────────────────────────
+  onProgress?.(5, 'Проверка на документа...');
   const { data: docRow, error: docErr } = await supabase
     .from('documents')
     .select('storage_path, original_filename, status')
@@ -178,9 +180,11 @@ export async function signDocument(
   }
 
   // ── 3. Resolve ключове + cert validation ──────────────────────────────────
+  onProgress?.(15, 'Намиране на ключове...');
   const keys = await resolveSigningKeys();
 
   // ── 4. PRF ceremony(ies) → AES ключове → decrypt secret keys ─────────────
+  onProgress?.(35, 'Биометрична верификация...');
   let ecdsaSecretKey: Uint8Array | null = null;
   let mlDsaSecretKey: Uint8Array | null = null;
 
@@ -246,6 +250,7 @@ export async function signDocument(
     const messageDigest = hashByteRanges(prepared.bytes, byteRange);
 
     // ── 8. ECDSA P-256 подпис + CMS с leaf cert + Root CA chain ──────────
+    onProgress?.(55, 'Подписване ECDSA P-256...');
     const signedAttrs   = buildSignedAttrs(messageDigest);
     const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
     const cmsDer        = buildCmsDetached(
@@ -260,6 +265,7 @@ export async function signDocument(
     let mlDsaKeyIdUsed: string | null  = keys.mlDsaKeyId;
 
     if (mlDsaSecretKey && keys.mlDsaData) {
+      onProgress?.(70, 'Подписване ML-DSA-65...');
       const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, messageDigest);
       pqData = {
         algorithm:       'ml-dsa-65',
@@ -279,6 +285,7 @@ export async function signDocument(
     const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
 
     // ── 11. Upload в signed-documents bucket ──────────────────────────────
+    onProgress?.(85, 'Качване на документа...');
     const signedPath = `${userId}/${documentId}_signed.pdf`;
     const { error: ulErr } = await supabase.storage
       .from('signed-documents')
