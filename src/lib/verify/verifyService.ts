@@ -56,9 +56,10 @@ export interface VerifyOptions {
 export async function verifyCertChain(
   leafCertDer: Uint8Array,
   rootCaCertDer: Uint8Array = ROOT_CA_CERT_DER,
-): Promise<{ status: CertChainStatus; expiry: Date; signerName: string }> {
+): Promise<{ status: CertChainStatus; expiry: Date; signerName: string; issuerName: string }> {
   const leaf   = new x509.X509Certificate(leafCertDer);
   const rootCa = new x509.X509Certificate(rootCaCertDer);
+  const issuerName = extractCn(leaf.issuer);
 
   // Validity period
   const now = new Date();
@@ -67,6 +68,7 @@ export async function verifyCertChain(
       status: 'expired',
       expiry: leaf.notAfter,
       signerName: extractCn(leaf.subject),
+      issuerName,
     };
   }
 
@@ -80,6 +82,7 @@ export async function verifyCertChain(
       status: 'chain_invalid',
       expiry: leaf.notAfter,
       signerName: extractCn(leaf.subject),
+      issuerName,
     };
   }
 
@@ -87,6 +90,7 @@ export async function verifyCertChain(
     status: 'ok',
     expiry: leaf.notAfter,
     signerName: extractCn(leaf.subject),
+    issuerName,
   };
 }
 
@@ -286,6 +290,8 @@ export async function verifyDocument(
     signedAt,
     certStatus:  chainResult.status,
     certExpiry:  chainResult.expiry,
+    certIssuer:  chainResult.issuerName,
+    certDer:     leafCertDer,
     errorMessage: ecdsaResult.errorMessage,
   };
 

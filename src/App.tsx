@@ -22,8 +22,9 @@ import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
 import DocumentList from './components/documents/DocumentList';
 import KeyManagement from './components/keys/KeyManagement';
+import VerifyPage from './components/verify/VerifyPage';
 
-type ActiveTab = 'documents' | 'keys';
+type ActiveTab = 'documents' | 'keys' | 'verify';
 
 /**
  * Проверява дали текущият URL съдържа ?recovery=1.
@@ -64,6 +65,11 @@ function AppContent() {
   const { session, loading } = useAuth();
   const [needsPasskeySetup, setNeedsPasskeySetup] = useState(false);
   const [checkingPasskeys, setCheckingPasskeys] = useState(false);
+
+  // /verify е публична страница — показва се без auth, дори на не-логнати потребители
+  if (window.location.pathname === '/verify') {
+    return <VerifyPage standalone />;
+  }
 
   // Инициализираме на true веднага ако ?recovery=1 е в URL-а.
   // Ако го инициализираме на false и после го сетваме в useEffect,
@@ -144,7 +150,7 @@ function AppContent() {
   return <MainApp userId={session.user.id} />;
 }
 
-/** Главното приложение с таб навигация: Документи | Ключове. */
+/** Главното приложение с таб навигация: Документи | Ключове | Провери. */
 function MainApp({ userId }: { userId: string }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('documents');
 
@@ -159,6 +165,7 @@ function MainApp({ userId }: { userId: string }) {
             [
               ['documents', 'Документи'],
               ['keys', 'Ключове'],
+              ['verify', 'Провери документ'],
             ] as [ActiveTab, string][]
           ).map(([tab, label]) => (
             <button
@@ -176,10 +183,9 @@ function MainApp({ userId }: { userId: string }) {
         </nav>
       </div>
 
-      {activeTab === 'documents'
-        ? <DocumentList userId={userId} />
-        : <KeyManagement userId={userId} />
-      }
+      {activeTab === 'documents' && <DocumentList userId={userId} />}
+      {activeTab === 'keys'      && <KeyManagement userId={userId} />}
+      {activeTab === 'verify'    && <VerifyPage standalone={false} />}
     </main>
   );
 }

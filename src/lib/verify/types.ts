@@ -26,6 +26,10 @@ export interface EcdsaVerifyResult {
   signedAt: Date | null;
   certStatus: CertChainStatus | null;
   certExpiry: Date | null;
+  /** CN на издателя (от X.509 cert.issuer). */
+  certIssuer: string | null;
+  /** Raw DER байтове на leaf сертификата — за CertificateModal. */
+  certDer: Uint8Array | null;
   /** Ясно съобщение при невалиден статус (на български). */
   errorMessage?: string;
 }
