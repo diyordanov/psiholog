@@ -27,11 +27,6 @@ export interface MarkerPos {
   y: number;      // PDF points от долу
 }
 
-interface PageDims {
-  widthPt: number;
-  heightPt: number;
-}
-
 type ModalStage = 'position' | 'confirm' | 'signing' | 'done' | 'error';
 
 interface SignDocumentModalProps {
