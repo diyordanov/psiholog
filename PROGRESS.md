@@ -2,7 +2,38 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅. Следва: Фаза 5 Ден 2 (Verify UI).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅ · Фаза 5 Ден 2 ✅. Следва: Фаза 5 Ден 3 (PDF report download).
+
+---
+
+## Фаза 5: Ден 2 — Verify UI — ЗАВЪРШЕН ✅ (2026-07-11)
+
+### Резултати
+
+- ✅ Публична страница `/verify` (без login) — `psiholog.pages.dev/verify`
+- ✅ Таб „Провери документ" в главното меню за логнати потребители
+- ✅ Верифициран в production: зелен банер, подписал, дата, издател, верига доверена
+- ✅ Стари документи (без ML-DSA): „PQ: не е приложен" без фалшива грешка
+
+### Нови компоненти (5 файла)
+
+- `src/components/verify/UploadZone.tsx` — drag & drop, 50 MB лимит, privacy notice „файловете не се изпращат никъде"
+- `src/components/verify/VerifyPage.tsx` — state machine (idle → verifying → done → fileerror), 5-стъпкова прогрес анимация (350 ms/стъпка)
+- `src/components/verify/VerifyResult.tsx` — Layer 1 hero банер (зелен/жълт/червен/неутрален) с иконка, подписал, дата
+- `src/components/verify/TechnicalDetails.tsx` — Layer 2 collapsible секции (ECDSA P-256, ML-DSA-65, SHA-256 хеш + copy, byte range)
+- `src/components/verify/CertificateModal.tsx` — X.509 детайли modal (subject, issuer, serial, дати, алгоритъм, DER размер)
+
+### Обновени файлове
+
+- `src/App.tsx` — `/verify` public route (без auth) + таб „Провери документ" за логнати
+- `src/lib/verify/types.ts` — `certIssuer: string | null`, `certDer: Uint8Array | null` в `EcdsaVerifyResult`
+- `src/lib/verify/verifyService.ts` — `issuerName` в `verifyCertChain` резултата
+- `public/_redirects` — Cloudflare Pages SPA routing (`/* /index.html 200`)
+
+### Бъгове оправени
+
+- 10 TypeScript грешки блокираха Cloudflare build: duplicate identifier, unused imports, `Uint8Array<ArrayBufferLike>` → `Uint8Array<ArrayBuffer>` casts (TS 5.5 strict typing), липсващо `publicKey: null` в test mock обекти
+- ML-DSA „Грешка" label скрит за `not_included` статус (информационен, не грешка)
 
 ---
 
