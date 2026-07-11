@@ -30,6 +30,8 @@ export interface EcdsaVerifyResult {
   certIssuer: string | null;
   /** Raw DER байтове на leaf сертификата — за CertificateModal. */
   certDer: Uint8Array | null;
+  /** P1363 подписни байтове — за fingerprint в доклада. */
+  sigBytes: Uint8Array | null;
   /** Ясно съобщение при невалиден статус (на български). */
   errorMessage?: string;
 }
@@ -37,6 +39,8 @@ export interface EcdsaVerifyResult {
 export interface MlDsaVerifyResult {
   status: SignatureStatus;
   algorithm: 'ml-dsa-65';
+  /** Raw подписни байтове — за fingerprint в доклада. */
+  sigBytes?: Uint8Array;
   errorMessage?: string;
 }
 

@@ -183,6 +183,7 @@ export function verifyMlDsaSignature(
     return {
       status: valid ? 'valid' : 'invalid',
       algorithm: 'ml-dsa-65',
+      sigBytes: sig,
       errorMessage: valid ? undefined : 'ML-DSA-65 подписът е невалиден.',
     };
   } catch (e) {
@@ -292,6 +293,7 @@ export async function verifyDocument(
     certExpiry:  chainResult.expiry,
     certIssuer:  chainResult.issuerName,
     certDer:     leafCertDer,
+    sigBytes:    ecdsaSigP1363,
     errorMessage: ecdsaResult.errorMessage,
   };
 

@@ -9,9 +9,11 @@
  *   red    → tampered | invalid | error
  *   neutral→ unsigned
  */
-import { CheckCircle, AlertTriangle, XCircle, Info, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCircle, AlertTriangle, XCircle, Info, RotateCcw, Download, Loader2 } from 'lucide-react';
 import type { VerifyResult as VResult } from '../../lib/verify/types';
 import TechnicalDetails from './TechnicalDetails';
+import { generateVerificationReport, reportFileName } from '../../lib/verify/reportGenerator';
 
 interface Props {
   result: VResult;
@@ -70,6 +72,25 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
   const kind = getKind(result);
   const { banner, iconColor, Icon } = KIND_CFG[kind];
   const heading = getHeading(result);
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownloadReport() {
+    setDownloading(true);
+    try {
+      const bytes = await generateVerificationReport(result, fileName);
+      const blob = new Blob([bytes as unknown as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = reportFileName(fileName);
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const showReport = result.overall === 'authentic' || result.overall === 'tampered' || result.overall === 'invalid';
 
   return (
     <div className="space-y-4">
@@ -128,6 +149,20 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       {/* ── Layer 2: Технически детайли ── */}
       {result.overall !== 'error' && result.overall !== 'unsigned' && (
         <TechnicalDetails result={result} />
+      )}
+
+      {/* ── Свали верификационен доклад ── */}
+      {showReport && (
+        <div className="flex justify-center">
+          <button
+            onClick={handleDownloadReport}
+            disabled={downloading}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            Свали верификационен доклад
+          </button>
+        </div>
       )}
 
       {/* ── Провери друг документ ── */}
