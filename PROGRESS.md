@@ -2,7 +2,32 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅ · Фаза 5 Ден 2 ✅. Следва: Фаза 5 Ден 3 (PDF report download).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅ · Фаза 5 Ден 2 ✅ · Фаза 5 Ден 3 ✅. Следва: Фаза 5 Ден 4 (TBD).
+
+---
+
+## Фаза 5: Ден 3 — PDF верификационен доклад — ЗАВЪРШЕН ✅ (2026-07-11)
+
+### Резултати
+
+- ✅ Бутон „Свали верификационен доклад" в VerifyResult (индиго, само за authentic/tampered/invalid)
+- ✅ A4 PDF с кирилица — рендира се в Adobe Reader без проблем
+- ✅ 15.3 KB размер (font subsetting работи: само ползваните glyphs)
+- ✅ Всички секции: ECDSA P-256, ML-DSA-65, SHA-256 хеш, byte range
+- ✅ SHA-256 fingerprints за подпис и сертификат (първите 16 hex chars)
+- ✅ Верижна визуализация: Подписал → Root CA → trust anchor статус
+- ✅ Цветен status банер (зелен/жълт/червен/неутрален)
+
+### Нови файлове
+
+- `src/lib/verify/reportGenerator.ts` — `generateVerificationReport(result, fileName): Promise<Uint8Array>`; A4 layout с pdf-lib + NotoSans fontkit subsetting; `reportFileName()` helper
+- `src/__tests__/reportGenerator.test.ts` — 7 теста: 4 smoke за OverallStatus варианти + 3 filename тестa
+
+### Обновени файлове
+
+- `src/components/verify/VerifyResult.tsx` — download бутон с spinner loading state
+- `src/lib/verify/types.ts` — `sigBytes: Uint8Array | null` в EcdsaVerifyResult; `sigBytes?: Uint8Array` в MlDsaVerifyResult
+- `src/lib/verify/verifyService.ts` — `sigBytes` попълнен в ECDSA и ML-DSA резултати
 
 ---
 
