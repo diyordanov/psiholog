@@ -30,7 +30,7 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function CertificateModal({ certDer, onClose }: Props) {
   let cert: x509.X509Certificate;
   try {
-    cert = new x509.X509Certificate(certDer);
+    cert = new x509.X509Certificate(certDer as unknown as Uint8Array<ArrayBuffer>);
   } catch {
     return (
       <Overlay onClose={onClose}>

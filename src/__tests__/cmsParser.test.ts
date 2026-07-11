@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { derToP1363, makeSignedAttrsSet, parseCms } from '../lib/pdf/cmsParser';
 import {
-  buildSignedAttrs, buildCmsDetached, extractCertInfo,
+  buildSignedAttrs, buildCmsDetached,
 } from '../lib/pdf/cmsBuilder';
 import * as x509 from '@peculiar/x509';
 import { initTestKeys, type TestKeys } from './helpers/signingFixtures';
@@ -72,7 +72,7 @@ describe('parseCms', () => {
       await crypto.subtle.sign(
         { name: 'ECDSA', hash: 'SHA-256' },
         keys.leafKeys.privateKey,
-        signedAttrs,
+        signedAttrs as unknown as Uint8Array<ArrayBuffer>,
       ),
     );
     const cmsDer = buildCmsDetached(messageDigest, ecdsaSig, keys.leafCertDer, keys.rootCaCertDer);
@@ -101,22 +101,22 @@ describe('parseCms', () => {
       await crypto.subtle.sign(
         { name: 'ECDSA', hash: 'SHA-256' },
         keys.leafKeys.privateKey,
-        signedAttrs,
+        signedAttrs as unknown as Uint8Array<ArrayBuffer>,
       ),
     );
     const cmsDer = buildCmsDetached(messageDigest, ecdsaSig, keys.leafCertDer, keys.rootCaCertDer);
     const parsed = parseCms(cmsDer);
 
     // Верифицираме re-tagged signedAttrs с публичния ключ от cert-а
-    const leaf = new x509.X509Certificate(parsed.leafCertDer);
+    const leaf = new x509.X509Certificate(parsed.leafCertDer as unknown as Uint8Array<ArrayBuffer>);
     const pubKey = await leaf.publicKey.export();
     const signedAttrsSet = makeSignedAttrsSet(parsed.signedAttrsImplicit);
 
     const valid = await crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
       pubKey,
-      parsed.ecdsaSigP1363,
-      signedAttrsSet,
+      parsed.ecdsaSigP1363 as unknown as Uint8Array<ArrayBuffer>,
+      signedAttrsSet as unknown as Uint8Array<ArrayBuffer>,
     );
     expect(valid).toBe(true);
   });
@@ -133,7 +133,7 @@ describe('parseCms', () => {
       await crypto.subtle.sign(
         { name: 'ECDSA', hash: 'SHA-256' },
         keys.leafKeys.privateKey,
-        signedAttrs,
+        signedAttrs as unknown as Uint8Array<ArrayBuffer>,
       ),
     );
     const cmsDer = buildCmsDetached(badDigest, ecdsaSig, keys.leafCertDer);

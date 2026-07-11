@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import {
   ChevronDown, ChevronRight,
-  CheckCircle, XCircle, AlertTriangle, MinusCircle, Copy,
+  CheckCircle, XCircle, MinusCircle, Copy,
 } from 'lucide-react';
 import type { VerifyResult, SignatureStatus, CertChainStatus } from '../../lib/verify/types';
 import CertificateModal from './CertificateModal';

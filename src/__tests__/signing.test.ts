@@ -65,7 +65,7 @@ function setupMocks() {
   vi.mocked(fetchKeyDecryptData).mockResolvedValue({
     encryptedSecretKey: new Uint8Array(150).fill(0xaa),
     prfSalt: SALT, wrappedKeyIv: new Uint8Array(12), credentialId: CRED,
-    algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT,
+    algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT, publicKey: null,
   });
   vi.mocked(deriveAesKeyFromPRF).mockResolvedValue({ aesKey: {} as CryptoKey, credentialId: CRED });
   vi.mocked(decryptPrivateKey).mockResolvedValue(FAKE_KEY);

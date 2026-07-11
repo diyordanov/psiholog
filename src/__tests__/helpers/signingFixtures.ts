@@ -195,7 +195,7 @@ async function signPdf(opts: SignOptions): Promise<Uint8Array> {
   // Подписваме signedAttrs (SET bytes, tag 0x31) директно с CryptoKey.
   // buildCmsDetached() вътрешно пресъздава signedAttrs — подаваме messageDigest.
   const ecdsaSigReal = new Uint8Array(
-    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, opts.privateKey, signedAttrs),
+    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, opts.privateKey, signedAttrs as unknown as Uint8Array<ArrayBuffer>),
   );
   void signedAttrs; // изчислен по-горе, ползван само за подписването
 
@@ -272,7 +272,7 @@ export async function makeModifiedSignaturePdf(keys: TestKeys): Promise<Uint8Arr
   // Генерираме валиден ECDSA подпис, после флипваме 10+ байта дълбоко в r-компонента
   const signedAttrs = buildSignedAttrs(messageDigest);
   const realSig = new Uint8Array(
-    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, signedAttrs),
+    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, signedAttrs as unknown as Uint8Array<ArrayBuffer>),
   );
   // Флипваме байтове 12..15 в P1363 (дълбоко в r, далеч от DER структурните байтове)
   const corruptedSig = new Uint8Array(realSig);
@@ -348,7 +348,7 @@ export async function makeMlDsaInvalidPdf(keys: TestKeys): Promise<Uint8Array> {
 
   const signedAttrs = buildSignedAttrs(messageDigest);
   const ecdsaSig = new Uint8Array(
-    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, signedAttrs),
+    await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, signedAttrs as unknown as Uint8Array<ArrayBuffer>),
   );
   const cmsDer = buildCmsDetached(messageDigest, ecdsaSig, keys.leafCertDer, keys.rootCaCertDer);
 

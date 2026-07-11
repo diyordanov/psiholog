@@ -12,7 +12,7 @@
 import { useState, useCallback } from 'react';
 import { ShieldCheck, AlertTriangle, X } from 'lucide-react';
 import { verifyDocument } from '../../lib/verify/verifyService';
-import type { VerifyResult } from '../../lib/verify/types';
+import type { VerifyResult as VerifyResultData } from '../../lib/verify/types';
 import UploadZone from './UploadZone';
 import VerifyResult from './VerifyResult';
 
@@ -28,7 +28,7 @@ const STAGES = [
 type PageState =
   | { kind: 'idle' }
   | { kind: 'verifying'; stageName: string }
-  | { kind: 'done';      result: VerifyResult; fileName: string }
+  | { kind: 'done';      result: VerifyResultData; fileName: string }
   | { kind: 'fileerror'; message: string };
 
 interface Props {

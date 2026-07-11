@@ -57,8 +57,8 @@ export async function verifyCertChain(
   leafCertDer: Uint8Array,
   rootCaCertDer: Uint8Array = ROOT_CA_CERT_DER,
 ): Promise<{ status: CertChainStatus; expiry: Date; signerName: string; issuerName: string }> {
-  const leaf   = new x509.X509Certificate(leafCertDer);
-  const rootCa = new x509.X509Certificate(rootCaCertDer);
+  const leaf   = new x509.X509Certificate(leafCertDer as unknown as Uint8Array<ArrayBuffer>);
+  const rootCa = new x509.X509Certificate(rootCaCertDer as unknown as Uint8Array<ArrayBuffer>);
   const issuerName = extractCn(leaf.issuer);
 
   // Validity period
@@ -122,7 +122,7 @@ export async function verifyEcdsaSignature(
 
   // Стъпка 2: ECDSA verify над signedAttrs
   try {
-    const leaf = new x509.X509Certificate(leafCertDer);
+    const leaf = new x509.X509Certificate(leafCertDer as unknown as Uint8Array<ArrayBuffer>);
     const publicKey = await leaf.publicKey.export();
 
     // Сменяме 0xA0 → 0x31 (SET) за верификация
@@ -131,8 +131,8 @@ export async function verifyEcdsaSignature(
     const valid = await crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
       publicKey,
-      ecdsaSigP1363,
-      signedAttrsSet,
+      ecdsaSigP1363 as unknown as Uint8Array<ArrayBuffer>,
+      signedAttrsSet as unknown as Uint8Array<ArrayBuffer>,
     );
     return { valid, tampered: false, errorMessage: valid ? undefined : 'ECDSA подписът е невалиден.' };
   } catch (e) {

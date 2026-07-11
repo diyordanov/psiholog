@@ -182,6 +182,7 @@ beforeEach(() => {
     credentialId:       CRED_SAME,
     algorithm:          'ecdsa-p256' as const,
     certificateDer:     FAKE_CERT_DER,
+    publicKey:          null,
   });
 
   // PRF + decrypt defaults
@@ -212,7 +213,7 @@ describe('resolveSigningKeys', () => {
     vi.mocked(fetchKeyDecryptData).mockResolvedValueOnce({
       encryptedSecretKey: new Uint8Array(1), prfSalt: ECDSA_PRF_SALT,
       wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-      algorithm: 'ecdsa-p256' as const, certificateDer: null,
+      algorithm: 'ecdsa-p256' as const, certificateDer: null, publicKey: null,
     });
 
     await expect(resolveSigningKeys()).rejects.toThrow('ECDSA ключът няма сертификат');
@@ -226,12 +227,12 @@ describe('resolveSigningKeys', () => {
       .mockResolvedValueOnce({
         encryptedSecretKey: new Uint8Array(1), prfSalt: ECDSA_PRF_SALT,
         wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-        algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER,
+        algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER, publicKey: null,
       })
       .mockResolvedValueOnce({
         encryptedSecretKey: new Uint8Array(1), prfSalt: ML_DSA_PRF_SALT,
         wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-        algorithm: 'ml-dsa-65' as const, certificateDer: null,
+        algorithm: 'ml-dsa-65' as const, certificateDer: null, publicKey: null,
       });
 
     const result = await resolveSigningKeys();
@@ -247,12 +248,12 @@ describe('resolveSigningKeys', () => {
       .mockResolvedValueOnce({
         encryptedSecretKey: new Uint8Array(1), prfSalt: ECDSA_PRF_SALT,
         wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-        algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER,
+        algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER, publicKey: null,
       })
       .mockResolvedValueOnce({
         encryptedSecretKey: new Uint8Array(1), prfSalt: ML_DSA_PRF_SALT,
         wrappedKeyIv: new Uint8Array(12), credentialId: CRED_DIFF,
-        algorithm: 'ml-dsa-65' as const, certificateDer: null,
+        algorithm: 'ml-dsa-65' as const, certificateDer: null, publicKey: null,
       });
 
     const result = await resolveSigningKeys();
@@ -266,7 +267,7 @@ describe('resolveSigningKeys', () => {
     vi.mocked(fetchKeyDecryptData).mockResolvedValueOnce({
       encryptedSecretKey: new Uint8Array(1), prfSalt: ECDSA_PRF_SALT,
       wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-      algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER,
+      algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER, publicKey: null,
     });
 
     const result = await resolveSigningKeys();
@@ -294,13 +295,13 @@ describe('signDocument', () => {
         return {
           encryptedSecretKey: new Uint8Array(150).fill(0xaa), prfSalt: ECDSA_PRF_SALT,
           wrappedKeyIv: new Uint8Array(12).fill(3), credentialId: CRED_SAME,
-          algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER,
+          algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER, publicKey: null,
         };
       }
       return {
         encryptedSecretKey: new Uint8Array(150).fill(0xbb), prfSalt: ML_DSA_PRF_SALT,
         wrappedKeyIv: new Uint8Array(12).fill(4), credentialId: mlCred,
-        algorithm: 'ml-dsa-65' as const, certificateDer: null,
+        algorithm: 'ml-dsa-65' as const, certificateDer: null, publicKey: null,
       };
     });
   }
@@ -345,7 +346,7 @@ describe('signDocument', () => {
     vi.mocked(fetchKeyDecryptData).mockResolvedValue({
       encryptedSecretKey: new Uint8Array(1), prfSalt: ECDSA_PRF_SALT,
       wrappedKeyIv: new Uint8Array(12), credentialId: CRED_SAME,
-      algorithm: 'ecdsa-p256' as const, certificateDer: null,
+      algorithm: 'ecdsa-p256' as const, certificateDer: null, publicKey: null,
     });
 
     await expect(
@@ -375,7 +376,7 @@ describe('signDocument', () => {
     vi.mocked(fetchKeyDecryptData).mockResolvedValue({
       encryptedSecretKey: new Uint8Array(150).fill(0xaa), prfSalt: ECDSA_PRF_SALT,
       wrappedKeyIv: new Uint8Array(12).fill(3), credentialId: CRED_SAME,
-      algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER,
+      algorithm: 'ecdsa-p256' as const, certificateDer: FAKE_CERT_DER, publicKey: null,
     });
     setupDocumentAndSignatureMocks();
 

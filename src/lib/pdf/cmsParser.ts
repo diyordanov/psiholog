@@ -82,24 +82,6 @@ function readTlv(bytes: Uint8Array, offset: number): TLV {
   };
 }
 
-/**
- * Итерира последователно TLV-та вътре в value bytes.
- * Удобно за обхождане на SEQUENCE и SET съдържание.
- */
-function* iterTlvs(bytes: Uint8Array): Generator<TLV & { offset: number }> {
-  let pos = 0;
-  while (pos < bytes.length) {
-    const tlv = readTlv(bytes, pos);
-    yield { ...tlv, offset: pos };
-    pos = tlv.next - 0; // next е absolute в оригиналния bytes
-    // Тъй като bytes е subarray, next е относително спрямо оригиналния буфер.
-    // readTlv работи с offset в bytes, next = pos_in_bytes + len
-    // Трябва да го нормализираме:
-    break; // readTlv.next е в пространството на bytes, не subarray
-  }
-  // NOTE: горната имплементация е неправилна за вложени subarray.
-  // Коригираме с локален offset:
-}
 
 /**
  * Итерира TLV-та вътре в bytes с ЛОКАЛЕН offset (0-based в bytes).
@@ -290,10 +272,6 @@ export function parseCms(cmsBytes: Uint8Array): ParsedCms {
 
   // ── signedAttrsImplicit: реконструираме пълните байтове (tag + len + value) ──
   // Нужни за makeSignedAttrsSet() → верификация
-  const signedAttrsStart = signerInfoTlv.value.indexOf(signedAttrsNode.tag as never);
-  // По-надеждно: намираме offset на signedAttrsNode в siChildren
-  // Всъщност iterChildren ни дава value без оригиналния offset.
-  // Трябва да реконструираме tag+len+value:
   const signedAttrsImplicit = rebuildTlv(0xa0, signedAttrsNode.value);
 
   // ── messageDigest: извлича се от signedAttrs ──

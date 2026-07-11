@@ -15,7 +15,7 @@
  *   ml-dsa-invalid     → invalid,   ECDSA valid, ML-DSA invalid
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { verifyDocument } from '../lib/verify/verifyService';
 import {
   initTestKeys, type TestKeys,
