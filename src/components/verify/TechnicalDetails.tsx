@@ -143,7 +143,7 @@ export default function TechnicalDetails({ result }: Props) {
                 Класическият подпис е напълно валиден.
               </p>
             )}
-            {mlDsa.errorMessage && (
+            {mlDsa.errorMessage && mlDsa.status !== 'not_included' && (
               <Field label="Грешка"><span className="text-red-600">{mlDsa.errorMessage}</span></Field>
             )}
           </>
