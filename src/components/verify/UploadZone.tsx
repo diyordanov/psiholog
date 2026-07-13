@@ -72,7 +72,10 @@ export default function UploadZone({ onFile, onError }: Props) {
 
       <div>
         <p className="text-base font-medium text-neutral-800">
-          {isDragOver ? 'Пуснете PDF файла тук' : 'Плъзнете подписан PDF тук или кликнете за избор'}
+          {isDragOver
+            ? 'Пуснете PDF файла тук'
+            : <><span className="hidden sm:inline">Плъзнете подписан PDF тук или </span><span className="sm:hidden">Докоснете за да изберете PDF или </span><span className="sm:inline">кликнете за избор</span></>
+          }
         </p>
         <p className="mt-1 text-sm text-neutral-500">Максимален размер 50 MB</p>
       </div>

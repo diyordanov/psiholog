@@ -157,7 +157,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
           <button
             onClick={handleDownloadReport}
             disabled={downloading}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
             Свали верификационен доклад
@@ -169,7 +169,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       <div className="flex justify-center pt-2">
         <button
           onClick={onReset}
-          className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 active:scale-95 transition-transform"
+          className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-5 py-3 text-sm font-medium text-neutral-700 hover:bg-neutral-50 active:scale-95 transition-transform"
         >
           <RotateCcw size={15} />
           Провери друг документ

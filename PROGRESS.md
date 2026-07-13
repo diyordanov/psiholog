@@ -2,7 +2,36 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · Фаза 5 Ден 1 ✅ · Фаза 5 Ден 2 ✅ · Фаза 5 Ден 3 ✅. Следва: Фаза 5 Ден 4 (TBD).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4). Следва: Фаза 6 (Polish + Security).
+
+---
+
+## Фаза 5: Ден 4 — Финализация + Edge Cases + Mobile — ЗАВЪРШЕН ✅ (2026-07-13)
+
+### Резултати
+
+- ✅ Edge cases: 10 нови теста — corrupt PDF, empty buffer, 49 MB, PDF/A, multiple ByteRange
+- ✅ Performance: pdfSanitizer 49 MB: 6.5s → 0.47s (TextDecoder оптимизация)
+- ✅ Mobile responsive: тествано на live устройство — всичко работи
+- ✅ Adobe compare: SignShield Verify съгласуван с Adobe Reader за valid + modified сценарии
+- ✅ DB чисто: 0 test artifacts в production
+
+### Нови файлове
+
+- `src/__tests__/edgeCases.test.ts` — 10 edge case теста за verifyDocument()
+- `docs/adobe-vs-signshield-verify.md` — semantic mapping table (Adobe ↔ SignShield)
+
+### Обновени файлове
+
+- `src/lib/pdfSanitizer.ts` — `TextDecoder('latin1').decode()` заменя string concat (13× по-бързо)
+- `src/components/verify/CertificateModal.tsx` — `max-h-[85vh]` + `overflow-y-auto` + 44px close button
+- `src/components/verify/VerifyResult.tsx` — 44px touch targets (Download + Reset бутони)
+- `src/components/verify/UploadZone.tsx` — responsive текст (mobile: „Докоснете за избор")
+
+### Пропуснато (документирано)
+
+- Root CA rotation: accepted risk за курсова среда — future work преди production deployment
+- Test data cleanup: DB вече чисто, не беше нужна акция
 
 ---
 

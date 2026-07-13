@@ -65,18 +65,18 @@ function Overlay({ onClose, children }: { onClose: () => void; children: React.R
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
+      <div className="w-full max-w-md rounded-xl bg-white shadow-xl flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4 shrink-0">
           <h3 className="text-sm font-semibold text-neutral-800">Детайли на сертификата</h3>
           <button
             onClick={onClose}
-            className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            className="rounded-lg p-2.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
             aria-label="Затвори"
           >
             <X size={16} />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="px-5 py-4 overflow-y-auto">{children}</div>
       </div>
     </div>
   );
