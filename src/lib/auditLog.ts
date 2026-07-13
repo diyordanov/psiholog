@@ -12,7 +12,6 @@ export type AuditAction =
   | 'login'
   | 'signup'
   | 'logout'
-  | 'recovery_requested'
   | 'recovery_otp_verified'   // потребителят е кликнал recovery линка
   | 'old_passkeys_deleted'    // старите passkey-и са изтрити преди регистрация на нов
   | 'new_passkey_registered'

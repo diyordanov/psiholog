@@ -167,7 +167,10 @@ export async function signDocument(
     .select('storage_path, original_filename, status')
     .eq('id', documentId)
     .single();
-  if (docErr || !docRow) throw new Error(`Документът не е намерен: ${docErr?.message}`);
+  if (docErr || !docRow) {
+    console.error('signDocument: fetch document failed:', docErr?.message);
+    throw new Error('Документът не е намерен или достъпът е отказан.');
+  }
   if (docRow.status === 'signed') throw new Error('Документът вече е подписан.');
 
   // ── 2. Grace period: проверка за double-signing < 30 сек ──────────────────
@@ -232,7 +235,10 @@ export async function signDocument(
     const { data: pdfBlob, error: dlErr } = await supabase.storage
       .from('documents')
       .download(docRow.storage_path as string);
-    if (dlErr || !pdfBlob) throw new Error(`Грешка при изтегляне на PDF: ${dlErr?.message}`);
+    if (dlErr || !pdfBlob) {
+      console.error('signDocument: download PDF failed:', dlErr?.message);
+      throw new Error('Грешка при изтегляне на документа. Опитайте отново.');
+    }
 
     const originalPdfBytes = new Uint8Array(await pdfBlob.arrayBuffer());
 
@@ -296,7 +302,10 @@ export async function signDocument(
         contentType: 'application/pdf',
         upsert: false,   // консистентно с UNIQUE constraint на signatures.signed_storage_path
       });
-    if (ulErr) throw new Error(`Грешка при качване на подписания PDF: ${ulErr.message}`);
+    if (ulErr) {
+      console.error('signDocument: upload signed PDF failed:', ulErr.message);
+      throw new Error('Грешка при качване на подписания документ. Опитайте отново.');
+    }
 
     // ── 12. DB updates ────────────────────────────────────────────────────
     const now = signingDate.toISOString();
@@ -309,7 +318,10 @@ export async function signDocument(
         signed_storage_path:  signedPath,
       })
       .eq('id', documentId);
-    if (docUpdateErr) throw new Error(`Грешка при обновяване на документа: ${docUpdateErr.message}`);
+    if (docUpdateErr) {
+      console.error('signDocument: update document status failed:', docUpdateErr.message);
+      throw new Error('Грешка при обновяване на документа. Опитайте отново.');
+    }
 
     const { data: sigRow, error: sigErr } = await supabase
       .from('signatures')
@@ -329,7 +341,10 @@ export async function signDocument(
       })
       .select('id')
       .single();
-    if (sigErr || !sigRow) throw new Error(`Грешка при запис на подписа: ${sigErr?.message}`);
+    if (sigErr || !sigRow) {
+      console.error('signDocument: insert signature failed:', sigErr?.message);
+      throw new Error('Грешка при запис на подписа. Опитайте отново.');
+    }
 
     await logAuditEvent(userId, 'document_signed', documentId);
 
@@ -350,6 +365,9 @@ export async function getSignedDownloadUrl(signedStoragePath: string): Promise<s
   const { data, error } = await supabase.storage
     .from('signed-documents')
     .createSignedUrl(signedStoragePath, 3600);
-  if (error || !data) throw new Error(`Грешка при генериране на download URL: ${error?.message}`);
+  if (error || !data) {
+    console.error('getSignedDownloadUrl failed:', error?.message);
+    throw new Error('Грешка при генериране на download URL. Опитайте отново.');
+  }
   return data.signedUrl;
 }

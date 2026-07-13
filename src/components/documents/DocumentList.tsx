@@ -14,6 +14,7 @@ import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle } from
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
 import { fetchBestKeyId } from '../../lib/signingKeyStore';
 import { getSignedDownloadUrl } from '../../lib/signingService';
+import { logAuditEvent } from '../../lib/auditLog';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
 import SignDocumentModal from './SignDocumentModal';
@@ -125,6 +126,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
     setDownloadingSignedId(doc.id);
     try {
       const url = await getSignedDownloadUrl(doc.signed_storage_path);
+      await logAuditEvent(userId, 'document_downloaded', doc.id);
       const a = document.createElement('a');
       a.href = url;
       a.download = doc.original_filename.replace(/\.pdf$/i, '_signed.pdf');

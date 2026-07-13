@@ -65,6 +65,7 @@ function AppContent() {
   const { session, loading } = useAuth();
   const [needsPasskeySetup, setNeedsPasskeySetup] = useState(false);
   const [checkingPasskeys, setCheckingPasskeys] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(false);
 
   // /verify е публична страница — показва се без auth, дори на не-логнати потребители
   if (window.location.pathname === '/verify') {
@@ -108,6 +109,7 @@ function AppContent() {
           return;
         }
         logAuditEvent(userId, 'old_passkeys_deleted');
+        setIsNewUser(false); // recovery — not a new signup
         setNeedsPasskeySetup(true);
         setProcessingRecovery(false);
       });
@@ -121,7 +123,9 @@ function AppContent() {
     // презареждане на страницата по средата на регистрационния процес.
     setCheckingPasskeys(true);
     supabase.auth.passkey.list().then(({ data, error }) => {
-      setNeedsPasskeySetup(!error && (data?.length ?? 0) === 0);
+      const noPasskeys = !error && (data?.length ?? 0) === 0;
+      setIsNewUser(noPasskeys); // no passkeys yet = brand-new signup
+      setNeedsPasskeySetup(noPasskeys);
       setCheckingPasskeys(false);
     });
   }, [session?.user.id, session?.user.is_anonymous]);
@@ -138,7 +142,7 @@ function AppContent() {
   // Потребителят е логнат, но няма passkey → трябва да регистрира един.
   // Това се случва при: нова регистрация или след успешен recovery flow.
   if (session && !session.user.is_anonymous && needsPasskeySetup) {
-    return <RegisterPasskeyStep onDone={() => setNeedsPasskeySetup(false)} />;
+    return <RegisterPasskeyStep isNewUser={isNewUser} onDone={() => setNeedsPasskeySetup(false)} />;
   }
 
   // Не е логнат → показваме auth екрана (login / signup / recovery избор).

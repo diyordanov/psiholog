@@ -2,7 +2,51 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4). Следва: Фаза 6 (Polish + Security).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4) · **Фаза 6 Ден 1 ✅** (Security + Audit gaps). Следва: Фаза 6 Ден 2 (Browser compat + Performance).
+
+---
+
+## Фаза 6: Ден 1 — Security + Audit Log — ЗАВЪРШЕН ✅ (2026-07-13)
+
+### Резултати
+
+- ✅ Audit log: `logout` — добавено в `UserMenu.tsx`
+- ✅ Audit log: `signup` — добавено в `RegisterPasskeyStep.tsx` (само за нови потребители, не при recovery)
+- ✅ Audit log: `document_downloaded` за "Свали подписан" бутон — добавено в `DocumentList.tsx`
+- ✅ Error message sanitization: 8 места в `signingService.ts`, `documentUpload.ts`, `signingKeyStore.ts` — Supabase вътрешни съобщения вече само в `console.error`, потребителят вижда generic BG съобщение
+- ✅ Input validation: `display_name` maxLength=50 в `SignUpForm.tsx`
+- ✅ XSS audit: няма `dangerouslySetInnerHTML` / `innerHTML` в цялото приложение
+- ✅ RLS audit: `documents` UPDATE policy вече има `AND deleted_at IS NULL` (от migration 0003) — OK
+
+### Пълно покритие на audit events
+
+| Action | Логва се? | Файл |
+|--------|-----------|------|
+| `login` | ✅ | `SignInForm.tsx:27` |
+| `signup` | ✅ | `RegisterPasskeyStep.tsx` (ново) |
+| `logout` | ✅ | `UserMenu.tsx` (ново) |
+| `recovery_otp_verified` | ✅ | `App.tsx:100` |
+| `old_passkeys_deleted` | ✅ | `App.tsx:110` |
+| `new_passkey_registered` | ✅ | `RegisterPasskeyStep.tsx` |
+| `document_uploaded` | ✅ | `documentUpload.ts` |
+| `document_signed` | ✅ | `signingService.ts` |
+| `document_downloaded` | ✅ | `documentUpload.ts` + `DocumentList.tsx` (ново) |
+| `document_deleted` | ✅ | `documentUpload.ts` |
+| `signing_key_generated` | ✅ | `signingKeyStore.ts` |
+| `signing_key_deleted` | ✅ | `signingKeyStore.ts` |
+| `certificate_issued` | ✅ | `issue-certificate` Edge Function |
+| `signature_verified` | N/A | Verify е публична страница (без user_id) |
+
+### Обновени файлове
+
+- `src/components/UserMenu.tsx` — logout audit event
+- `src/App.tsx` — isNewUser state → различаване на signup vs recovery
+- `src/components/auth/RegisterPasskeyStep.tsx` — isNewUser prop + signup audit event
+- `src/components/documents/DocumentList.tsx` — document_downloaded за signed PDF
+- `src/lib/signingService.ts` — 5 error message sanitizations
+- `src/lib/documentUpload.ts` — 2 error message sanitizations
+- `src/lib/signingKeyStore.ts` — 2 error message sanitizations
+- `src/components/auth/SignUpForm.tsx` — maxLength=50 за display_name
 
 ---
 

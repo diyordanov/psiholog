@@ -40,9 +40,7 @@ export default function RecoveryFlow({ onCancel }: RecoveryFlowProps) {
       return;
     }
 
-    // Логваме заявката за recovery — user_id не е известен тук (не сме логнати),
-    // затова правим отделен запис само с action и user_agent след успешен OTP
-    // (audit_requested се логва в App.tsx след redirect-а, когато имаме user_id).
+    // user_id не е известен тук (не сме логнати) — recovery_otp_verified се логва в App.tsx
     setStatus('sent');
   }
 

@@ -61,6 +61,7 @@ export default function SignUpForm() {
           id="display-name"
           type="text"
           required
+          maxLength={50}
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
           disabled={isBusy}

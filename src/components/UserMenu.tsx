@@ -1,12 +1,14 @@
 import { LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { logAuditEvent } from '../lib/auditLog';
 
 export default function UserMenu() {
   const { user } = useAuth();
   const displayName = (user?.user_metadata.display_name as string | undefined) ?? 'Потребител';
 
   async function handleSignOut() {
+    if (user) await logAuditEvent(user.id, 'logout');
     await supabase.auth.signOut();
   }
 

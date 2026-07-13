@@ -95,7 +95,8 @@ export async function saveSigningKey(params: SaveKeyParams): Promise<string> {
     .single();
 
   if (error || !data) {
-    throw new Error(`Грешка при записване на ключа: ${error?.message ?? 'неизвестна'}`);
+    console.error('saveSigningKey: DB insert failed:', error?.message);
+    throw new Error('Грешка при записване на ключа. Опитайте отново.');
   }
 
   await logAuditEvent(params.userId, 'signing_key_generated', data.id as string);
@@ -139,7 +140,10 @@ export async function softDeleteSigningKey(keyId: string, userId: string): Promi
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', keyId);
 
-  if (error) throw new Error(`Грешка при изтриване на ключа: ${error.message}`);
+  if (error) {
+    console.error('softDeleteSigningKey failed:', error.message);
+    throw new Error('Грешка при изтриване на ключа. Опитайте отново.');
+  }
 
   await logAuditEvent(userId, 'signing_key_deleted', keyId);
 }

@@ -122,8 +122,9 @@ export async function uploadDocument(
     .single();
 
   if (dbError || !data) {
+    console.error('uploadDocument: DB insert failed:', dbError?.message);
     await supabase.storage.from('documents').remove([storagePath]);
-    throw new Error(`Грешка при записване: ${dbError?.message ?? 'неизвестна'}`);
+    throw new Error('Грешка при записване на документа. Опитайте отново.');
   }
 
   await logAuditEvent(userId, 'document_uploaded', data.id as string);
@@ -147,7 +148,8 @@ export async function getDocumentSignedUrl(
     .createSignedUrl(storagePath, 300);
 
   if (error || !data) {
-    throw new Error(`Неуспешно генериране на URL: ${error?.message ?? 'неизвестна'}`);
+    console.error('getDocumentSignedUrl failed:', error?.message);
+    throw new Error('Неуспешно генериране на URL за документа. Опитайте отново.');
   }
 
   await logAuditEvent(userId, 'document_downloaded', documentId);
@@ -165,7 +167,10 @@ export async function softDeleteDocument(documentId: string, userId: string): Pr
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', documentId);
 
-  if (error) throw new Error(`Грешка при изтриване: ${error.message}`);
+  if (error) {
+    console.error('softDeleteDocument failed:', error.message);
+    throw new Error('Грешка при изтриване на документа. Опитайте отново.');
+  }
 
   await logAuditEvent(userId, 'document_deleted', documentId);
 }
