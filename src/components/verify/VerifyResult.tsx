@@ -74,20 +74,32 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
   const heading = getHeading(result);
   const [downloading, setDownloading] = useState(false);
 
-  async function handleDownloadReport() {
+  async function handleOpenReport() {
     setDownloading(true);
+    // Отваряме нов таб СИНХРОННО (преди await) — popup blocker блокира window.open
+    // извикан след await защото браузърът губи контекста на потребителския жест.
+    const tab = window.open('', '_blank');
     try {
       const bytes = await generateVerificationReport(result, fileName);
       const blob = new Blob([bytes as unknown as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });
       const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = reportFileName(fileName);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      // Delay revoke — gives Safari/iOS time to start the download
-      setTimeout(() => URL.revokeObjectURL(url), 150);
+      if (tab) {
+        tab.location.href = url;
+        // Отменяме URL след 60 сек — достатъчно за зареждане в новия таб
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
+        // Popup блокиран — fallback към download
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = reportFileName(fileName);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 150);
+      }
+    } catch (e) {
+      tab?.close();
+      throw e;
     } finally {
       setDownloading(false);
     }
@@ -158,12 +170,12 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       {showReport && (
         <div className="flex justify-center">
           <button
-            onClick={handleDownloadReport}
+            onClick={handleOpenReport}
             disabled={downloading}
             className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-            Свали верификационен доклад
+            Виж верификационен доклад
           </button>
         </div>
       )}

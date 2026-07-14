@@ -125,12 +125,21 @@ export default function DocumentList({ userId }: DocumentListProps) {
     if (!doc.signed_storage_path) return;
     setDownloadingSignedId(doc.id);
     try {
-      const url = await getSignedDownloadUrl(doc.signed_storage_path);
+      const signedUrl = await getSignedDownloadUrl(doc.signed_storage_path);
       await logAuditEvent(userId, 'document_downloaded', doc.id);
+
+      // Изтегляме blob локално — Supabase signed URL прави redirect към различен
+      // origin, при което браузърът игнорира a.download и използва UUID от пътя.
+      const response = await fetch(signedUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = blobUrl;
       a.download = doc.original_filename.replace(/\.pdf$/i, '_signed.pdf');
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 150);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при сваляне.');
     } finally {
