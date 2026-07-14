@@ -153,7 +153,7 @@ export async function signDocument(
   signerName: string,
   position: SigningPosition,
   rpId: string,
-  fontBytes: Uint8Array,
+  fontBytes: Uint8Array | undefined,
   extractPrf?: PrfExtractor,
   extractDualPrf?: DualPrfExtractor,
   onProgress?: (pct: number, label: string) => void,
