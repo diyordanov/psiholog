@@ -72,25 +72,54 @@ export function extractByteRange(
  * Нулевите байтове в края са padding (placeholder overflow) — те са
  * очаквани; Adobe Reader също ги игнорира при верификация.
  */
+/** Converts a single hex ASCII byte code to its numeric value (0–15). */
+function hexNibble(code: number): number {
+  if (code >= 0x30 && code <= 0x39) return code - 0x30;
+  if (code >= 0x41 && code <= 0x46) return code - 0x41 + 10;
+  if (code >= 0x61 && code <= 0x66) return code - 0x61 + 10;
+  return 0;
+}
+
+/**
+ * Извлича CMS DER bytes от /Contents <hex> полето на PDF.
+ *
+ * PDF записва подписа като hex string в /Contents <HEX...>.
+ * Нулевите байтове в края са padding (placeholder overflow) — те са
+ * очаквани; Adobe Reader също ги игнорира при верификация.
+ *
+ * Взимаме ПОСЛЕДНОТО /Contents < — подписът е добавен накрая; оригиналният
+ * PDF може да съдържа /Contents < в binary потоци (шрифтове, изображения)
+ * и намирането на грешно срещане би върнало корупирани данни или взривило
+ * стека чрез String.fromCharCode(...гигантски_масив).
+ */
 export function extractCmsDer(pdfBytes: Uint8Array): Uint8Array | null {
   const marker = enc.encode('/Contents <');
-  const pos = findPattern(pdfBytes, marker, 0);
+
+  // Намираме ПОСЛЕДНОТО срещане — подписът е добавен накрая на PDF-а
+  let pos = -1;
+  let found = findPattern(pdfBytes, marker, 0);
+  while (found !== -1) {
+    pos = found;
+    found = findPattern(pdfBytes, marker, found + 1);
+  }
   if (pos === -1) return null;
 
-  // '<' е последният символ на маркера; hex started right after
-  let i = pos + marker.length; // позиция на първия hex символ
+  // Hex данните започват веднага след маркера
+  const hexStart = pos + marker.length;
 
-  const hexChars: number[] = [];
-  while (i < pdfBytes.length && pdfBytes[i] !== 0x3e) { // '>'
-    hexChars.push(pdfBytes[i]);
-    i++;
-  }
+  // Намираме затварящото '>'
+  let hexEnd = hexStart;
+  while (hexEnd < pdfBytes.length && pdfBytes[hexEnd] !== 0x3e) hexEnd++;
+  if (hexEnd >= pdfBytes.length) return null;
 
-  // Конвертираме hex → bytes
-  const hexStr = String.fromCharCode(...hexChars).toLowerCase();
-  const bytes = new Uint8Array(hexStr.length / 2);
+  const hexLen = hexEnd - hexStart;
+
+  // Декодираме hex директно от байтовете — без String.fromCharCode spread,
+  // което би взривило call stack при масив с милиони елементи.
+  const bytes = new Uint8Array(hexLen >> 1);
   for (let j = 0; j < bytes.length; j++) {
-    bytes[j] = parseInt(hexStr.slice(j * 2, j * 2 + 2), 16);
+    bytes[j] = (hexNibble(pdfBytes[hexStart + j * 2]) << 4)
+              | hexNibble(pdfBytes[hexStart + j * 2 + 1]);
   }
 
   // Намираме реалния CMS: trim trailing zeros (padding)
