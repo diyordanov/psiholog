@@ -55,16 +55,19 @@ function CertStatusBadge({ status }: { status: CertChainStatus | null }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const contentId = `section-${title.replace(/\s+/g, '-').toLowerCase()}`;
   return (
     <div className="border-b border-neutral-200 last:border-0">
       <button
         onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-neutral-700 hover:bg-neutral-50"
       >
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         {title}
       </button>
-      {open && <div className="px-4 pb-4 pt-1 text-xs text-neutral-600 space-y-2">{children}</div>}
+      {open && <div id={contentId} className="px-4 pb-4 pt-1 text-xs text-neutral-600 space-y-2">{children}</div>}
     </div>
   );
 }
@@ -160,11 +163,11 @@ export default function TechnicalDetails({ result }: Props) {
             <Field label="Хеш">
               <span className="font-mono">{documentHash.substring(0, 32)}…</span>
               <button
-                title="Копирай пълния хеш"
+                aria-label="Копирай пълния хеш"
                 onClick={() => navigator.clipboard.writeText(documentHash)}
                 className="ml-1 text-neutral-400 hover:text-indigo-600"
               >
-                <Copy size={12} />
+                <Copy size={12} aria-hidden="true" />
               </button>
             </Field>
           </>

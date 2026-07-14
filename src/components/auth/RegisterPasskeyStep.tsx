@@ -47,12 +47,12 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
       </p>
 
       {status === 'registering' && (
-        <p className="mt-4 text-sm text-neutral-600">
+        <p role="status" className="mt-4 text-sm text-neutral-600">
           Потвърди с биометрия или PIN на устройството си в прозореца, който се появи.
         </p>
       )}
 
-      {errorMessage && <p className="mt-4 text-sm text-red-600">{errorMessage}</p>}
+      {errorMessage && <p role="alert" className="mt-4 text-sm text-red-600">{errorMessage}</p>}
 
       <button
         onClick={handleRegister}

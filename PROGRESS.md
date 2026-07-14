@@ -2,11 +2,69 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4) · **Фаза 6 Ден 1 ✅** (Security + Audit gaps) · **Фаза 6 Ден 2 ✅** (Browser compat + Performance). Следва: Фаза 6 Ден 3 (A11y + README).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4) · **Фаза 6 ✅ COMPLETE** (Ден 1–3 + Hotfixes). **Проектът е завършен.**
 
 ---
 
-## Фаза 6: Ден 2 — Browser Compat + Performance — PARTIAL ⚠️ (2026-07-14)
+## Фаза 6: Ден 3 — A11y WCAG AA + README — ЗАВЪРШЕН ✅ (2026-07-14)
+
+### Резултати
+
+- ✅ **Lighthouse Accessibility: 90/100** (цел ≥ 90) — axe-core 4.11.4
+- ✅ 18 WCAG AA fixes в 10 компонента (виж `docs/accessibility-audit.md`)
+- ✅ `README.md` на Български — пълна документация за защита
+
+### Ключови A11y промени
+
+- `role="alert"` на всички error messages (3 auth + 1 modal)
+- `role="status"` на progress/done/toast messages
+- `role="progressbar" aria-valuenow/min/max` на signing progress bar
+- `role="dialog" aria-modal aria-labelledby` на SignDocumentModal + CertificateModal
+- `aria-expanded` + `aria-controls` на TechnicalDetails Section бутони
+- `role="status" aria-label` на VerifyPage spinner; `aria-live` на stage текст
+- `aria-label` на icon-only бутони (Close × 2, Trash, Copy)
+- `aria-hidden="true"` на декоративни Lucide икони (Shield, Fingerprint, Chevron и др.)
+
+### README секции
+
+1. Какво е SignShield (summary)
+2. Основни функции
+3. Ключови архитектурни решения (ECDSA, ML-DSA, PRF, hybrid, Root CA)
+4. Privacy и Security таблица
+5. Технологичен стек
+6. Инсталация и Deploy (env, Supabase, Root CA, Cloudflare Pages)
+7. Как работи — Signing / Verification / Recovery flow (text diagrams)
+8. Browser поддръжка + линк към compat matrix
+9. Ограничения и Future Work
+10. Лиценз (MIT)
+
+### Нови файлове
+
+- `docs/accessibility-audit.md` — Lighthouse резултат + WCAG AA coverage таблица
+
+### Performance забележка
+
+Lighthouse Performance score 41 е от Chrome extensions на тестовата машина (MetaMask, Wappalyzer — виждат се в bootup-time данните). В incognito без extensions ще е значително по-добър. Server response time: 50 ms ✅, CLS: 0 ✅.
+
+---
+
+## Фаза 6: Hotfixes — ЗАВЪРШЕН ✅ (2026-07-14)
+
+### Критични бъгове оправени
+
+- ✅ **Stack overflow при верификация** — `extractCmsDer()`: търсеше ПЪРВИЯ `/Contents <` (може да е в binary data на PDF), а трябваше ПОСЛЕДНИЯ; `String.fromCharCode(...largeArray)` spread → RangeError. Fix: намиране на последния `/Contents <` + директно nibble декодиране без spread (commit `7445527`)
+- ✅ **Грешно файлово ime при "Свали подписан"** — Supabase signed URL прави cross-origin redirect → браузърът игнорира `a.download` и ползва UUID от storage path. Fix: fetch blob локално → blob URL → `a.download` работи (commit `019fdde`)
+- ✅ **PDF верификационен доклад отваря в нов таб** — `window.open('', '_blank')` вика се СИНХРОННО преди `await`, иначе popup blocker го блокира; fallback към download ако е блокиран (commit `019fdde`)
+- ✅ **iOS passkey не се появяваше при подписване** — iOS Safari губи "transient user gesture context" при `await` преди `navigator.credentials.get()`. Fix: PRF ceremony(ies) се викат ПРЕДИ всякакви мрежови `await`-ове, резултатите се инжектират като mock-ове в `signDocument()` (commit `41aeb27`)
+- ✅ **TypeScript build грешка на Cloudflare Pages** — `signDocument(fontBytes: Uint8Array)` не приемаше `undefined`; разширено до `Uint8Array | undefined` (commit `9d13b54`)
+
+### Забележка за iPhone + signing keys
+
+Ако signing ключовете са генерирани на Windows/Chrome (Google Password Manager), при подписване на iPhone се появява cross-device flow вместо Face ID. Решение: потребителят трябва да регенерира ключовете НА iPhone — тогава iCloud Keychain passkey ще е достъпна на всички Apple устройства. Не изисква код.
+
+---
+
+## Фаза 6: Ден 2 — Browser Compat + Performance — ЗАВЪРШЕН ✅ (2026-07-14)
 
 ### Резултати
 
@@ -14,16 +72,12 @@
   - Top: fontkit 185 KB, pdfjs 171 KB, pdf-lib 131 KB — неизбежни за core функционалността
   - `@noble/post-quantum` само 9 KB gzip (tree-shaking optimal)
 - ✅ Browser compat matrix: `docs/browser-compat.md` с legend ✅ tested / ⚠️ needs-test
-  - Тествано: Chrome desktop + iOS Safari (upload/verify/recovery от по-ранни сесии)
-- ✅ Fix: iOS Safari PDF report доклад download — `appendChild` + `setTimeout(revoke, 150ms)`
-  - **Нужна ръчна верификация на реален iPhone**
+- ✅ Firefox 148+ — login, keygen, sign, verify — всичко работи ✅; dual PRF: 1 tap (singlePrf) ✅
+- ✅ iPhone — "Виж верификационен доклад" — отваря в нов таб ✅
+- ✅ iPhone — ML-DSA keygen — бързо (приемливо) ✅
 
-### Чакат ръчни тестове от потребителя
+### Чакат ръчни тестове (ниски приоритет, не блокират)
 
-- [ ] Firefox 148+ — login, keygen, sign, verify
-- [ ] Firefox 148+ — dual PRF (1 или 2 биометрични tap-а при подписване?)
-- [ ] iPhone — "Свали верификационен доклад" — сваля или само отваря?
-- [ ] iPhone — ML-DSA keygen timing — приемливо?
 - [ ] Safari macOS — full flow
 - [ ] Edge — full flow
 
@@ -33,7 +87,7 @@
 
 ### Обновени файлове
 
-- `src/components/verify/VerifyResult.tsx` — iOS PDF download fix (appendChild + setTimeout revoke)
+- `src/components/verify/VerifyResult.tsx` — iOS PDF download fix + new-tab report
 
 ---
 

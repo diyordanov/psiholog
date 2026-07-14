@@ -486,7 +486,14 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
               <span>{progressLabel}</span>
               <span>{progress}%</span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
+            <div
+              role="progressbar"
+              aria-valuenow={progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={progressLabel || 'Подписване в процес'}
+              className="h-2 w-full overflow-hidden rounded-full bg-neutral-100"
+            >
               <div
                 className="h-full rounded-full bg-indigo-600 transition-all duration-300"
                 style={{ width: `${progress}%` }}
@@ -523,8 +530,8 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
         {/* Error state */}
         {error && (
           <div className="space-y-3">
-            <div className="flex gap-2 rounded-lg bg-red-50 px-3 py-2.5">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" />
+            <div role="alert" className="flex gap-2 rounded-lg bg-red-50 px-3 py-2.5">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" aria-hidden="true" />
               <p className="text-xs text-red-700">{error}</p>
             </div>
             <button
@@ -539,8 +546,8 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
         {/* Done state */}
         {isDone && !error && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5">
-              <CheckCircle size={15} className="shrink-0 text-emerald-500" />
+            <div role="status" className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5">
+              <CheckCircle size={15} className="shrink-0 text-emerald-500" aria-hidden="true" />
               <p className="text-xs text-emerald-700 font-medium">
                 Документът е подписан успешно.
                 {result.pqSkipped && ' (само ECDSA P-256 — без ML-DSA-65)'}
@@ -748,8 +755,13 @@ export default function SignDocumentModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
-        <p className="px-6 pt-4 text-xs font-medium text-neutral-400 tracking-wide uppercase truncate">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sign-modal-title"
+        className="w-full max-w-md rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        <p id="sign-modal-title" className="px-6 pt-4 text-xs font-medium text-neutral-400 tracking-wide uppercase truncate">
           {filename}
         </p>
 
@@ -802,8 +814,8 @@ function ModalHeader({ step, title, onClose }: { step?: number; title: string; o
         <h2 className="text-base font-semibold text-neutral-800">{title}</h2>
       </div>
       {onClose && (
-        <button onClick={onClose} className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100">
-          <X size={18} />
+        <button onClick={onClose} aria-label="Затвори" className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100">
+          <X size={18} aria-hidden="true" />
         </button>
       )}
     </div>

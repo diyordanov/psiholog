@@ -32,7 +32,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
       {/* Лого */}
       <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} />
+        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
         <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
 
@@ -44,7 +44,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
 
           <div className="mt-8 flex flex-col gap-3">
             {errorMessage && (
-              <div className="rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-600">
+              <div role="alert" className="rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-600">
                 {errorMessage}
               </div>
             )}
@@ -56,12 +56,12 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
             >
               {status === 'signing-in' ? (
                 <>
-                  <Loader2 size={16} className="animate-spin" />
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                   Изчакайте...
                 </>
               ) : (
                 <>
-                  <Fingerprint size={16} />
+                  <Fingerprint size={16} aria-hidden="true" />
                   Продължи с passkey
                 </>
               )}

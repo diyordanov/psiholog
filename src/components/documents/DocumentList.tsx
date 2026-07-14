@@ -271,8 +271,9 @@ export default function DocumentList({ userId }: DocumentListProps) {
                       onClick={() => setConfirmDeleteId(doc.id)}
                       className="rounded-lg p-1 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
                       title="Изтрий документ"
+                      aria-label="Изтрий документ"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={14} aria-hidden="true" />
                     </button>
                   )}
                 </div>
@@ -315,7 +316,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-neutral-900 px-5 py-3 text-sm text-white shadow-xl">
+        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-neutral-900 px-5 py-3 text-sm text-white shadow-xl">
           {toast}
         </div>
       )}

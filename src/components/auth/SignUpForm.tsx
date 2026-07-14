@@ -91,7 +91,7 @@ export default function SignUpForm() {
         винаги само с passkey.
       </p>
 
-      {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
+      {errorMessage && <p role="alert" className="text-sm text-red-600">{errorMessage}</p>}
 
       <button
         type="submit"

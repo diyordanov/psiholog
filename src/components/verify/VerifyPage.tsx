@@ -122,11 +122,11 @@ export default function VerifyPage({ standalone = true }: Props) {
         {state.kind === 'verifying' && (
           <div className="flex flex-col items-center gap-6 py-16 text-center">
             {/* Spinner */}
-            <div className="relative h-16 w-16">
-              <div className="absolute inset-0 rounded-full border-4 border-neutral-200" />
-              <div className="absolute inset-0 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" />
+            <div role="status" aria-label="Верифициране в процес" className="relative h-16 w-16">
+              <div className="absolute inset-0 rounded-full border-4 border-neutral-200" aria-hidden="true" />
+              <div className="absolute inset-0 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" aria-hidden="true" />
             </div>
-            <div>
+            <div aria-live="polite" aria-atomic="true">
               <p className="text-base font-medium text-neutral-800">Верифициране…</p>
               <p className="mt-1 text-sm text-neutral-500">{state.stageName}</p>
             </div>

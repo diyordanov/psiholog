@@ -58,7 +58,7 @@ function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
       <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} />
+        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
         <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
@@ -89,7 +89,7 @@ function RecoveryPanel({ onCancel }: { onCancel: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
       <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} />
+        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
         <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
       <div className="flex flex-1 flex-col justify-center">

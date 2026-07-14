@@ -113,7 +113,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       {/* ── Layer 1: Hero banner ── */}
       <div className={`rounded-xl border p-6 ${banner}`}>
         <div className="flex items-start gap-4">
-          <Icon size={36} className={`shrink-0 ${iconColor}`} />
+          <Icon size={36} className={`shrink-0 ${iconColor}`} aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <p className="text-sm text-neutral-500 truncate" title={fileName}>{fileName}</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-900">{heading}</h2>
@@ -174,7 +174,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
             disabled={downloading}
             className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            {downloading ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
             Виж верификационен доклад
           </button>
         </div>
@@ -186,7 +186,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
           onClick={onReset}
           className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-5 py-3 text-sm font-medium text-neutral-700 hover:bg-neutral-50 active:scale-95 transition-transform"
         >
-          <RotateCcw size={15} />
+          <RotateCcw size={15} aria-hidden="true" />
           Провери друг документ
         </button>
       </div>
