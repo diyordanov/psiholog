@@ -58,11 +58,13 @@ export default function VerifyPage({ standalone = true }: Props) {
       const result = await verifyDocument(bytes);
       clearInterval(interval);
       setState({ kind: 'done', result, fileName: file.name });
-    } catch {
+    } catch (err) {
       clearInterval(interval);
+      console.error('[SignShield] verifyDocument threw:', err);
+      const detail = err instanceof Error ? err.message : String(err);
       setState({
         kind: 'fileerror',
-        message: 'Неочаквана грешка при верификация. Опитайте отново или се свържете с администратора.',
+        message: `Неочаквана грешка при верификация: ${detail}`,
       });
     }
   }, []);
