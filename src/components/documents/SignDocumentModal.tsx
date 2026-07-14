@@ -16,6 +16,8 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { supabase } from '../../lib/supabase';
 import { signDocument, resolveSigningKeys, getSignedDownloadUrl, type SignDocumentResult, type ResolvedKeys } from '../../lib/signingService';
+import { browserPrfExtractor, browserDualPrfExtractor } from '../../lib/crypto/keyProtection';
+import type { PrfResult, DualPrfResult, PrfExtractor, DualPrfExtractor } from '../../lib/crypto/keyProtection';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -567,6 +569,14 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
   );
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function saltsEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export default function SignDocumentModal({
@@ -600,6 +610,16 @@ export default function SignDocumentModal({
       .then(({ data }) => setSignedUrl(data?.signedUrl ?? null));
   }, [storagePath]);
 
+  // Pre-fetch NotoSans при mount — font-ът трябва да е готов ПРЕДИ PRF ceremony,
+  // защото iOS Safari губи user gesture context след await за мрежа.
+  const fontBytesRef = useRef<Uint8Array | undefined>(undefined);
+  useEffect(() => {
+    fetch('/fonts/NotoSans-Regular.ttf')
+      .then(r => r.arrayBuffer())
+      .then(buf => { fontBytesRef.current = new Uint8Array(buf); })
+      .catch(() => {});
+  }, []);
+
   // Preflight: resolveSigningKeys + display_name (заедно при mount)
   useEffect(() => {
     resolveSigningKeys()
@@ -611,31 +631,85 @@ export default function SignDocumentModal({
   }, [userId]);
 
   const handleSign = useCallback(async () => {
-    if (!marker) return;
+    if (!marker || !preflightKeys) return;
     setStage('signing');
     setSigningError(null);
     setSigningResult(null);
     setProgress(0);
     setProgressLabel('');
 
-    try {
-      // Зареждаме NotoSans байтовете (on-demand, ~569 KB)
-      const fontRes = await fetch('/fonts/NotoSans-Regular.ttf');
-      const fontBytes = new Uint8Array(await fontRes.arrayBuffer());
+    const rpId = window.location.hostname;
 
+    // ── PRF ceremony(ies) FIRST ──────────────────────────────────────────────
+    // iOS Safari изисква navigator.credentials.get() да е в "user gesture context".
+    // Всеки await за мрежа (fetch, supabase) преди WebAuthn губи този контекст
+    // и iOS тихо блокира Face ID без да показва грешка.
+    // Решение: PRF преди всичко останало; signDocument получава mock extractor.
+    let capturedPrf: PrfResult | null = null;
+    let capturedPrfMlDsa: PrfResult | null = null;
+    let capturedDualPrf: DualPrfResult | null = null;
+
+    try {
+      if (preflightKeys.singlePrf && preflightKeys.mlDsaData) {
+        // Един tap → два ключа
+        capturedDualPrf = await browserDualPrfExtractor(
+          preflightKeys.ecdsaData.prfSalt,
+          preflightKeys.mlDsaData.prfSalt,
+          rpId,
+          preflightKeys.ecdsaData.credentialId,
+        );
+      } else if (preflightKeys.mlDsaData) {
+        // Два отделни credential-а → два tapа
+        capturedPrf = await browserPrfExtractor(
+          preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId,
+        );
+        capturedPrfMlDsa = await browserPrfExtractor(
+          preflightKeys.mlDsaData.prfSalt, rpId, preflightKeys.mlDsaData.credentialId,
+        );
+      } else {
+        // Само ECDSA
+        capturedPrf = await browserPrfExtractor(
+          preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId,
+        );
+      }
+    } catch (err) {
+      setSigningError(err instanceof Error ? err.message : 'Биометричната верификация неуспешна.');
+      return;
+    }
+
+    // ── Font (pre-fetched при mount; fallback fetch ако кешът не е готов) ────
+    let fontBytes: Uint8Array | undefined = fontBytesRef.current;
+    if (!fontBytes) {
+      try {
+        fontBytes = new Uint8Array(
+          await (await fetch('/fonts/NotoSans-Regular.ttf')).arrayBuffer(),
+        );
+      } catch {
+        fontBytes = undefined; // без визуален маркер — подписът е валиден
+      }
+    }
+
+    // ── Mock PRF extractors — връщат pre-captured резултати, без нов UI prompt ──
+    const mlDsaSalt = preflightKeys.mlDsaData?.prfSalt;
+    const mockPrfExtractor: PrfExtractor = async (salt) => {
+      if (capturedPrfMlDsa && mlDsaSalt && saltsEqual(salt, mlDsaSalt)) {
+        return capturedPrfMlDsa;
+      }
+      return capturedPrf!;
+    };
+    const mockDualPrfExtractor: DualPrfExtractor = async () => capturedDualPrf!;
+
+    try {
       const result = await signDocument(
         documentId,
         userId,
         signerName,
         { page: marker.page, x: marker.x, y: marker.y },
-        window.location.hostname,
+        rpId,
         fontBytes,
-        undefined,
-        undefined,
-        (pct, label) => {
-          setProgress(pct);
-          setProgressLabel(label);
-        },
+        capturedPrf || capturedPrfMlDsa ? mockPrfExtractor : undefined,
+        capturedDualPrf ? mockDualPrfExtractor : undefined,
+        (pct, label) => { setProgress(pct); setProgressLabel(label); },
       );
 
       setProgress(100);
@@ -644,17 +718,23 @@ export default function SignDocumentModal({
     } catch (err) {
       setSigningError(err instanceof Error ? err.message : String(err));
     }
-  }, [marker, documentId, userId, signerName]);
+  }, [marker, preflightKeys, documentId, userId, signerName]);
 
   const handleDownload = async () => {
     if (!signingResult) return;
     setDownloadLoading(true);
     try {
-      const url = await getSignedDownloadUrl(signingResult.signedStoragePath);
+      const signedUrl = await getSignedDownloadUrl(signingResult.signedStoragePath);
+      const response = await fetch(signedUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = blobUrl;
       a.download = filename.replace(/\.pdf$/i, '_signed.pdf');
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 150);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Грешка при сваляне.');
     } finally {
