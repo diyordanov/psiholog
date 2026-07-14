@@ -83,8 +83,11 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       const a    = document.createElement('a');
       a.href     = url;
       a.download = reportFileName(fileName);
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      // Delay revoke — gives Safari/iOS time to start the download
+      setTimeout(() => URL.revokeObjectURL(url), 150);
     } finally {
       setDownloading(false);
     }

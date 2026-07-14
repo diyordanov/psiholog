@@ -2,7 +2,38 @@
 
 > Прочита се след `PROJECT_BRIEF.md` в началото на всяка сесия.
 
-## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4) · **Фаза 6 Ден 1 ✅** (Security + Audit gaps). Следва: Фаза 6 Ден 2 (Browser compat + Performance).
+## Статус: Фаза 0 ✅ · Фаза 1 ✅ · Фаза 2 ✅ · Фаза 3 ✅ (superseded) · Фаза 3.5-pre ✅ · Фаза 3.5 ✅ · Фаза 4 Ден 1 ✅ · Фаза 4 Ден 2 ✅ · Фаза 4 Ден 3 ✅ · Фаза 4 Ден 4 ✅ · **Фаза 5 ✅ COMPLETE** (Ден 1–4) · **Фаза 6 Ден 1 ✅** (Security + Audit gaps) · **Фаза 6 Ден 2 ✅** (Browser compat + Performance). Следва: Фаза 6 Ден 3 (A11y + README).
+
+---
+
+## Фаза 6: Ден 2 — Browser Compat + Performance — PARTIAL ⚠️ (2026-07-14)
+
+### Резултати
+
+- ✅ Bundle size анализ (source map): 870 KB gzipped — приемливо за PDF signing app
+  - Top: fontkit 185 KB, pdfjs 171 KB, pdf-lib 131 KB — неизбежни за core функционалността
+  - `@noble/post-quantum` само 9 KB gzip (tree-shaking optimal)
+- ✅ Browser compat matrix: `docs/browser-compat.md` с legend ✅ tested / ⚠️ needs-test
+  - Тествано: Chrome desktop + iOS Safari (upload/verify/recovery от по-ранни сесии)
+- ✅ Fix: iOS Safari PDF report доклад download — `appendChild` + `setTimeout(revoke, 150ms)`
+  - **Нужна ръчна верификация на реален iPhone**
+
+### Чакат ръчни тестове от потребителя
+
+- [ ] Firefox 148+ — login, keygen, sign, verify
+- [ ] Firefox 148+ — dual PRF (1 или 2 биометрични tap-а при подписване?)
+- [ ] iPhone — "Свали верификационен доклад" — сваля или само отваря?
+- [ ] iPhone — ML-DSA keygen timing — приемливо?
+- [ ] Safari macOS — full flow
+- [ ] Edge — full flow
+
+### Нови файлове
+
+- `docs/browser-compat.md` — compat matrix + bundle breakdown (source map анализ)
+
+### Обновени файлове
+
+- `src/components/verify/VerifyResult.tsx` — iOS PDF download fix (appendChild + setTimeout revoke)
 
 ---
 
