@@ -59,12 +59,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   const [open, setOpen] = useState(false);
   const contentId = `section-${title.replace(/\s+/g, '-').toLowerCase()}`;
   return (
-    <div className="border-b border-neutral-200 last:border-0">
+    <div className="border-b border-neutral-200/70 last:border-0">
       <button
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-neutral-700 transition-colors hover:bg-white/50"
       >
         {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         {title}
@@ -96,8 +96,8 @@ export default function TechnicalDetails({ result }: Props) {
   const { ecdsa, mlDsa, documentHash, byteRange } = result;
 
   return (
-    <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white">
-      <p className="border-b border-neutral-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+    <div className="glass-panel mt-4 overflow-hidden rounded-2xl">
+      <p className="border-b border-neutral-200/70 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
         Технически детайли
       </p>
 

@@ -174,14 +174,14 @@ export default function GenerateKeyModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 px-4 backdrop-blur-sm">
+      <div className="animate-scaleIn glass-panel w-full max-w-md rounded-2xl shadow-glassLg">
 
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-neutral-100 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-neutral-100/70 px-6 py-4">
           <h2 className="text-base font-semibold text-neutral-800">Генерирай нов ключ</h2>
           {!isGenerating && (
-            <button onClick={handleClose} className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100">
+            <button onClick={handleClose} className="rounded-lg p-1 text-neutral-400 transition-colors hover:bg-neutral-900/5">
               <X size={18} />
             </button>
           )}
@@ -280,18 +280,18 @@ export default function GenerateKeyModal({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-neutral-100 px-6 py-4">
+        <div className="border-t border-neutral-100/70 px-6 py-4">
           {isGenerating && stage !== 'generating-key' ? null : isGenerating ? null : (
             <div className="flex gap-3">
               <button
                 onClick={handleClose}
-                className="flex-1 rounded-lg border border-neutral-200 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                className="flex-1 rounded-xl border border-neutral-200 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
               >
                 Откажи
               </button>
               <button
                 onClick={handleGenerate}
-                className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                className="flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-2 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98]"
               >
                 Генерирай
               </button>

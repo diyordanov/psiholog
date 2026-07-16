@@ -113,7 +113,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
   const hasEd25519Keys = ed25519Keys.length > 0;
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="animate-fadeIn mx-auto max-w-4xl px-4 py-8 sm:px-6">
       {/* Заглавие + бутон */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-800">Мои ключове</h1>
@@ -121,14 +121,14 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
           <button
             onClick={() => { retrofitRunRef.current = false; load(); }}
             disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 transition-colors hover:bg-white/70 disabled:opacity-40"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Обнови
           </button>
           <button
             onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-1.5 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98]"
           >
             <Plus size={14} />
             Генерирай нов ключ
@@ -138,7 +138,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
 
       {/* Migration banner */}
       {hasLegacyKeys && (
-        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+        <div className="mb-6 rounded-2xl border border-amber-200/70 bg-amber-50/80 px-4 py-4 shadow-sm backdrop-blur-sm">
           <div className="flex gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
             <div className="flex-1">
@@ -184,7 +184,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
 
       {/* Ed25519 → ECDSA P-256 migration banner */}
       {hasEd25519Keys && !hasLegacyKeys && (
-        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+        <div className="mb-6 rounded-2xl border border-amber-200/70 bg-amber-50/80 px-4 py-4 shadow-sm backdrop-blur-sm">
           <div className="flex gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
             <div className="flex-1">
@@ -237,7 +237,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
           <RefreshCw size={20} className="animate-spin" />
         </div>
       ) : keys.filter((k) => k.isPrfBased).length === 0 && !hasLegacyKeys ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-neutral-400">
+        <div className="glass-panel flex flex-col items-center gap-3 rounded-2xl py-16 text-neutral-400">
           <KeyRound size={32} strokeWidth={1.5} />
           <p className="text-sm">Все още нямате генерирани ключове</p>
           <p className="max-w-xs text-center text-xs text-neutral-400">
@@ -254,7 +254,7 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
           <p className="mb-3 text-xs text-neutral-400">
             Fingerprint = SHA-256 от публичния ключ, първите 8 байта, base64url. Служи само за визуална идентификация.
           </p>
-          <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-100 bg-white shadow-sm">
+          <div className="glass-panel divide-y divide-neutral-100/70 rounded-2xl">
             {keys.map((key) => (
               <KeyCard key={key.id} signingKey={key} onDelete={handleDelete} />
             ))}

@@ -41,10 +41,10 @@ function getKind(r: VResult): DisplayKind {
 const KIND_CFG: Record<DisplayKind, {
   banner: string; iconColor: string; Icon: React.ElementType;
 }> = {
-  green:   { banner: 'bg-green-50 border-green-200',  iconColor: 'text-green-600',  Icon: CheckCircle },
-  yellow:  { banner: 'bg-yellow-50 border-yellow-200',iconColor: 'text-yellow-600', Icon: AlertTriangle },
-  red:     { banner: 'bg-red-50 border-red-200',      iconColor: 'text-red-600',    Icon: XCircle },
-  neutral: { banner: 'bg-neutral-50 border-neutral-200',iconColor:'text-neutral-500',Icon: Info },
+  green:   { banner: 'bg-green-50/80 border-green-200/70',   iconColor: 'text-green-600',  Icon: CheckCircle },
+  yellow:  { banner: 'bg-yellow-50/80 border-yellow-200/70', iconColor: 'text-yellow-600', Icon: AlertTriangle },
+  red:     { banner: 'bg-red-50/80 border-red-200/70',       iconColor: 'text-red-600',    Icon: XCircle },
+  neutral: { banner: 'bg-neutral-50/80 border-neutral-200/70', iconColor:'text-neutral-500', Icon: Info },
 };
 
 /** Заглавие на Layer 1 банера — текстовото обяснение, съответстващо на getKind. */
@@ -119,10 +119,10 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
   const showReport = result.overall === 'authentic' || result.overall === 'tampered' || result.overall === 'invalid';
 
   return (
-    <div className="space-y-4">
+    <div className="animate-fadeInUp space-y-4">
 
       {/* ── Layer 1: Hero banner ── */}
-      <div className={`rounded-xl border p-6 ${banner}`}>
+      <div className={`rounded-2xl border p-6 shadow-sm backdrop-blur-xl ${banner}`}>
         <div className="flex items-start gap-4">
           <Icon size={36} className={`shrink-0 ${iconColor}`} aria-hidden="true" />
           <div className="min-w-0 flex-1">
@@ -183,7 +183,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
           <button
             onClick={handleOpenReport}
             disabled={downloading}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700 active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-3 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {downloading ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
             Виж верификационен доклад
@@ -195,7 +195,7 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
       <div className="flex justify-center pt-2">
         <button
           onClick={onReset}
-          className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-5 py-3 text-sm font-medium text-neutral-700 hover:bg-neutral-50 active:scale-95 transition-transform"
+          className="flex items-center gap-2 rounded-xl border border-neutral-300 bg-white/70 px-5 py-3 text-sm font-medium text-neutral-700 backdrop-blur-sm transition-all hover:bg-white active:scale-95"
         >
           <RotateCcw size={15} aria-hidden="true" />
           Провери друг документ

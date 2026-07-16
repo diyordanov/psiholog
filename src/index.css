@@ -13,9 +13,34 @@
 
   body {
     @apply text-neutral-900 font-sans antialiased;
-    background-color: #fafaf9;
+    background-color: #f6f6fb;
     margin: 0;
     padding: 0;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Фиксирана градиентна мрежа зад цялото приложение — мека, Apple-style ambient светлина. */
+  .app-mesh-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 900px 600px at 8% -10%, rgba(99, 102, 241, 0.16), transparent 60%),
+      radial-gradient(ellipse 800px 700px at 110% 10%, rgba(168, 85, 247, 0.13), transparent 60%),
+      radial-gradient(ellipse 900px 700px at 50% 120%, rgba(16, 185, 129, 0.10), transparent 60%),
+      #f6f6fb;
+  }
+
+  /* Стъклена повърхност — основен строителен блок за карти, хедъри, модали. */
+  .glass-panel {
+    @apply border border-white/60 bg-white/70 shadow-[0_8px_30px_-8px_rgba(30,27,75,0.12)] backdrop-blur-xl;
+  }
+
+  .glass-panel-dark {
+    @apply border border-white/10 bg-white/5 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur-xl;
   }
 }
 

@@ -22,14 +22,16 @@ export default function UserMenu() {
   }
 
   return (
-    <div className="flex items-center justify-between px-6 py-4">
-      <span className="text-sm text-neutral-700">Здравей, {displayName}</span>
+    <div className="flex items-center gap-3">
+      <span className="hidden text-sm text-neutral-600 sm:inline">
+        Здравей, <span className="font-medium text-neutral-800">{displayName}</span>
+      </span>
       <button
         onClick={handleSignOut}
-        className="flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-900"
+        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 transition-colors hover:bg-white/70 hover:text-neutral-900"
       >
         <LogOut size={16} />
-        Изход
+        <span className="hidden sm:inline">Изход</span>
       </button>
     </div>
   );

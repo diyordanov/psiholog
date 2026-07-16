@@ -70,10 +70,10 @@ const FEATURES: { icon: React.ReactNode; title: string; description: string }[] 
 
 export default function HowItWorksPage() {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
       {/* Hero */}
       <div className="animate-fadeIn mb-12 text-center">
-        <div className="mb-4 inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+        <div className="mb-4 inline-flex items-center gap-1.5 rounded-full bg-indigo-50/80 px-3 py-1 text-xs font-medium text-indigo-700 shadow-sm backdrop-blur-sm">
           <Sparkles size={13} />
           Как работи SignShield
         </div>
@@ -103,7 +103,7 @@ export default function HowItWorksPage() {
                   {step.icon}
                 </div>
               </div>
-              <div className="min-w-0 flex-1 rounded-xl border border-neutral-100 bg-white px-5 py-4 shadow-sm transition-shadow hover:shadow-md">
+              <div className="glass-panel min-w-0 flex-1 rounded-2xl px-5 py-4 transition-shadow hover:shadow-glassLg">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-neutral-300">
                     {String(i + 1).padStart(2, '0')}
@@ -118,18 +118,27 @@ export default function HowItWorksPage() {
       </div>
 
       {/* Защо да имаме доверие */}
-      <div className="animate-fadeInUp rounded-2xl bg-[#1e1b4b] px-6 py-8 opacity-0 sm:px-10" style={{ animationDelay: '520ms' }}>
-        <h2 className="text-center text-lg font-medium text-indigo-100">
+      <div
+        className="animate-fadeInUp relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#211d5e] via-[#1e1b4b] to-[#151235] px-6 py-8 opacity-0 shadow-glassLg sm:px-10"
+        style={{ animationDelay: '520ms' }}
+      >
+        <div aria-hidden="true" className="animate-floatSlow absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/25 blur-3xl" />
+        <div
+          aria-hidden="true"
+          className="animate-floatSlow absolute -bottom-24 -left-10 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl"
+          style={{ animationDelay: '1.5s' }}
+        />
+        <h2 className="relative text-center text-lg font-medium text-indigo-100">
           Защо можете да разчитате на подписа
         </h2>
-        <div className="mt-7 grid gap-6 sm:grid-cols-3">
+        <div className="relative mt-7 grid gap-6 sm:grid-cols-3">
           {FEATURES.map((feature, i) => (
             <div
               key={feature.title}
               className="animate-scaleIn opacity-0"
               style={{ animationDelay: `${600 + i * 100}ms` }}
             >
-              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-800/60 text-indigo-200">
+              <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-indigo-300 backdrop-blur-sm">
                 {feature.icon}
               </div>
               <p className="text-sm font-medium text-indigo-100">{feature.title}</p>

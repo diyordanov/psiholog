@@ -33,7 +33,7 @@ export default function KeyCard({ signingKey, onDelete }: KeyCardProps) {
   };
 
   return (
-    <div className="flex gap-3 px-4 py-3">
+    <div className="flex gap-3 px-4 py-3 transition-colors hover:bg-white/40">
       {/* Икона */}
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50">
         <KeyRound size={18} className="text-indigo-500" />

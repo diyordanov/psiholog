@@ -70,10 +70,10 @@ export default function UploadZone({ onFile, onError }: Props) {
       onDrop={onDrop}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
-      className={`flex cursor-pointer flex-col items-center gap-4 rounded-xl border-2 border-dashed px-8 py-12 text-center transition-colors select-none
+      className={`flex cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-8 py-12 text-center backdrop-blur-xl transition-all select-none
         ${isDragOver
-          ? 'border-indigo-500 bg-indigo-50'
-          : 'border-neutral-300 bg-white hover:border-indigo-400 hover:bg-neutral-50'
+          ? 'scale-[1.01] border-indigo-400 bg-indigo-50/70 shadow-glass'
+          : 'border-neutral-300/80 bg-white/50 hover:border-indigo-300 hover:bg-indigo-50/30'
         }`}
     >
       <div className={`rounded-full p-4 ${isDragOver ? 'bg-indigo-100' : 'bg-neutral-100'}`}>

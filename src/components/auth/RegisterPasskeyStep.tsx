@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { Fingerprint, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { logAuditEvent } from '../../lib/auditLog';
+import Logo from '../common/Logo';
 
 interface RegisterPasskeyStepProps {
   isNewUser: boolean;
@@ -58,35 +60,50 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
   }
 
   return (
-    <div className="mx-auto mt-24 max-w-sm px-6 text-center">
-      <h2 className="text-lg font-semibold text-neutral-900">Последна стъпка</h2>
-      <p className="mt-2 text-sm text-neutral-600">
-        Email-ът е потвърден. Сега закачи passkey към профила си, за да можеш да влизаш без
-        парола следващия път.
-      </p>
-
-      {status === 'registering' && (
-        <p role="status" className="mt-4 text-sm text-neutral-600">
-          Потвърди с биометрия или PIN на устройството си в прозореца, който се появи.
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="animate-scaleIn glass-panel w-full max-w-sm rounded-3xl px-8 py-10 text-center shadow-glassLg">
+        <div className="flex justify-center">
+          <Logo size="md" withLabel={false} />
+        </div>
+        <h2 className="mt-5 text-lg font-semibold text-neutral-900">Последна стъпка</h2>
+        <p className="mt-2 text-sm leading-relaxed text-neutral-600">
+          Email-ът е потвърден. Сега закачи passkey към профила си, за да можеш да влизаш без
+          парола следващия път.
         </p>
-      )}
 
-      {errorMessage && <p role="alert" className="mt-4 text-sm text-red-600">{errorMessage}</p>}
+        {status === 'registering' && (
+          <p role="status" className="mt-4 text-sm text-neutral-600">
+            Потвърди с биометрия или PIN на устройството си в прозореца, който се появи.
+          </p>
+        )}
 
-      <button
-        onClick={handleRegister}
-        disabled={status === 'registering'}
-        className="mt-4 w-full rounded-md bg-neutral-900 px-4 py-2 font-medium text-white disabled:opacity-50"
-      >
-        {status === 'registering' ? 'Очакваме потвърждение...' : 'Регистрирай passkey'}
-      </button>
+        {errorMessage && <p role="alert" className="mt-4 text-sm text-red-600">{errorMessage}</p>}
 
-      <button
-        onClick={handleSignOut}
-        className="mt-3 text-sm text-neutral-400 hover:text-neutral-700"
-      >
-        Изход (довърши по-късно)
-      </button>
+        <button
+          onClick={handleRegister}
+          disabled={status === 'registering'}
+          className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {status === 'registering' ? (
+            <>
+              <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+              Очакваме потвърждение...
+            </>
+          ) : (
+            <>
+              <Fingerprint size={16} aria-hidden="true" />
+              Регистрирай passkey
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={handleSignOut}
+          className="mt-3 text-sm text-neutral-400 hover:text-neutral-700"
+        >
+          Изход (довърши по-късно)
+        </button>
+      </div>
     </div>
   );
 }

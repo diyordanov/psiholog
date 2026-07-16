@@ -156,12 +156,12 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
         onDrop={handleDrop}
         onClick={() => !isBusy && inputRef.current?.click()}
         className={`
-          relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed
-          px-6 py-10 text-center transition-colors
+          relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed
+          px-6 py-10 text-center backdrop-blur-xl transition-all
           ${isBusy ? 'cursor-default' : 'cursor-pointer'}
           ${isDragOver
-            ? 'border-indigo-400 bg-indigo-50'
-            : 'border-neutral-200 bg-neutral-50 hover:border-indigo-300 hover:bg-indigo-50/40'
+            ? 'scale-[1.01] border-indigo-400 bg-indigo-50/70 shadow-glass'
+            : 'border-neutral-200/80 bg-white/50 hover:border-indigo-300 hover:bg-indigo-50/30'
           }
         `}
       >
@@ -228,7 +228,7 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
 
       {/* ── Съобщение за грешка ─────────────────────────────────────────────── */}
       {stage === 'error' && errorMessage && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3">
+        <div className="animate-fadeInUp mt-3 flex items-start gap-2 rounded-xl bg-red-50/90 px-4 py-3 shadow-sm">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
           <div className="flex-1">
             {/* whitespace-pre-line запазва \n от threats списъка */}

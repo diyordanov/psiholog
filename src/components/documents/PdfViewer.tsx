@@ -249,7 +249,7 @@ export default function PdfViewer({ url, filename, cacheId, onClose }: PdfViewer
     <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950">
 
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-white/10 bg-neutral-900">
+      <div className="shrink-0 border-b border-white/10 bg-neutral-900/90 backdrop-blur-xl">
 
         {/* Ред 1: навигация + zoom + действия */}
         <div className="flex h-11 items-center gap-1 px-3">

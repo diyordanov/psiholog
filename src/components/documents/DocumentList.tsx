@@ -148,14 +148,14 @@ export default function DocumentList({ userId }: DocumentListProps) {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="animate-fadeIn mx-auto max-w-4xl px-4 py-8 sm:px-6">
       {/* Заглавие + бутон за ръчно обновяване */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-800">Моите документи</h1>
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 transition-colors hover:bg-white/70 disabled:opacity-40"
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           Обнови
@@ -169,7 +169,7 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
       {/* Грешка при зареждане */}
       {error && (
-        <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        <p className="mb-4 rounded-xl bg-red-50/90 px-4 py-3 text-sm text-red-700 shadow-sm">{error}</p>
       )}
 
       {/* Списък */}
@@ -178,14 +178,14 @@ export default function DocumentList({ userId }: DocumentListProps) {
           <RefreshCw size={20} className="animate-spin" />
         </div>
       ) : documents.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-16 text-neutral-400">
+        <div className="glass-panel flex flex-col items-center gap-2 rounded-2xl py-16 text-neutral-400">
           <FileText size={32} strokeWidth={1.5} />
           <p className="text-sm">Все още няма качени документи</p>
         </div>
       ) : (
-        <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-100 bg-white shadow-sm">
+        <div className="glass-panel divide-y divide-neutral-100/70 rounded-2xl">
           {documents.map((doc) => (
-            <div key={doc.id} className="flex gap-3 px-4 py-3">
+            <div key={doc.id} className="flex gap-3 px-4 py-3 transition-colors hover:bg-white/40">
               {/* Икона */}
               <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
                 doc.status === 'signed' ? 'bg-emerald-50' : 'bg-indigo-50'
@@ -316,7 +316,11 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
       {/* Toast */}
       {toast && (
-        <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-neutral-900 px-5 py-3 text-sm text-white shadow-xl">
+        <div
+          role="status"
+          aria-live="polite"
+          className="animate-fadeInUp glass-panel-dark fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-neutral-900/90 px-5 py-3 text-sm text-white"
+        >
           {toast}
         </div>
       )}

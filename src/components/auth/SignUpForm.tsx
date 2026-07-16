@@ -74,7 +74,7 @@ export default function SignUpForm() {
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
           disabled={isBusy}
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 focus:border-neutral-900 focus:outline-none"
+          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white/80 px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-100"
           placeholder="напр. Иван"
         />
       </div>
@@ -90,7 +90,7 @@ export default function SignUpForm() {
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           disabled={isBusy}
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 focus:border-neutral-900 focus:outline-none"
+          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white/80 px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-100"
           placeholder="ti@example.com"
         />
       </div>
@@ -105,7 +105,7 @@ export default function SignUpForm() {
       <button
         type="submit"
         disabled={isBusy}
-        className="rounded-md bg-neutral-900 px-4 py-2 font-medium text-white disabled:opacity-50"
+        className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isBusy ? 'Пращаме линк...' : 'Изпрати линк за потвърждение'}
       </button>

@@ -769,12 +769,12 @@ export default function SignDocumentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 px-4 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="sign-modal-title"
-        className="w-full max-w-md rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="animate-scaleIn glass-panel w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl shadow-glassLg"
       >
         <p id="sign-modal-title" className="px-6 pt-4 text-xs font-medium text-neutral-400 tracking-wide uppercase truncate">
           {filename}
@@ -823,13 +823,13 @@ export default function SignDocumentModal({
 
 function ModalHeader({ step, title, onClose }: { step?: number; title: string; onClose?: () => void }) {
   return (
-    <div className="flex items-center justify-between border-b border-neutral-100 px-6 py-4">
+    <div className="flex items-center justify-between border-b border-neutral-100/70 px-6 py-4">
       <div>
         {step && <p className="text-xs text-neutral-400 mb-0.5">Стъпка {step} от 3</p>}
         <h2 className="text-base font-semibold text-neutral-800">{title}</h2>
       </div>
       {onClose && (
-        <button onClick={onClose} aria-label="Затвори" className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100">
+        <button onClick={onClose} aria-label="Затвори" className="rounded-lg p-1 text-neutral-400 transition-colors hover:bg-neutral-900/5">
           <X size={18} aria-hidden="true" />
         </button>
       )}
@@ -848,18 +848,18 @@ interface ModalFooterProps {
 
 function ModalFooter({ onBack, backLabel, onNext, nextLabel, nextDisabled, nextClassName }: ModalFooterProps) {
   return (
-    <div className="flex gap-3 border-t border-neutral-100 px-6 py-4">
+    <div className="flex gap-3 border-t border-neutral-100/70 px-6 py-4">
       <button
         onClick={onBack}
-        className="flex-1 rounded-lg border border-neutral-200 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+        className="flex-1 rounded-xl border border-neutral-200 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
       >
         {backLabel}
       </button>
       <button
         onClick={onNext}
         disabled={nextDisabled}
-        className={`flex-1 rounded-lg py-2 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
-          nextClassName ?? 'bg-indigo-600 text-white hover:bg-indigo-700'
+        className={`flex-1 rounded-xl py-2 text-sm font-medium transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 ${
+          nextClassName ?? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)]'
         }`}
       >
         {nextLabel}

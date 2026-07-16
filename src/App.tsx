@@ -20,6 +20,7 @@ import { logAuditEvent } from './lib/auditLog';
 import AuthScreen from './components/auth/AuthScreen';
 import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
+import Logo from './components/common/Logo';
 import DocumentList from './components/documents/DocumentList';
 import KeyManagement from './components/keys/KeyManagement';
 import VerifyPage from './components/verify/VerifyPage';
@@ -160,34 +161,39 @@ function MainApp({ userId }: { userId: string }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('documents');
 
   return (
-    <main>
-      <UserMenu />
+    <main className="min-h-screen">
+      {/* Sticky стъклен хедър — лого, потребителско меню и сегментирана таб навигация */}
+      <header className="glass-panel sticky top-0 z-30 rounded-none border-x-0 border-t-0">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+          <Logo size="md" />
+          <UserMenu />
+        </div>
 
-      {/* Таб навигация */}
-      <div className="border-b border-neutral-200 bg-white">
-        <nav className="mx-auto flex max-w-3xl gap-1 px-4">
-          {(
-            [
-              ['documents', 'Документи'],
-              ['keys', 'Ключове'],
-              ['verify', 'Провери документ'],
-              ['how-it-works', 'Как работи'],
-            ] as [ActiveTab, string][]
-          ).map(([tab, label]) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
-                activeTab === tab
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <nav className="mx-auto max-w-4xl px-4 pb-3 sm:px-6">
+          <div className="flex gap-1 overflow-x-auto rounded-xl bg-neutral-900/5 p-1 scrollbar-hide">
+            {(
+              [
+                ['documents', 'Документи'],
+                ['keys', 'Ключове'],
+                ['verify', 'Провери документ'],
+                ['how-it-works', 'Как работи'],
+              ] as [ActiveTab, string][]
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                  activeTab === tab
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </nav>
-      </div>
+      </header>
 
       {activeTab === 'documents'    && <DocumentList userId={userId} />}
       {activeTab === 'keys'         && <KeyManagement userId={userId} />}
@@ -200,6 +206,7 @@ function MainApp({ userId }: { userId: string }) {
 function App() {
   return (
     <AuthProvider>
+      <div className="app-mesh-bg" aria-hidden="true" />
       <AppContent />
     </AuthProvider>
   );

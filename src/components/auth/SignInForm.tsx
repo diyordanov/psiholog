@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Shield, Fingerprint, Loader2 } from 'lucide-react';
+import { Fingerprint, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { logAuditEvent } from '../../lib/auditLog';
+import Logo from '../common/Logo';
 
 interface SignInFormProps {
   onStartRecovery: () => void;
@@ -41,11 +42,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
 
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
-      {/* Лого */}
-      <div className="flex items-center gap-2.5">
-        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
-      </div>
+      <Logo size="md" />
 
       {/* Заглавие + форма — вертикално центрирани */}
       <div className="flex flex-1 flex-col justify-center">
@@ -66,7 +63,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
             <button
               onClick={handleSignIn}
               disabled={status === 'signing-in'}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-indigo-800 px-4 text-sm font-medium text-white transition-colors hover:bg-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-800 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {status === 'signing-in' ? (
                 <>

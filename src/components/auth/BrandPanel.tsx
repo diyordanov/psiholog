@@ -11,8 +11,18 @@ interface BrandPanelProps {
  */
 export default function BrandPanel({ variant }: BrandPanelProps) {
   return (
-    <div className="flex h-full flex-col justify-between bg-[#1e1b4b] px-10 py-10 xl:px-14">
-      {variant === 'login' ? <LoginContent /> : <SignupContent />}
+    <div className="relative flex h-full flex-col justify-between overflow-hidden bg-gradient-to-br from-[#211d5e] via-[#1e1b4b] to-[#151235] px-10 py-10 xl:px-14">
+      {/* Плаващи ambient петна — декоративни, без влияние върху layout-а */}
+      <div
+        aria-hidden="true"
+        className="animate-floatSlow absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/25 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="animate-floatSlow absolute -bottom-24 -left-10 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl"
+        style={{ animationDelay: '1.5s' }}
+      />
+      <div className="relative">{variant === 'login' ? <LoginContent /> : <SignupContent />}</div>
     </div>
   );
 }
@@ -81,7 +91,9 @@ function FeatureItem({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="mt-0.5 shrink-0 text-indigo-400">{icon}</div>
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-indigo-300 backdrop-blur-sm">
+        {icon}
+      </div>
       <div>
         <p className="text-sm font-medium text-indigo-100">{title}</p>
         <p className="mt-0.5 text-xs text-indigo-400">{subtitle}</p>

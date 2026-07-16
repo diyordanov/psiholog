@@ -10,11 +10,12 @@
  *   fileerror  → in-page error banner + нов опит
  */
 import { useState, useCallback } from 'react';
-import { ShieldCheck, AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { verifyDocument } from '../../lib/verify/verifyService';
 import type { VerifyResult as VerifyResultData } from '../../lib/verify/types';
 import UploadZone from './UploadZone';
 import VerifyResult from './VerifyResult';
+import Logo from '../common/Logo';
 
 // Етапи показвани по време на верификация (анимирани последователно)
 const STAGES = [
@@ -85,13 +86,13 @@ export default function VerifyPage({ standalone = true }: Props) {
   const reset = useCallback(() => setState({ kind: 'idle' }), []);
 
   return (
-    <div className="min-h-screen bg-neutral-50">
+    <div className="min-h-screen">
 
       {/* Branded header — само за standalone /verify */}
       {standalone && (
-        <header className="border-b border-neutral-200 bg-white px-6 py-4">
+        <header className="glass-panel rounded-none border-x-0 border-t-0 px-6 py-4">
           <div className="mx-auto flex max-w-2xl items-center gap-3">
-            <ShieldCheck size={24} className="text-indigo-600" />
+            <Logo size="sm" withLabel={false} />
             <div>
               <h1 className="text-base font-semibold text-neutral-900">SignShield</h1>
               <p className="text-xs text-neutral-500">Проверка на цифров подпис</p>
@@ -100,7 +101,7 @@ export default function VerifyPage({ standalone = true }: Props) {
         </header>
       )}
 
-      <main className="mx-auto max-w-2xl px-4 py-8">
+      <main className="animate-fadeIn mx-auto max-w-2xl px-4 py-8">
 
         {/* ── idle ── */}
         {state.kind === 'idle' && (
@@ -115,7 +116,7 @@ export default function VerifyPage({ standalone = true }: Props) {
         {/* ── fileerror ── */}
         {state.kind === 'fileerror' && (
           <div className="space-y-4">
-            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-5">
+            <div className="animate-fadeInUp flex items-start gap-3 rounded-2xl border border-red-200/70 bg-red-50/80 p-5 shadow-sm backdrop-blur-sm">
               <AlertTriangle size={20} className="shrink-0 text-red-600" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-red-800">{state.message}</p>
@@ -130,7 +131,7 @@ export default function VerifyPage({ standalone = true }: Props) {
 
         {/* ── verifying ── */}
         {state.kind === 'verifying' && (
-          <div className="flex flex-col items-center gap-6 py-16 text-center">
+          <div className="glass-panel flex flex-col items-center gap-6 rounded-2xl py-16 text-center">
             {/* Spinner */}
             <div role="status" aria-label="Верифициране в процес" className="relative h-16 w-16">
               <div className="absolute inset-0 rounded-full border-4 border-neutral-200" aria-hidden="true" />

@@ -5,9 +5,9 @@
  */
 export default function UnsupportedBrowserNotice() {
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+    <div className="rounded-2xl border border-amber-200/70 bg-amber-50/80 p-5 text-amber-900 shadow-sm backdrop-blur-sm">
       <p className="font-semibold">Браузърът ти не поддържа passkeys</p>
-      <p className="mt-1 text-sm">
+      <p className="mt-1.5 text-sm leading-relaxed">
         За регистрация и вход е нужен съвременен браузър (Chrome, Edge, Firefox или Safari)
         на устройство с Windows Hello, Touch ID, Face ID или security key, през HTTPS връзка.
       </p>

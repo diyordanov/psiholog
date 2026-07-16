@@ -4,8 +4,8 @@ import SignInForm from './SignInForm';
 import RecoveryFlow from './RecoveryFlow';
 import BrandPanel from './BrandPanel';
 import UnsupportedBrowserNotice from './UnsupportedBrowserNotice';
+import Logo from '../common/Logo';
 import { isPasskeySupported } from '../../lib/webauthnSupport';
-import { Shield } from 'lucide-react';
 
 type AuthMode = 'signup' | 'signin' | 'recovery';
 
@@ -39,22 +39,24 @@ export default function AuthScreen() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col md:flex-row">
-      {/* Лява страна — форма (60% на desktop, 50% на tablet, 100% на mobile) */}
-      <div className="flex flex-1 flex-col md:max-w-[60%]">
-        {mode === 'signin' && (
-          <SignInForm
-            onStartRecovery={() => setMode('recovery')}
-            onShowSignup={() => setMode('signup')}
-          />
-        )}
-        {mode === 'signup' && <SignupPanel onShowSignin={() => setMode('signin')} />}
-        {mode === 'recovery' && <RecoveryPanel onCancel={() => setMode('signin')} />}
-      </div>
+    <div className="flex min-h-screen items-center justify-center p-4 sm:p-8">
+      <div className="animate-scaleIn glass-panel flex w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-glassLg md:min-h-[620px] md:flex-row">
+        {/* Лява страна — форма (60% на desktop, 50% на tablet, 100% на mobile) */}
+        <div className="flex flex-1 flex-col md:max-w-[58%]">
+          {mode === 'signin' && (
+            <SignInForm
+              onStartRecovery={() => setMode('recovery')}
+              onShowSignup={() => setMode('signup')}
+            />
+          )}
+          {mode === 'signup' && <SignupPanel onShowSignin={() => setMode('signin')} />}
+          {mode === 'recovery' && <RecoveryPanel onCancel={() => setMode('signin')} />}
+        </div>
 
-      {/* Дясна страна — brand panel (скрит на mobile) */}
-      <div className="hidden md:flex md:flex-1 md:max-w-[40%]">
-        <BrandPanel variant={mode === 'signup' ? 'signup' : 'login'} />
+        {/* Дясна страна — brand panel (скрит на mobile) */}
+        <div className="hidden md:flex md:flex-1 md:max-w-[42%]">
+          <BrandPanel variant={mode === 'signup' ? 'signup' : 'login'} />
+        </div>
       </div>
     </div>
   );
@@ -65,10 +67,7 @@ export default function AuthScreen() {
 function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
-      <div className="flex items-center gap-2.5">
-        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
-      </div>
+      <Logo size="md" />
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">
           <SignUpForm />
@@ -83,7 +82,7 @@ function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
         <button
           type="button"
           onClick={onShowSignin}
-          className="mt-3 w-full text-center text-sm font-medium text-indigo-800 transition-colors hover:text-indigo-900"
+          className="mt-3 w-full text-center text-sm font-medium text-indigo-700 transition-colors hover:text-indigo-900"
         >
           Влезте
         </button>
@@ -96,10 +95,7 @@ function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
 function RecoveryPanel({ onCancel }: { onCancel: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
-      <div className="flex items-center gap-2.5">
-        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
-      </div>
+      <Logo size="md" />
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">
           <h1 className="mb-4 text-2xl font-medium text-neutral-900">Възстановяване на достъп</h1>
