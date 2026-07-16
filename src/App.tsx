@@ -23,8 +23,9 @@ import UserMenu from './components/UserMenu';
 import DocumentList from './components/documents/DocumentList';
 import KeyManagement from './components/keys/KeyManagement';
 import VerifyPage from './components/verify/VerifyPage';
+import HowItWorksPage from './components/howItWorks/HowItWorksPage';
 
-type ActiveTab = 'documents' | 'keys' | 'verify';
+type ActiveTab = 'documents' | 'keys' | 'verify' | 'how-it-works';
 
 /**
  * Проверява дали текущият URL съдържа ?recovery=1.
@@ -154,7 +155,7 @@ function AppContent() {
   return <MainApp userId={session.user.id} />;
 }
 
-/** Главното приложение с таб навигация: Документи | Ключове | Провери. */
+/** Главното приложение с таб навигация: Документи | Ключове | Провери | Как работи. */
 function MainApp({ userId }: { userId: string }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('documents');
 
@@ -170,6 +171,7 @@ function MainApp({ userId }: { userId: string }) {
               ['documents', 'Документи'],
               ['keys', 'Ключове'],
               ['verify', 'Провери документ'],
+              ['how-it-works', 'Как работи'],
             ] as [ActiveTab, string][]
           ).map(([tab, label]) => (
             <button
@@ -187,9 +189,10 @@ function MainApp({ userId }: { userId: string }) {
         </nav>
       </div>
 
-      {activeTab === 'documents' && <DocumentList userId={userId} />}
-      {activeTab === 'keys'      && <KeyManagement userId={userId} />}
-      {activeTab === 'verify'    && <VerifyPage standalone={false} />}
+      {activeTab === 'documents'    && <DocumentList userId={userId} />}
+      {activeTab === 'keys'         && <KeyManagement userId={userId} />}
+      {activeTab === 'verify'       && <VerifyPage standalone={false} />}
+      {activeTab === 'how-it-works' && <HowItWorksPage />}
     </main>
   );
 }
