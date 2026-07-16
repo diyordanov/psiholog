@@ -9,7 +9,7 @@
  * без сертификат (certificate IS NULL). Провалите се показват с ⚠️ в KeyCard.
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Plus, RefreshCw, KeyRound, AlertTriangle, Fingerprint } from 'lucide-react';
+import { Plus, RefreshCw, KeyRound, AlertTriangle, Fingerprint, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   fetchUserSigningKeys,
   softDeleteSigningKey,
@@ -112,11 +112,21 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
   const ed25519Keys    = keys.filter((k) => k.algorithm === 'ed25519' && k.isPrfBased);
   const hasEd25519Keys = ed25519Keys.length > 0;
 
+  const activeKeys = keys.filter((k) => k.isPrfBased);
+  const ecdsaCount = activeKeys.filter((k) => k.algorithm === 'ecdsa-p256').length;
+  const mlDsaCount = activeKeys.filter((k) => k.algorithm === 'ml-dsa-65').length;
+  const expiringCount = activeKeys.filter((k) => k.certStatus === 'expiring-soon' || k.certStatus === 'expired').length;
+
   return (
     <div className="animate-fadeIn mx-auto max-w-4xl px-4 py-8 sm:px-6">
       {/* Заглавие + бутон */}
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-neutral-800">Мои ключове</h1>
+        <div>
+          <h1 className="text-xl font-semibold text-neutral-800">Мои ключове</h1>
+          <p className="mt-0.5 text-sm text-neutral-500">
+            Криптографски ключове за подписване, защитени с вашия passkey.
+          </p>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => { retrofitRunRef.current = false; load(); }}
@@ -225,6 +235,49 @@ export default function KeyManagement({ userId }: KeyManagementProps) {
           </div>
         </div>
       )}
+
+      {/* Health status карти */}
+      {activeKeys.length > 0 && (
+        <div className="mb-6 grid grid-cols-3 gap-3">
+          <div className="glass-panel flex items-center gap-3 rounded-2xl px-4 py-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              <KeyRound size={19} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xl font-semibold leading-tight text-neutral-900">{ecdsaCount}</p>
+              <p className="truncate text-xs text-neutral-500">ECDSA P-256</p>
+            </div>
+          </div>
+          <div className="glass-panel flex items-center gap-3 rounded-2xl px-4 py-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+              <ShieldCheck size={19} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xl font-semibold leading-tight text-neutral-900">{mlDsaCount}</p>
+              <p className="truncate text-xs text-neutral-500">ML-DSA-65</p>
+            </div>
+          </div>
+          <div className="glass-panel flex items-center gap-3 rounded-2xl px-4 py-3">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${expiringCount > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
+              <AlertTriangle size={19} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xl font-semibold leading-tight text-neutral-900">{expiringCount}</p>
+              <p className="truncate text-xs text-neutral-500">Изтичащи сертификати</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Постоянна информация за типовете ключове */}
+      <div className="mb-6 flex items-start gap-3 rounded-2xl border border-indigo-100/70 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-800 shadow-sm backdrop-blur-sm">
+        <Sparkles size={15} className="mt-0.5 shrink-0 text-indigo-500" />
+        <p className="leading-relaxed">
+          <span className="font-semibold">ECDSA P-256</span> подписва документите ви (съвместимо с Adobe Reader) ·{' '}
+          <span className="font-semibold">ML-DSA-65</span> добавя пост-квантова защита срещу утрешните заплахи.
+          Генерирайте поне по един от всеки за пълна защита.
+        </p>
+      </div>
 
       {/* Грешка */}
       {error && (

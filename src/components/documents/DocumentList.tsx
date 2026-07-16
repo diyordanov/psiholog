@@ -10,23 +10,31 @@
  *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB)
  */
 import { useEffect, useState, useCallback } from 'react';
-import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle } from 'lucide-react';
+import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle, Sparkles, ArrowRight, Clock } from 'lucide-react';
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
 import { fetchBestKeyId } from '../../lib/signingKeyStore';
 import { getSignedDownloadUrl } from '../../lib/signingService';
 import { logAuditEvent } from '../../lib/auditLog';
+import { useAuth } from '../../contexts/AuthContext';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
 import SignDocumentModal from './SignDocumentModal';
 
+type StatusFilter = 'all' | 'signed' | 'pending';
+
 interface DocumentListProps {
   userId: string;
+  onNavigateKeys?: () => void;
+  onNavigateHowItWorks?: () => void;
 }
 
-export default function DocumentList({ userId }: DocumentListProps) {
+export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWorks }: DocumentListProps) {
+  const { user } = useAuth();
+  const displayName = (user?.user_metadata.display_name as string | undefined) ?? 'там';
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   // Viewer state
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
@@ -147,20 +155,64 @@ export default function DocumentList({ userId }: DocumentListProps) {
     }
   };
 
+  const signedCount = documents.filter((d) => d.status === 'signed').length;
+  const pendingCount = documents.length - signedCount;
+  const mostRecent = documents[0];
+
+  const filteredDocuments = documents.filter((doc) => {
+    if (statusFilter === 'signed') return doc.status === 'signed';
+    if (statusFilter === 'pending') return doc.status !== 'signed';
+    return true;
+  });
+
   return (
     <div className="animate-fadeIn mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      {/* Заглавие + бутон за ръчно обновяване */}
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-neutral-800">Моите документи</h1>
+      {/* Поздрав + заглавие */}
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-neutral-800">Здравей, {displayName} 👋</h1>
+          <p className="mt-0.5 text-sm text-neutral-500">
+            Управлявайте и подписвайте документите си сигурно с passkey.{' '}
+            {onNavigateHowItWorks && (
+              <button
+                onClick={onNavigateHowItWorks}
+                className="inline-flex items-center gap-0.5 font-medium text-indigo-600 hover:text-indigo-800"
+              >
+                Как работи? <ArrowRight size={12} />
+              </button>
+            )}
+          </p>
+        </div>
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 transition-colors hover:bg-white/70 disabled:opacity-40"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-neutral-500 transition-colors hover:bg-white/70 disabled:opacity-40"
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           Обнови
         </button>
       </div>
+
+      {/* Statistics карти */}
+      {documents.length > 0 && (
+        <div className="mb-8 grid grid-cols-3 gap-3">
+          <StatCard label="Общо документи" value={documents.length} icon={FileText} accent="indigo" />
+          <StatCard label="Подписани" value={signedCount} icon={CheckCircle} accent="emerald" />
+          <StatCard label="Чакащи подпис" value={pendingCount} icon={PenLine} accent="amber" />
+        </div>
+      )}
+
+      {/* Последна активност */}
+      {mostRecent && (
+        <div className="animate-fadeInUp mb-8 flex items-center gap-3 rounded-2xl border border-white/60 bg-white/50 px-4 py-3 text-sm text-neutral-600 shadow-sm backdrop-blur-xl">
+          <Clock size={15} className="shrink-0 text-neutral-400" />
+          <span className="min-w-0 flex-1 truncate">
+            Последно: <span className="font-medium text-neutral-800">{mostRecent.original_filename}</span>
+            {' '}· {formatDate(mostRecent.created_at)}
+          </span>
+          <StatusBadge status={mostRecent.status} />
+        </div>
+      )}
 
       {/* Upload зона */}
       <div className="mb-8">
@@ -172,6 +224,31 @@ export default function DocumentList({ userId }: DocumentListProps) {
         <p className="mb-4 rounded-xl bg-red-50/90 px-4 py-3 text-sm text-red-700 shadow-sm">{error}</p>
       )}
 
+      {/* Филтри по статус */}
+      {documents.length > 0 && (
+        <div className="mb-3 flex w-fit gap-1 rounded-xl bg-neutral-900/5 p-1">
+          {(
+            [
+              ['all', 'Всички'],
+              ['pending', 'Чакащи'],
+              ['signed', 'Подписани'],
+            ] as [StatusFilter, string][]
+          ).map(([filter, label]) => (
+            <button
+              key={filter}
+              onClick={() => setStatusFilter(filter)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                statusFilter === filter
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Списък */}
       {loading && documents.length === 0 ? (
         <div className="flex justify-center py-12 text-neutral-400">
@@ -181,10 +258,18 @@ export default function DocumentList({ userId }: DocumentListProps) {
         <div className="glass-panel flex flex-col items-center gap-2 rounded-2xl py-16 text-neutral-400">
           <FileText size={32} strokeWidth={1.5} />
           <p className="text-sm">Все още няма качени документи</p>
+          <p className="max-w-xs text-center text-xs text-neutral-400">
+            Плъзнете PDF файл в зоната по-горе, за да качите първия си документ.
+          </p>
+        </div>
+      ) : filteredDocuments.length === 0 ? (
+        <div className="glass-panel flex flex-col items-center gap-2 rounded-2xl py-16 text-neutral-400">
+          <Sparkles size={28} strokeWidth={1.5} />
+          <p className="text-sm">Няма документи в тази категория</p>
         </div>
       ) : (
         <div className="glass-panel divide-y divide-neutral-100/70 rounded-2xl">
-          {documents.map((doc) => (
+          {filteredDocuments.map((doc) => (
             <div key={doc.id} className="flex gap-3 px-4 py-3 transition-colors hover:bg-white/40">
               {/* Икона */}
               <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
@@ -280,7 +365,14 @@ export default function DocumentList({ userId }: DocumentListProps) {
 
                 {/* Inline preflight error под бутоните */}
                 {signPreflightId !== doc.id && signPreflight && signingDoc === null && (
-                  <p className="mt-1.5 text-xs text-red-600">{signPreflight}</p>
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
+                    {signPreflight}
+                    {onNavigateKeys && (
+                      <button onClick={onNavigateKeys} className="font-medium underline underline-offset-2 hover:text-red-800">
+                        Отиди към Ключове
+                      </button>
+                    )}
+                  </p>
                 )}
               </div>
             </div>
@@ -329,6 +421,34 @@ export default function DocumentList({ userId }: DocumentListProps) {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
+
+const STAT_ACCENTS = {
+  indigo:  { bg: 'bg-indigo-50',  text: 'text-indigo-600' },
+  emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600' },
+  amber:   { bg: 'bg-amber-50',   text: 'text-amber-600' },
+} as const;
+
+function StatCard({
+  label, value, icon: Icon, accent,
+}: {
+  label: string;
+  value: number;
+  icon: React.ElementType;
+  accent: keyof typeof STAT_ACCENTS;
+}) {
+  const { bg, text } = STAT_ACCENTS[accent];
+  return (
+    <div className="glass-panel flex items-center gap-3 rounded-2xl px-4 py-3">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${bg} ${text}`}>
+        <Icon size={19} />
+      </div>
+      <div className="min-w-0">
+        <p className="text-xl font-semibold leading-tight text-neutral-900">{value}</p>
+        <p className="truncate text-xs text-neutral-500">{label}</p>
+      </div>
+    </div>
+  );
+}
 
 function StatusBadge({ status }: { status: DocumentRow['status'] }) {
   if (status === 'signed') {

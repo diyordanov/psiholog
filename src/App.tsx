@@ -195,7 +195,7 @@ function MainApp({ userId }: { userId: string }) {
         </nav>
       </header>
 
-      {activeTab === 'documents'    && <DocumentList userId={userId} />}
+      {activeTab === 'documents'    && <DocumentList userId={userId} onNavigateKeys={() => setActiveTab('keys')} onNavigateHowItWorks={() => setActiveTab('how-it-works')} />}
       {activeTab === 'keys'         && <KeyManagement userId={userId} />}
       {activeTab === 'verify'       && <VerifyPage standalone={false} />}
       {activeTab === 'how-it-works' && <HowItWorksPage />}

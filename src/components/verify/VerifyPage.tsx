@@ -10,12 +10,30 @@
  *   fileerror  → in-page error banner + нов опит
  */
 import { useState, useCallback } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, X, UploadCloud, ScanSearch, ShieldCheck, Lock } from 'lucide-react';
 import { verifyDocument } from '../../lib/verify/verifyService';
 import type { VerifyResult as VerifyResultData } from '../../lib/verify/types';
 import UploadZone from './UploadZone';
 import VerifyResult from './VerifyResult';
 import Logo from '../common/Logo';
+
+const MINI_STEPS: { icon: React.ReactNode; title: string; description: string }[] = [
+  {
+    icon: <UploadCloud size={18} />,
+    title: 'Качете PDF-а',
+    description: 'Файлът се обработва изцяло във вашия браузър.',
+  },
+  {
+    icon: <ScanSearch size={18} />,
+    title: 'Проверяваме подписа',
+    description: 'ECDSA P-256 и ML-DSA-65 се верифицират криптографски.',
+  },
+  {
+    icon: <ShieldCheck size={18} />,
+    title: 'Виждате резултата',
+    description: 'Автентичен, модифициран или неподписан — веднага.',
+  },
+];
 
 // Етапи показвани по време на верификация (анимирани последователно)
 const STAGES = [
@@ -105,11 +123,45 @@ export default function VerifyPage({ standalone = true }: Props) {
 
         {/* ── idle ── */}
         {state.kind === 'idle' && (
-          <div className="space-y-6">
-            {!standalone && (
-              <h2 className="text-lg font-semibold text-neutral-800">Провери подписан документ</h2>
-            )}
-            <UploadZone onFile={handleFile} onError={handleError} />
+          <div className="space-y-10">
+            <div className="space-y-6">
+              {!standalone && (
+                <h2 className="text-lg font-semibold text-neutral-800">Провери подписан документ</h2>
+              )}
+              <UploadZone onFile={handleFile} onError={handleError} />
+            </div>
+
+            {/* Мини "как работи" */}
+            <div className="grid gap-4 sm:grid-cols-3">
+              {MINI_STEPS.map((step, i) => (
+                <div
+                  key={step.title}
+                  className="animate-fadeInUp glass-panel rounded-2xl px-4 py-4 opacity-0"
+                  style={{ animationDelay: `${i * 100}ms` }}
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                    {step.icon}
+                  </div>
+                  <p className="mt-2.5 text-sm font-medium text-neutral-800">{step.title}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-neutral-500">{step.description}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Trust блок */}
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#211d5e] via-[#1e1b4b] to-[#151235] px-6 py-7 shadow-glassLg sm:px-8">
+              <div aria-hidden="true" className="animate-floatSlow absolute -right-14 -top-16 h-56 w-56 rounded-full bg-indigo-500/25 blur-3xl" />
+              <div className="relative flex items-start gap-3">
+                <Lock size={20} className="mt-0.5 shrink-0 text-indigo-300" />
+                <div>
+                  <p className="text-sm font-medium text-indigo-100">Независима проверка, без доверие в нас</p>
+                  <p className="mt-1 text-xs leading-relaxed text-indigo-300">
+                    Верификацията става изцяло във вашия браузър — файлът не се изпраща никъде.
+                    Всеки сертификат може да бъде проследен и потвърден независимо от издателя му.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
