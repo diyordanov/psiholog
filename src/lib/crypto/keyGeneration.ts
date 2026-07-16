@@ -1,5 +1,6 @@
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 
+/** Универсален формат за keypair, връщан от двата генератора по-долу (ECDSA и ML-DSA). */
 export interface Keypair {
   publicKey: Uint8Array;
   secretKey: Uint8Array;

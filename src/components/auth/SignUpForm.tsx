@@ -3,6 +3,10 @@ import { supabase } from '../../lib/supabase';
 
 type Step = 'enter-email' | 'link-sent';
 
+/**
+ * Форма за регистрация — стъпка 1 от 2 (email потвърждение).
+ * Passkey-ят се регистрира отделно, след потвърждение на email (виж App.tsx / RegisterPasskeyStep).
+ */
 export default function SignUpForm() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -10,6 +14,11 @@ export default function SignUpForm() {
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Изпраща magic-link за потвърждение на email чрез Supabase OTP.
+   * `shouldCreateUser: true` създава нов потребител, ако email-ът не съществува.
+   * display_name се пази в user metadata и се ползва по-късно за UI (напр. UserMenu).
+   */
   async function handleSendLink(event: FormEvent) {
     event.preventDefault();
     setErrorMessage(null);

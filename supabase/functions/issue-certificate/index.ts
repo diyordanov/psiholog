@@ -9,6 +9,26 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') ?? 'https://psiholog.pages.dev';
 
+/**
+ * HTTP контракт:
+ *   POST /issue-certificate
+ *   Headers: Authorization: Bearer <supabase JWT на логнатия потребител> (задължителен)
+ *   Body: { signingKeyId: string } — UUID на ред в signing_keys
+ *   200: { ok: true } или { ok: true, alreadyIssued: true } (идемпотентно — вече издаден сертификат)
+ *   400: невалидно тяло
+ *   401: липсващ/невалиден токен
+ *   404: ключът не съществува, не принадлежи на потребителя или е изтрит (soft-delete)
+ *   429: rate limit (виж checkRateLimit)
+ *   500/503: грешка при генериране на сертификат / липсваща CA конфигурация
+ *
+ * Сигурност:
+ *   - Проверка на собственост: заявката филтрира signing_keys по user_id от JWT,
+ *     не по подаден параметър — потребител не може да поиска сертификат за чужд ключ.
+ *   - CA private key (ROOT_CA_PRIVATE_KEY_B64) се използва само тук, в сървърна среда;
+ *     никога не напуска Edge Function-а и не се връща в response.
+ *   - Сертификатните extensions (basicConstraints CA:false, keyUsage) се задават твърдо
+ *     в buildExtensions() — leaf сертификатът не може да бъде използван като собствен CA.
+ */
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders() });
@@ -151,6 +171,13 @@ Deno.serve(async (req: Request) => {
 
 // ─── ECDSA P-256 X.509 (DER, без npm зависимости) ───────────────────────────
 
+/**
+ * Изгражда X.509 v3 сертификат за ECDSA P-256 публичен ключ, подписан от Root CA.
+ * Ръчно ASN.1 DER кодиране (без @peculiar/x509) — Deno edge runtime няма Node crypto,
+ * а библиотеката добавя ненужен bundle size за само този use-case.
+ * Структура: TBSCertificate { version, serial, sigAlg, issuer, validity, subject, SPKI, extensions }
+ *            + подпис на CA върху TBS (RFC 5280).
+ */
 async function buildEcdsaP256Cert(params: {
   publicKeyBytes: Uint8Array;
   caPrivKey: CryptoKey;
@@ -198,6 +225,11 @@ async function buildEcdsaP256Cert(params: {
 
 // ─── Ed25519 X.509 (запазен за обратна съвместимост на стари ключове) ────────
 
+/**
+ * Аналог на buildEcdsaP256Cert(), но за Ed25519 leaf ключ. Структурата на TBS е
+ * идентична — разлика само в SPKI (edSpki вместо ecdsaP256Spki). CA винаги подписва
+ * с ECDSA P-256/SHA-256, независимо от алгоритъма на subject ключа.
+ */
 async function buildEd25519Cert(params: {
   publicKeyBytes: Uint8Array;
   caPrivKey: CryptoKey;
@@ -243,6 +275,13 @@ async function buildEd25519Cert(params: {
 
 // ─── ML-DSA-65 JSON attestation ──────────────────────────────────────────────
 
+/**
+ * ML-DSA-65 (post-quantum) няма стандартизиран X.509 профил в широка употреба,
+ * затова вместо DER сертификат издаваме подписан JSON "attestation" документ
+ * със същата семантика (issuer, subject, validity, CA подпис) — CA подписва с
+ * ECDSA P-256/SHA-256 върху каноничен JSON.stringify() на данните.
+ * Връща UTF-8 байтовете на крайния JSON (attestationData + caSignature).
+ */
 async function buildAttestation(params: {
   publicKeyBytes: Uint8Array;
   caPrivKey: CryptoKey;
@@ -287,7 +326,10 @@ async function buildAttestation(params: {
 }
 
 // ─── ASN.1 DER primitives ────────────────────────────────────────────────────
+// Минимален ръчен DER encoder — покрива само TLV конструкциите нужни за X.509
+// (SEQUENCE, SET, INTEGER, OID, UTF8String, BIT STRING, OCTET STRING, GeneralizedTime).
 
+/** Конкатенира няколко Uint8Array в един буфер (байтово ниво, без copy overhead на spread). */
 function cat(...arrs: Uint8Array[]): Uint8Array {
   const total = arrs.reduce((n, a) => n + a.length, 0);
   const out   = new Uint8Array(total);
@@ -296,23 +338,30 @@ function cat(...arrs: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * DER дължина в кодиран вид (ITU-T X.690 8.1.3): length < 128 → 1 байт директно;
+ * иначе high-bit-set байт с брой следващи length-байтове + самите тях (поддържа до 65535).
+ */
 function encLen(n: number): Uint8Array {
   if (n < 0x80)  return new Uint8Array([n]);
   if (n < 0x100) return new Uint8Array([0x81, n]);
   return new Uint8Array([0x82, (n >> 8) & 0xff, n & 0xff]);
 }
 
+/** Tag-Length-Value обвивка — градивният блок на всички DER структури по-долу. */
 function tlv(tag: number, val: Uint8Array): Uint8Array {
   return cat(new Uint8Array([tag]), encLen(val.length), val);
 }
 
-const derSeq   = (v: Uint8Array) => tlv(0x30, v);
-const derSet   = (v: Uint8Array) => tlv(0x31, v);
-const derInt   = (v: Uint8Array) => tlv(0x02, v);
-const derOid   = (v: Uint8Array) => tlv(0x06, v);
-const derOcts  = (v: Uint8Array) => tlv(0x04, v);
-const derUtf8  = (s: string)     => tlv(0x0c, new TextEncoder().encode(s));
+// Кратки конструктори за често използваните ASN.1 типове (tag стойности от X.690):
+const derSeq   = (v: Uint8Array) => tlv(0x30, v); // SEQUENCE
+const derSet   = (v: Uint8Array) => tlv(0x31, v); // SET (за RDN — RelativeDistinguishedName)
+const derInt   = (v: Uint8Array) => tlv(0x02, v); // INTEGER
+const derOid   = (v: Uint8Array) => tlv(0x06, v); // OBJECT IDENTIFIER
+const derOcts  = (v: Uint8Array) => tlv(0x04, v); // OCTET STRING
+const derUtf8  = (s: string)     => tlv(0x0c, new TextEncoder().encode(s)); // UTF8String
 
+/** Кодира дата като GeneralizedTime (YYYYMMDDHHMMSSZ, UTC) — изисква се от X.509 за дати след 2049 г. */
 function derGTime(d: Date): Uint8Array {
   const p = (n: number, w = 2) => String(n).padStart(w, '0');
   const s = `${d.getUTCFullYear()}${p(d.getUTCMonth()+1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
@@ -332,6 +381,7 @@ const OID_KU           = new Uint8Array([0x55, 0x1d, 0x0f]);                    
 
 const BOOL_TRUE  = new Uint8Array([0x01, 0x01, 0xff]);
 
+/** Изгражда единичен RDN (Relative Distinguished Name) елемент: SET { SEQUENCE { OID, UTF8String } }. */
 const rdnUtf8 = (oid: Uint8Array, val: string) =>
   derSet(derSeq(cat(derOid(oid), derUtf8(val))));
 
@@ -353,11 +403,14 @@ function edSpki(pubKey: Uint8Array): Uint8Array {
 function p1363ToDer(p1363: Uint8Array): Uint8Array {
   const r = p1363.slice(0, 32);
   const s = p1363.slice(32, 64);
+  // DER INTEGER е знаково число — ако старшият бит е 1, се добавя leading 0x00,
+  // за да не се интерпретира r/s (винаги неотрицателни) като отрицателно число.
   const encInt = (b: Uint8Array) =>
     derInt(b[0] & 0x80 ? cat(new Uint8Array([0x00]), b) : b);
   return tlv(0x30, cat(encInt(r), encInt(s)));
 }
 
+/** Конвертира hex serial number в DER INTEGER, с leading-zero padding при нужда (виж p1363ToDer). */
 function encodeSerial(hex: string): Uint8Array {
   const bytes = Array.from({ length: hex.length / 2 }, (_, i) =>
     parseInt(hex.slice(i * 2, i * 2 + 2), 16),
@@ -366,6 +419,14 @@ function encodeSerial(hex: string): Uint8Array {
   return derInt(new Uint8Array(bytes));
 }
 
+/**
+ * Изгражда X.509 v3 extensions блок (tag [3], context-specific):
+ *  - basicConstraints (OID 2.5.29.19), critical: CA:FALSE — сертификатът НЕ може
+ *    да издава други сертификати (защита срещу злоупотреба ако leaf ключът изтече).
+ *  - keyUsage (OID 2.5.29.15), critical, BIT STRING [0x07 unused-bits, 0x80 data] —
+ *    с 7 неизползвани бита в единствения байт остава само bit 0 = digitalSignature,
+ *    точно каквото е нужно за подписване на документи (не позволява напр. keyEncipherment).
+ */
 function buildExtensions(): Uint8Array {
   const bcExt = derSeq(cat(derOid(OID_BC), BOOL_TRUE, derOcts(derSeq(new Uint8Array(0)))));
   const kuBits = tlv(0x03, new Uint8Array([0x07, 0x80]));
@@ -374,7 +435,10 @@ function buildExtensions(): Uint8Array {
 }
 
 // ─── DER parser helpers ───────────────────────────────────────────────────────
+// Минимален DER reader — обратното на encLen/tlv по-горе. Ползва се само за да
+// извлечем issuer DN от CA сертификата (не пълен X.509 parser).
 
+/** Чете DER length от буфер на позиция pos (обратна операция на encLen). Връща и позицията след length. */
 function readLen(buf: Uint8Array, pos: number): { len: number; next: number } {
   const first = buf[pos];
   if (first < 0x80) return { len: first, next: pos + 1 };
@@ -384,37 +448,50 @@ function readLen(buf: Uint8Array, pos: number): { len: number; next: number } {
   return { len, next: pos + 1 + nb };
 }
 
+/** Прескача цял TLV елемент (tag + length + value) и връща позицията веднага след него. */
 function skipTlv(buf: Uint8Array, pos: number): number {
   pos++;
   const { len, next } = readLen(buf, pos);
   return next + len;
 }
 
+/**
+ * Извлича issuer DN (Distinguished Name) директно от DER байтовете на CA сертификата.
+ * Причина: новите leaf сертификати трябва да имат issuer == subject на CA сертификата
+ * (RFC 5280 изисква точно съвпадение за верижна верификация) — вместо да го хардкодваме
+ * втори път, го четем от вече наличния ROOT_CA_CERT_PEM, за да няма разминаване.
+ *
+ * Обхожда TBSCertificate по фиксирана позиция: SEQUENCE(Cert) → SEQUENCE(TBS) →
+ * [0]version(опционално) → serial → sigAlg → issuer (търсеното поле).
+ */
 function extractIssuerDN(certDer: Uint8Array): Uint8Array {
   let pos = 0;
-  pos++;
+  pos++;                                   // tag на Certificate SEQUENCE
   pos = readLen(certDer, pos).next;
-  pos++;
+  pos++;                                   // tag на TBSCertificate SEQUENCE
   pos = readLen(certDer, pos).next;
-  if (certDer[pos] === 0xa0) pos = skipTlv(certDer, pos);
-  pos = skipTlv(certDer, pos);
-  pos = skipTlv(certDer, pos);
+  if (certDer[pos] === 0xa0) pos = skipTlv(certDer, pos); // [0] version, ако е налично (v3)
+  pos = skipTlv(certDer, pos);             // serialNumber
+  pos = skipTlv(certDer, pos);             // signature (AlgorithmIdentifier)
   const start = pos;
-  pos = skipTlv(certDer, pos);
+  pos = skipTlv(certDer, pos);             // issuer (Name) — това е търсеният блок
   return certDer.slice(start, pos);
 }
 
 // ─── Помощни функции ─────────────────────────────────────────────────────────
 
+/** Маха PEM header/footer + whitespace и base64-декодира до суровите DER байтове. */
 function pemToDer(pem: string): Uint8Array {
   const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
+/** Декодира чист base64 (без PEM markers) — ползва се за ROOT_CA_PRIVATE_KEY_B64 secret. */
 function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64.replace(/\s/g, '')), (c) => c.charCodeAt(0));
 }
 
+/** Декодира hex низ (с опционален Postgres bytea `\x` префикс) до байтове. */
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('\\x') ? hex.slice(2) : hex;
   return new Uint8Array(clean.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
@@ -422,6 +499,12 @@ function hexToBytes(hex: string): Uint8Array {
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 
+/**
+ * Ограничава до 10 издадени сертификата на потребител в рамките на последната минута.
+ * Брои редове от audit_log (action = 'certificate_issued') вместо отделна таблица —
+ * audit_log вече се пише при всяко успешно издаване, така че няма нужда от допълнителна
+ * инфраструктура (Redis и др.) за толкова рядка операция.
+ */
 // deno-lint-ignore no-explicit-any
 async function checkRateLimit(supabase: any, userId: string): Promise<boolean> {
   const oneMinAgo = new Date(Date.now() - 60_000).toISOString();

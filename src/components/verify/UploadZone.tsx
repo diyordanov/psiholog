@@ -13,10 +13,20 @@ interface Props {
   onError: (msg: string) => void;
 }
 
+/**
+ * Компонент за избор на файл за верификация — чрез drag-and-drop или click.
+ * Валидира локално (размер, разширение/MIME) и подава File нагоре чрез onFile;
+ * самата верификация се извиква от родителя (VerifyPage), не тук.
+ */
 export default function UploadZone({ onFile, onError }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Проверява размер и тип на файла преди да го подаде нагоре.
+   * file.type може да е празен низ при drag-and-drop от някои ОС/браузъри,
+   * затова fallback-ваме на разширението .pdf.
+   */
   const validate = useCallback((file: File): boolean => {
     if (file.size > MAX_BYTES) {
       onError('Файлът е твърде голям (максимум 50 MB).');
@@ -32,6 +42,7 @@ export default function UploadZone({ onFile, onError }: Props) {
     return true;
   }, [onError]);
 
+  /** Общ вход за файлове — от <input type="file"> и от drop събитието. */
   const handleFiles = useCallback((files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
@@ -39,11 +50,13 @@ export default function UploadZone({ onFile, onError }: Props) {
   }, [validate, onFile]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
+    // preventDefault спира браузъра да отвори файла директно (default drop поведение).
     e.preventDefault();
     setIsDragOver(false);
     handleFiles(e.dataTransfer.files);
   }, [handleFiles]);
 
+  // preventDefault на dragover е задължителен — иначе браузърът никога не позволява drop.
   const onDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
   const onDragLeave = () => setIsDragOver(false);
 

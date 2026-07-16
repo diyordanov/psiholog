@@ -7,10 +7,26 @@ interface RegisterPasskeyStepProps {
   onDone: () => void;
 }
 
+/**
+ * Финална стъпка от регистрацията — потребителят вече има потвърден email
+ * (реална сесия), но все още няма passkey. Тук се извиква WebAuthn
+ * ceremony-то за създаване на нов passkey и се логва завършването на
+ * регистрацията. Ползва се и от recovery flow-а (isNewUser=false), където
+ * потребителят вече е логнат, но старите му passkey-и са изтрити.
+ */
 export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPasskeyStepProps) {
   const [status, setStatus] = useState<'idle' | 'registering' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Стартира WebAuthn "create credential" ceremony през Supabase.
+   * registerPasskey() отваря системния диалог на браузъра (Face ID/Touch ID/
+   * Windows Hello/security key), генерира keypair на устройството и
+   * регистрира публичния ключ към текущата сесия. При успех записваме
+   * audit event(и) — 'signup' само при първа регистрация, и винаги
+   * 'new_passkey_registered' — и известяваме родителя (onDone), за да
+   * премине към същинското приложение.
+   */
   async function handleRegister() {
     setErrorMessage(null);
     setStatus('registering');
@@ -26,6 +42,8 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
       return;
     }
 
+    // registerPasskey() не връща директно session обект, затова го дочитаме,
+    // за да логнем audit събитията с коректен user id.
     const { data } = await supabase.auth.getSession();
     if (data.session) {
       if (isNewUser) await logAuditEvent(data.session.user.id, 'signup');
@@ -34,6 +52,7 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
     onDone();
   }
 
+  /** Позволява на потребителя да прекъсне регистрацията и да я довърши по-късно. */
   async function handleSignOut() {
     await supabase.auth.signOut();
   }

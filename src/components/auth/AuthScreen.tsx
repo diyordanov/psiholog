@@ -9,6 +9,14 @@ import { Shield } from 'lucide-react';
 
 type AuthMode = 'signup' | 'signin' | 'recovery';
 
+/**
+ * Координатор на auth екрана — превключва между трите режима на неавтентикиран потребител:
+ * 'signup' (регистрация с email), 'signin' (вход с passkey) и 'recovery' (възстановяване
+ * на достъп при загубен passkey). Стъпката "регистрация на passkey" след потвърден email
+ * НЕ е част от този state machine — тя се обработва отделно в App.tsx (RegisterPasskeyStep),
+ * след като Supabase вече е създал сесия от email линка.
+ * Ако браузърът не поддържа WebAuthn, показва UnsupportedBrowserNotice вместо формите.
+ */
 export default function AuthScreen() {
   const [mode, setMode] = useState<AuthMode>('signup');
 
@@ -57,9 +65,9 @@ export default function AuthScreen() {
 function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
-      <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
+      <div className="flex items-center gap-2.5">
+        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
+        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">
@@ -88,9 +96,9 @@ function SignupPanel({ onShowSignin }: { onShowSignin: () => void }) {
 function RecoveryPanel({ onCancel }: { onCancel: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
-      <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
+      <div className="flex items-center gap-2.5">
+        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
+        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">

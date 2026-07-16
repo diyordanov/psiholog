@@ -3,10 +3,19 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { logAuditEvent } from '../lib/auditLog';
 
+/**
+ * Малка лента с поздрав към логнатия потребител и бутон за изход.
+ * Показва се само когато има активна сесия (auth контекстът е зареден и user != null).
+ */
 export default function UserMenu() {
   const { user } = useAuth();
   const displayName = (user?.user_metadata.display_name as string | undefined) ?? 'Потребител';
 
+  /**
+   * Записва audit event за изход (докато сесията все още е активна),
+   * след което прекратява сесията в Supabase — това тригва onAuthStateChange
+   * в AuthContext и приложението се връща на auth екрана.
+   */
   async function handleSignOut() {
     if (user) await logAuditEvent(user.id, 'logout');
     await supabase.auth.signOut();

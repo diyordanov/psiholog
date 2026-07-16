@@ -8,10 +8,20 @@ interface SignInFormProps {
   onShowSignup: () => void;
 }
 
+/**
+ * Форма за вход само с passkey (WebAuthn) — няма парола/email поле.
+ * При успех Supabase създава сесия автоматично; App.tsx поема нататък през AuthContext.
+ */
 export default function SignInForm({ onStartRecovery, onShowSignup }: SignInFormProps) {
   const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Стартира WebAuthn "get" церемония през Supabase — браузърът показва
+   * системния диалог за избор на passkey (Face ID/Touch ID/Windows Hello и т.н.).
+   * При грешка (отказан диалог, липсващ passkey на устройството) показваме общо
+   * съобщение, без да разкриваме дали конкретен акаунт съществува.
+   */
   async function handleSignIn() {
     setErrorMessage(null);
     setStatus('signing-in');
@@ -24,6 +34,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
       return;
     }
 
+    // Одитно логване на успешен вход (за comply/security trail).
     await logAuditEvent(data.user.id, 'login');
     setStatus('idle');
   }
@@ -31,16 +42,19 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
   return (
     <div className="flex flex-1 flex-col px-8 py-10 lg:px-12 lg:py-14">
       {/* Лого */}
-      <div className="flex items-center gap-2">
-        <Shield size={22} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
-        <span className="text-[15px] font-medium tracking-tight text-neutral-900">SignShield</span>
+      <div className="flex items-center gap-2.5">
+        <Shield size={30} className="text-indigo-800" strokeWidth={2} aria-hidden="true" />
+        <span className="text-xl font-medium tracking-tight text-neutral-900">SignShield</span>
       </div>
 
       {/* Заглавие + форма — вертикално центрирани */}
       <div className="flex flex-1 flex-col justify-center">
         <div className="w-full max-w-sm">
           <h1 className="text-2xl font-medium leading-snug text-neutral-900">Добре дошли</h1>
-          <p className="mt-1.5 text-sm text-neutral-500">Влезте с вашия passkey</p>
+          <p className="mt-1.5 text-sm text-neutral-500">
+            Използвайте Face ID, Touch ID, passkey или друг метод на устройството си, за да
+            влезете сигурно — без пароли за помнене.
+          </p>
 
           <div className="mt-8 flex flex-col gap-3">
             {errorMessage && (
@@ -72,7 +86,7 @@ export default function SignInForm({ onStartRecovery, onShowSignup }: SignInForm
               onClick={onStartRecovery}
               className="text-center text-sm text-neutral-400 transition-colors hover:text-neutral-600"
             >
-              Забравих си passkey
+              Забравен достъп
             </button>
           </div>
         </div>

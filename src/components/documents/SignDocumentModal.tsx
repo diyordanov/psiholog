@@ -75,6 +75,11 @@ interface ThumbnailState {
   error: string | null;
 }
 
+/**
+ * Зарежда PDF документа веднъж (по signedUrl) и рендира JPEG thumbnail за текущата
+ * страница при нужда. Резултатите се кешират в module-level thumbCache по "docId:page",
+ * за да не се рендира наново при връщане на вече видяна страница в рамките на сесията.
+ */
 function usePdfThumbnail(signedUrl: string | null, docId: string, page: number): ThumbnailState {
   const [state, setState] = useState<ThumbnailState>({
     dataUrl: null, widthPt: 595, heightPt: 842, numPages: 1, loading: true, error: null,
@@ -193,6 +198,7 @@ interface StepPositionProps {
   onClose: () => void;
 }
 
+/** Стъпка 1: избор на страница + клик върху thumbnail за поставяне на маркера на подписа. */
 function StepPosition({ signedUrl, docId, marker, onMarkerChange, onNext, onClose }: StepPositionProps) {
   const [currentPage, setCurrentPage] = useState(marker?.page ?? 0);
   const [jumpInput, setJumpInput] = useState('');
@@ -360,6 +366,7 @@ interface StepConfirmProps {
   onSign: () => void;
 }
 
+/** Стъпка 2: обобщение на избраните ключове/алгоритми и preflight грешки преди биометрията. */
 function StepConfirm({ marker, preflightKeys, preflightError, signerName, onBack, onSign }: StepConfirmProps) {
   const hasNoCert = preflightKeys !== null && preflightKeys.ecdsaData.certificateDer == null;
   const hasMlDsa = preflightKeys?.mlDsaData != null;
@@ -471,6 +478,7 @@ const SIGNING_STEPS: [number, string][] = [
   [100,'Завършено'],
 ];
 
+/** Стъпка 3: прогрес бар с фиксирани чекпойнти (SIGNING_STEPS) + краен резултат/грешка. */
 function StepSigning({ progress, progressLabel, error, result, onRetry, onDownload, onDone, downloadLoading }: StepSigningProps) {
   const isDone = result !== null;
 
@@ -578,6 +586,7 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Байт-по-байт сравнение на два PRF salt-а — ползва се за да разпознаем кой mock extractor да върне резултата. */
 function saltsEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -727,6 +736,12 @@ export default function SignDocumentModal({
     }
   }, [marker, preflightKeys, documentId, userId, signerName]);
 
+  /**
+   * Сваля току-що подписания PDF локално.
+   * Изтегляме blob вместо да навигираме директно към signed URL — Supabase Storage
+   * прави redirect към различен origin, при което браузърът игнорира a.download
+   * и слага UUID вместо оригиналното име на файла.
+   */
   const handleDownload = async () => {
     if (!signingResult) return;
     setDownloadLoading(true);

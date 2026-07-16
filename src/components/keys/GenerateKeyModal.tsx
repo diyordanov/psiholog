@@ -112,6 +112,14 @@ export default function GenerateKeyModal({
     }
   }, [userId, algorithm, onKeyGenerated, onClose]);
 
+  /**
+   * Стартира keygen според избрания алгоритъм.
+   * ML-DSA-65: изнесено в Web Worker (2–15 сек) — блокиращо на main thread, worker
+   *   комуникира резултата през postMessage/onmessage и се terminate-ва след употреба
+   *   (успех, грешка или ръчна отмяна от handleCancel).
+   * ECDSA P-256: генерира се синхронно на main thread (~1ms), не се нуждае от worker.
+   * И в двата случая резултатът отива във finalizeKeyGeneration за PRF ceremony + запис.
+   */
   const handleGenerate = async () => {
     const now = Date.now();
     const elapsed = now - lastGenerationAttempt;

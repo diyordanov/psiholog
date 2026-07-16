@@ -1,3 +1,8 @@
+/**
+ * Съобщение, показвано вместо auth формите, когато браузърът/устройството
+ * не поддържа WebAuthn passkeys (виж isPasskeySupported() в lib/webauthnSupport).
+ * Чисто презентационен компонент — без state и логика.
+ */
 export default function UnsupportedBrowserNotice() {
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">

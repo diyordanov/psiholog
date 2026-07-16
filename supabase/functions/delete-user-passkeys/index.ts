@@ -13,6 +13,19 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') ?? 'https://psiholog.pages.dev';
 
+/**
+ * HTTP контракт:
+ *   POST /delete-user-passkeys
+ *   Headers: Authorization: Bearer <supabase JWT на логнатия потребител> (задължителен)
+ *   Body: няма (не се чете request body)
+ *   200: { deleted_count: number } — брой изтрити passkey-и
+ *   401: липсващ/невалиден токен
+ *   405: метод различен от POST/OPTIONS
+ *   500: грешка при DB операцията
+ *
+ * user_id никога не идва от клиента — винаги от auth.getUser(jwt), за да не може
+ * потребител А да изтрие passkey-ите на потребител Б чрез подправено тяло.
+ */
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, {

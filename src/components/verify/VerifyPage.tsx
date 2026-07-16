@@ -36,9 +36,19 @@ interface Props {
   standalone?: boolean;
 }
 
+/**
+ * Страница за верификация на подписан PDF — качване (UploadZone), извикване на
+ * verifyDocument (изцяло в браузъра, без upload към сървър) и показване на
+ * резултата (VerifyResult). Използва се и вградена (таб "Провери") и standalone (/verify).
+ */
 export default function VerifyPage({ standalone = true }: Props) {
   const [state, setState] = useState<PageState>({ kind: 'idle' });
 
+  /**
+   * Чете избрания файл като байтове и извиква verifyDocument.
+   * Анимацията на етапите (STAGES) е чисто визуална — тече паралелно на реалната
+   * верификация чрез interval, не отразява точния прогрес на verifyService.
+   */
   const handleFile = useCallback(async (file: File) => {
     // Стартираме верификацията и анимацията едновременно
     setState({ kind: 'verifying', stageName: STAGES[0] });

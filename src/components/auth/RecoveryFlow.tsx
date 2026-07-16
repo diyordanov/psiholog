@@ -14,6 +14,12 @@ export default function RecoveryFlow({ onCancel }: RecoveryFlowProps) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Изпраща recovery OTP линк по email. `shouldCreateUser: false` гарантира, че
+   * не се създава нов акаунт — само вход в съществуващ. Redirect URL-ът носи
+   * `?recovery=1`, за да може App.tsx да разпознае режима "възстановяване"
+   * след връщане от линка и да задейства изтриване на старите passkey-и.
+   */
   async function handleSendLink(e: React.FormEvent) {
     e.preventDefault();
     setErrorMessage(null);

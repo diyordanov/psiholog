@@ -27,9 +27,15 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Модал показващ пълните X.509 детайли на сертификата на подписалия
+ * (отваря се от бутон "Виж пълен сертификат" в TechnicalDetails).
+ */
 export default function CertificateModal({ certDer, onClose }: Props) {
   let cert: x509.X509Certificate;
   try {
+    // Парсването може да хвърли ако certDer не е валиден DER (повреден/чужд формат) —
+    // показваме грешка вместо да гърми компонентът.
     cert = new x509.X509Certificate(certDer as unknown as Uint8Array<ArrayBuffer>);
   } catch {
     return (

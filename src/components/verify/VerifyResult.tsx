@@ -25,6 +25,11 @@ interface Props {
 
 type DisplayKind = 'green' | 'yellow' | 'red' | 'neutral';
 
+/**
+ * Извежда цвета на Layer 1 банера от overall резултата и статуса на сертификатната
+ * верига. authentic + изтекъл сертификат е отделен случай (yellow) — подписът
+ * все още е математически валиден, но доверието в сертификата е под въпрос.
+ */
 function getKind(r: VResult): DisplayKind {
   if (r.overall === 'unsigned') return 'neutral';
   if (r.overall === 'error' || r.overall === 'tampered' || r.overall === 'invalid') return 'red';
@@ -42,6 +47,7 @@ const KIND_CFG: Record<DisplayKind, {
   neutral: { banner: 'bg-neutral-50 border-neutral-200',iconColor:'text-neutral-500',Icon: Info },
 };
 
+/** Заглавие на Layer 1 банера — текстовото обяснение, съответстващо на getKind. */
 function getHeading(r: VResult): string {
   switch (r.overall) {
     case 'authentic':
@@ -68,12 +74,17 @@ function fmtDateTime(d: Date | null): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+/**
+ * Показва резултата от verifyDocument — Layer 1 hero статус + Layer 2 технически
+ * детайли (TechnicalDetails) + бутон за верификационен PDF доклад.
+ */
 export default function VerifyResult({ result, fileName, onReset }: Props) {
   const kind = getKind(result);
   const { banner, iconColor, Icon } = KIND_CFG[kind];
   const heading = getHeading(result);
   const [downloading, setDownloading] = useState(false);
 
+  /** Генерира верификационен PDF доклад (reportGenerator) и го отваря в нов таб. */
   async function handleOpenReport() {
     setDownloading(true);
     // Отваряме нов таб СИНХРОННО (преди await) — popup blocker блокира window.open

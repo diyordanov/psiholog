@@ -37,12 +37,14 @@ function fmtDate(d: Date | null): string {
   }) + ' г.';
 }
 
+/** Иконка според статуса на конкретния подпис (ECDSA или ML-DSA) — зелено/червено/сиво. */
 function StatusIcon({ status }: { status: SignatureStatus }) {
   if (status === 'valid')        return <CheckCircle size={14} className="text-green-600" />;
   if (status === 'invalid')      return <XCircle     size={14} className="text-red-600" />;
   return                                <MinusCircle size={14} className="text-neutral-400" />;
 }
 
+/** Значка за статуса на веригата на доверие (сертификат → CA) — цветово кодирана по риск. */
 function CertStatusBadge({ status }: { status: CertChainStatus | null }) {
   if (!status) return null;
   const cfg = {
@@ -83,6 +85,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/**
+ * Layer 2 на резултата от верификация — collapsible секции с техническите детайли
+ * зад Layer 1 hero статуса (VerifyResult). Чисто презентационен компонент,
+ * не извиква verifyService — само чете вече изчисления `result`.
+ */
 export default function TechnicalDetails({ result }: Props) {
   const [certModalOpen, setCertModalOpen] = useState(false);
 
