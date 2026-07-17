@@ -15,6 +15,14 @@ const DOCS_SRC  = join(ROOT, 'docs', 'kursova');
 const DOCS_OUT  = join(ROOT, 'public', 'docs');
 const OUT_FILE  = join(DOCS_OUT, 'index.html');
 
+// ── Strip YAML frontmatter (--- ... ---) from markdown ────────────────────
+function stripFrontmatter(raw) {
+  if (!raw.startsWith('---')) return raw;
+  const end = raw.indexOf('\n---', 3);
+  if (end === -1) return raw;
+  return raw.slice(end + 4).trimStart();
+}
+
 // ── Collect & sort .md files (01, 02, 03 …) ───────────────────────────────
 const mdFiles = readdirSync(DOCS_SRC)
   .filter(f => f.endsWith('.md'))
@@ -27,7 +35,7 @@ if (mdFiles.length === 0) {
 
 // ── Convert each file ─────────────────────────────────────────────────────
 const sections = mdFiles.map(file => {
-  const raw  = readFileSync(join(DOCS_SRC, file), 'utf8');
+  const raw  = stripFrontmatter(readFileSync(join(DOCS_SRC, file), 'utf8'));
   const body = marked.parse(raw);
   const id   = file.replace('.md', '');
   return `<section class="doc-section" id="${id}">\n${body}\n</section>`;
@@ -35,7 +43,7 @@ const sections = mdFiles.map(file => {
 
 // ── Build TOC from first H1 of each file ─────────────────────────────────
 const tocItems = mdFiles.map(file => {
-  const raw    = readFileSync(join(DOCS_SRC, file), 'utf8');
+  const raw    = stripFrontmatter(readFileSync(join(DOCS_SRC, file), 'utf8'));
   const match  = raw.match(/^#\s+(.+)$/m);
   const title  = match ? match[1].trim() : file.replace('.md', '');
   const id     = file.replace('.md', '');

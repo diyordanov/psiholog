@@ -139,6 +139,7 @@
       <li><a href="#01-uvod">Раздел 1. Увод</a></li>
       <li><a href="#02-literaturen-obzor">Раздел 2. Литературен обзор и съществуващи решения</a></li>
       <li><a href="#03-cel-i-zadachi">Раздел 3. Цел и задачи на разработката</a></li>
+      <li><a href="#04-proektirane">Раздел 4. Проектиране</a></li>
     </ol>
   </nav>
 
@@ -322,13 +323,6 @@
 <td align="center">✅</td>
 <td align="center">Частична</td>
 </tr>
-<tr>
-<td>Цена</td>
-<td align="center">Безплатно</td>
-<td align="center">$15–$65/мес.</td>
-<td align="center">$15–$79/мес.</td>
-<td align="center">$15–$25/мес.</td>
-</tr>
 </tbody></table></div>
 <p>[FIG 1: DocuSign интерфейс при подписване на документ — поставяне на поле за подпис и инициали]</p>
 <h3>DocuSign</h3>
@@ -399,6 +393,97 @@
 <p>[3] Housley, R. <em>Cryptographic Message Syntax (CMS)</em> (Криптографски синтаксис на съобщения). RFC 5652. <a href="https://datatracker.ietf.org/doc/html/rfc5652">https://datatracker.ietf.org/doc/html/rfc5652</a>. Септември 2009.</p>
 <p>[4] World Wide Web Consortium. <em>Web Authentication: An API for accessing Public Key Credentials, Level 3</em> (Уеб автентикация: API за достъп до публични ключови идентификатори). <a href="https://www.w3.org/TR/webauthn-3/">https://www.w3.org/TR/webauthn-3/</a>. 2023.</p>
 <p>[5] Krawczyk, H., Eronen, P. <em>HMAC-based Extract-and-Expand Key Derivation Function (HKDF)</em> (HMAC-базирана функция за деривация на ключове). RFC 5869. <a href="https://datatracker.ietf.org/doc/html/rfc5869">https://datatracker.ietf.org/doc/html/rfc5869</a>. Май 2010.</p>
+
+</section>
+
+<section class="doc-section" id="04-proektirane">
+<h1>Раздел 4. Проектиране</h1>
+<h2>4.1 Избор на технологии</h2>
+<p>Изборът на технологии за разработката на SignShield е ръководен от няколко основни принципа: всички криптографски операции трябва да се изпълняват на клиентска страна (в браузъра), без изпращане на частни ключове или документи към сървъра; стекът трябва да е добре поддържан, с активна общност и одитиран код; и крайното приложение трябва да работи в стандартен браузър без инсталация на допълнителен софтуер.</p>
+<h3>Frontend: React, TypeScript, Vite</h3>
+<p>За изграждане на потребителския интерфейс е избран <strong>React 18</strong> [1] в комбинация с <strong>TypeScript</strong> [2]. React предоставя компонентен модел, подходящ за сложния потребителски интерфейс на приложението — модали за подписване с многостъпков процес, интерактивен PDF преглед, collapsible секции с технически детайли. TypeScript е критично важен в контекста на криптографски код: операциите с байтове (Uint8Array), ASN.1 DER структури и PDF байтови диапазони са трудни за проследяване без статичен тип анализ; TypeScript прехваща грешки при компилация, преди да достигнат браузъра.</p>
+<p><strong>Vite</strong> [3] е избран като инструмент за изграждане заради нативната му поддръжка на ES модули и бързото Hot Module Replacement при разработка. Важна особеност е поддръжката на Web Worker bundle (<code>?worker</code> import синтаксис), използвана за изнасяне на ML-DSA-65 keygen в отделна нишка — операция, изискваща ~400 ms, която би блокирала главния thread без Worker.</p>
+<h3>Backend: Supabase</h3>
+<p><strong>Supabase</strong> [4] е избран като backend платформа заради комбинацията от функционалности, необходими за приложението:</p>
+<ul>
+<li><strong>PostgreSQL с Row Level Security (RLS)</strong> — всяка таблица (documents, signing_keys, audit_log) е защитена с политики, гарантиращи, че потребителят може да чете и записва само своите данни. RLS е единственият слой на изолация между потребителите и е приложен на ниво база данни, независимо от логиката на приложението.</li>
+<li><strong>Auth с WebAuthn</strong> — Supabase Auth поддържа passkey (FIDO2/WebAuthn) автентикация нативно, без нужда от допълнителна библиотека за управление на сесии.</li>
+<li><strong>Storage</strong> — частни S3-съвместими buckets с RLS за PDF файловете. Signed URL-и с ограничен живот осигуряват временен достъп без директно излагане на пътищата в хранилището.</li>
+<li><strong>Edge Functions (Deno)</strong> — използвани за единствената сървърна операция в приложението: издаване на X.509 сертификати. Частният ключ на Root CA е съхранен като Supabase Secret и никога не е достъпен от клиентския код.</li>
+</ul>
+<h3>Hosting: Cloudflare Pages</h3>
+<p><strong>Cloudflare Pages</strong> [5] е избран за хостинг заради автоматичния deploy от GitHub при всеки push към <code>main</code> клона, глобалния CDN с ниско латентно обслужване на статичните файлове и безплатния tier, подходящ за изследователски прототип. SPA routing се управлява от <code>_redirects</code> файл, а статичните ресурси (fonts, PDF worker) се кешират автоматично на edge нивото.</p>
+<h3>Криптографски библиотеки: @noble</h3>
+<p>За криптографски операции са избрани библиотеките на Paul Miller от фамилията <strong>@noble</strong> [6]:</p>
+<ul>
+<li><strong><code>@noble/post-quantum</code></strong> — ML-DSA-65 (FIPS 204). Чист TypeScript, без WebAssembly зависимост. Библиотеката е независимо одитирана и е единствената производствено готова JS имплементация на ML-DSA-65 в момента на разработката.</li>
+<li><strong><code>@noble/ed25519</code></strong> — Ed25519 за Root CA ключа. Лека (~4 KB), конст-временна имплементация.</li>
+<li><strong><code>@noble/hashes</code></strong> — SHA-256 в синхронен вариант, необходим за хеширане на PDF байтовете в основния thread.</li>
+</ul>
+<p>За ECDSA P-256, AES-256-GCM, HKDF-SHA256 и SHA-256 е използван <strong>Web Crypto API</strong> — нативният браузърен крипто интерфейс. Предимствата са два: операциите се изпълняват в C++ имплементацията на браузъра (хардуерно ускорени при наличие на TPM), и Web Crypto е задължително-присъстващ в средите, поддържащи WebAuthn — тоест не добавя допълнителна зависимост.</p>
+<p>Избягват се имплементации, изискващи доверие към трета страна за сигурността на алгоритъма: целият криптографски код е открит (open source) и одитиран.</p>
+<h3>PDF библиотеки: pdf-lib и pdfjs-dist</h3>
+<p><strong>pdf-lib</strong> [7] е избран за манипулация на PDF документи. Библиотеката поддържа инкрементални обновления на PDF — критично за PAdES подписването, при което CMS подписът се вгражда в резервиран placeholder, без да се генерира нов файл от нулата. Алтернативата (iText, PDFBox) изисква Java сървър и е несъвместима с изискването за клиентска обработка.</p>
+<p><strong>pdfjs-dist</strong> [8] (Mozilla PDF.js) е използван единствено за визуализация — рендиране на PDF страниците като изображения в браузъра при избор на позиция на визуалния маркер. Важно: за поддръжка на iOS Safari е необходима legacy build на pdfjs-dist, тъй като стандартният build използва <code>Map.prototype.getOrInsertComputed</code> — метод, отсъстващ в текущата версия на Safari.</p>
+<h3>PKI библиотека: @peculiar/x509</h3>
+<p><strong><code>@peculiar/x509</code></strong> [9] е използван за: изграждане на X.509 leaf сертификати в Edge Function при генериране на ключове; парсиране на сертификати при верификация (четене на subject, issuer, дати, серийни номера). Алтернативата <code>node-forge</code> е по-тежка и практически неподдържана от 2022 г.</p>
+<hr>
+<h2>4.2 Функционални изисквания</h2>
+<p>Функционалните изисквания описват поведението, което системата трябва да осигури от гледна точка на потребителя.</p>
+<p><strong>ФИ-1. Регистрация</strong> — Потребителят се регистрира чрез email адрес (OTP magic link). След верификация на имейла регистрира passkey на своето устройство. Profil (display name) се запазва в базата данни.</p>
+<p><strong>ФИ-2. Вход</strong> — Потребителят влиза само с passkey (биометрия или PIN). Не се въвежда парола. Сесията се управлява от Supabase Auth JWT.</p>
+<p><strong>ФИ-3. Recovery при загубен passkey</strong> — При загубен passkey потребителят инициира recovery чрез email OTP. Старите passkeys се изтриват автоматично чрез Edge Function, след което се регистрира нов passkey. Подписните ключове, обвити с credential ID на стария passkey, са недостъпни и трябва да бъдат регенерирани.</p>
+<p><strong>ФИ-4. Качване на PDF</strong> — Потребителят качва PDF документ (drag &amp; drop или file picker, до 50 MB). Системата извършва клиентска проверка за злонамерен код (<code>/JavaScript</code>, <code>/Launch</code>, <code>/EmbeddedFile</code> обекти) и изчислява SHA-256 хеш за уникална идентификация.</p>
+<p><strong>ФИ-5. Визуализация</strong> — Качените PDF документи се визуализират в браузъра чрез PDF.js. Поддържа се постраничен preглед с навигация.</p>
+<p><strong>ФИ-6. Генериране на подписни ключове</strong> — Потребителят генерира двойка ключове: ECDSA P-256 (задължителен) и ML-DSA-65 (препоръчителен). Генерирането изисква биометрично потвърждение (PRF ceremony); частните ключове се криптират с AES-256-GCM непосредствено след генерирането и се съхраняват само в криптиран вид.</p>
+<p><strong>ФИ-7. Издаване на сертификат</strong> — При успешно генериране на ECDSA ключ, системата автоматично иска X.509 leaf сертификат от Edge Function. Сертификатът е подписан от Root CA и обвързва публичния ключ с display name на потребителя.</p>
+<p><strong>ФИ-8. Подписване на PDF</strong> — Потребителят избира документ за подписване, поставя визуален маркер върху PDF страницата и потвърждава с биометрия. Системата: извлича AES ключа чрез PRF, декриптира ECDSA и ML-DSA-65 частните ключове, генерира PAdES-B-Basic подпис, вгражда ML-DSA-65 подпис в допълнителен stream, качва подписания PDF и актуализира статуса на документа.</p>
+<p><strong>ФИ-9. Изтегляне на подписан PDF</strong> — Потребителят изтегля подписания PDF с оригиналното файлово ime.</p>
+<p><strong>ФИ-10. Верификация на подпис</strong> — Публична страница (<code>/verify</code>) приема PDF документ, верифицира ECDSA P-256 подписа, ML-DSA-65 подписа (ако е наличен), сертификатната верига и SHA-256 интегритета на документа. Операцията е изцяло клиентска — файлът не се изпраща към сървър.</p>
+<p><strong>ФИ-11. Верификационен доклад</strong> — При успешна верификация потребителят може да генерира PDF доклад с технически детайли (алгоритми, хешове, дати, сертификатна верига).</p>
+<p><strong>ФИ-12. Управление на ключове</strong> — Потребителят може да преглежда своите ключове (thumbprint, дата, статус на сертификата) и да ги изтрива (soft delete).</p>
+<hr>
+<h2>4.3 Нефункционални изисквания</h2>
+<p>Нефункционалните изисквания описват качествените характеристики на системата — как тя трябва да се държи, а не само какво трябва да прави.</p>
+<h3>Сигурност</h3>
+<p>Основното нефункционално изискване е, че <strong>частните подписни ключове никога не трябва да бъдат достъпни в незашифрован вид извън паметта на браузъра на потребителя</strong>. Произтичащите от него конкретни ограничения са:</p>
+<ul>
+<li>Частните ключове се съхраняват в базата данни само в AES-256-GCM криптиран вид.</li>
+<li>Декриптирането изисква PRF output от passkey — недостъпен без биометрично потвърждение на потребителя на неговото устройство.</li>
+<li>Root CA частният ключ се съхранява единствено в Supabase Secret; клиентският код няма достъп до него.</li>
+<li>Всяко действие (вход, качване, подписване, изтриване) се записва в audit log с user_id и timestamp.</li>
+<li>Потребителски грешки се показват с generic съобщения; вътрешни детайли (stack traces, SQL грешки) не достигат до интерфейса.</li>
+</ul>
+<h3>Съвместимост</h3>
+<ul>
+<li>Подписаните PDF документи трябва да се верифицират успешно в <strong>Adobe Acrobat Reader</strong> с резултат „Signed and all signatures are valid&quot;.</li>
+<li>Приложението трябва да работи в <strong>Chrome 108+, Firefox 148+, Safari 18+</strong> — минималните версии с поддръжка на WebAuthn PRF extension.</li>
+<li>Верификационният модул трябва да работи без login сесия (публична страница).</li>
+</ul>
+<h3>Достъпност</h3>
+<p>Потребителският интерфейс трябва да отговаря на <strong>WCAG AA</strong> стандарта за достъпност (Web Content Accessibility Guidelines 2.1, Level AA) [10]. Конкретно: интерактивните елементи трябва да имат достъпни имена (<code>aria-label</code>), динамичните съобщения трябва да са анонсирани от screen reader-и (<code>role=&quot;alert&quot;</code>, <code>role=&quot;status&quot;</code>), модалните диалози трябва да са маркирани семантично (<code>role=&quot;dialog&quot;</code>, <code>aria-modal</code>).</p>
+<h3>Производителност</h3>
+<ul>
+<li>Time to Interactive (TTI) под 4 секунди при десктоп с broadband връзка.</li>
+<li>ML-DSA-65 keygen изпълнен в Web Worker, за да не блокира главния thread.</li>
+<li>PDF thumbnail кеш на ниво сесия, за да не се рендира многократно при повторно отваряне.</li>
+</ul>
+<h3>Локализация</h3>
+<p>Целият потребителски интерфейс е на <strong>български език</strong>, включително грешки, нотификации и верификационни доклади. Изключение правят технически термини (ECDSA, ML-DSA, PAdES), за които не съществуват утвърдени български еквиваленти и се използват оригиналните наименования.</p>
+<h3>Дългосрочна валидност</h3>
+<p>Хибридната схема на подписване осигурява <strong>crypto-agility</strong>: ако ECDSA P-256 бъде компрометиран в бъдеще, ML-DSA-65 подписът запазва валидността на документа. Ограничение: приложението не интегрира Time Stamp Authority (TSA) — подписите отговарят на PAdES-B-Basic, а не на PAdES-B-T профила. Добавянето на TSA интеграция е идентифицирано като приоритетна бъдеща работа при производствено внедряване.</p>
+<hr>
+<h2>Използвана литература (раздел 4)</h2>
+<p>[1] Meta Platforms. <em>React — The library for web and native user interfaces</em> (Библиотека за потребителски интерфейси). <a href="https://react.dev">https://react.dev</a>. 2024.</p>
+<p>[2] Microsoft. <em>TypeScript — JavaScript With Syntax For Types</em> (JavaScript с типова система). <a href="https://www.typescriptlang.org">https://www.typescriptlang.org</a>. 2024.</p>
+<p>[3] Evan You et al. <em>Vite — Next Generation Frontend Tooling</em> (Инструментариум за frontend от следващо поколение). <a href="https://vitejs.dev">https://vitejs.dev</a>. 2024.</p>
+<p>[4] Supabase Inc. <em>Supabase — The Open Source Firebase Alternative</em> (Open-source алтернатива на Firebase). <a href="https://supabase.com">https://supabase.com</a>. 2024.</p>
+<p>[5] Cloudflare Inc. <em>Cloudflare Pages — Deploy web projects in record time</em> (Хостинг платформа за уеб проекти). <a href="https://pages.cloudflare.com">https://pages.cloudflare.com</a>. 2024.</p>
+<p>[6] Miller, P. <em>noble-post-quantum: Audited &amp; minimal JS implementation of post-quantum algorithms</em> (Одитирана минималистична JS имплементация на постквантови алгоритми). <a href="https://github.com/paulmillr/noble-post-quantum">https://github.com/paulmillr/noble-post-quantum</a>. 2024.</p>
+<p>[7] Aaditya Agrawal et al. <em>pdf-lib: Create and modify PDF documents in any JavaScript environment</em> (Създаване и модификация на PDF документи в JavaScript). <a href="https://pdf-lib.js.org">https://pdf-lib.js.org</a>. 2024.</p>
+<p>[8] Mozilla Foundation. <em>PDF.js — A Portable Document Format (PDF) viewer</em> (Преглед на PDF документи в браузъра). <a href="https://mozilla.github.io/pdf.js">https://mozilla.github.io/pdf.js</a>. 2024.</p>
+<p>[9] Peculiar Ventures. <em>@peculiar/x509 — X.509 certificate library for Node.js and browser</em> (Библиотека за X.509 сертификати). <a href="https://github.com/PeculiarVentures/x509">https://github.com/PeculiarVentures/x509</a>. 2024.</p>
+<p>[10] World Wide Web Consortium. <em>Web Content Accessibility Guidelines (WCAG) 2.1</em> (Насоки за достъпност на уеб съдържание). <a href="https://www.w3.org/TR/WCAG21/">https://www.w3.org/TR/WCAG21/</a>. 2018.</p>
 
 </section>
 
