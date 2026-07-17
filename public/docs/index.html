@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Постквантови криптографски схеми — Курсова работа</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { font-size: 16px; scroll-behavior: smooth; }
+    body {
+      font-family: Georgia, 'Times New Roman', 'DejaVu Serif', serif;
+      line-height: 1.78;
+      color: #1a1a1a;
+      background: #fafaf8;
+      padding: 2rem 1rem 5rem;
+    }
+
+    .page { max-width: 820px; margin: 0 auto; }
+
+    /* ── Cover ── */
+    .cover {
+      text-align: center;
+      padding: 3rem 0 2rem;
+      border-bottom: 2px solid #333;
+      margin-bottom: 2.5rem;
+    }
+    .cover h1 { font-size: 1.55rem; line-height: 1.3; margin-bottom: 0.6rem; }
+    .cover .sub { font-size: 0.95rem; color: #555; font-style: italic; }
+    .cover .meta { margin-top: 1rem; font-size: 0.88rem; color: #444; }
+
+    /* ── TOC ── */
+    .toc {
+      background: #f0ede8;
+      border-left: 4px solid #555;
+      padding: 1.25rem 1.5rem 1.25rem 1.75rem;
+      margin-bottom: 2.5rem;
+      border-radius: 0 4px 4px 0;
+    }
+    .toc h2 {
+      font-size: 0.85rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .07em;
+      color: #333; margin-bottom: .65rem;
+    }
+    .toc ol { padding-left: 1.25rem; }
+    .toc li { margin: .3rem 0; }
+    .toc a { color: #2a5a9a; text-decoration: none; font-size: .92rem; }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── Sections ── */
+    .doc-section {
+      margin-bottom: 3.5rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid #d0ccc5;
+    }
+    .doc-section:last-child { border-bottom: none; }
+
+    /* ── Headings ── */
+    h1 { font-size: 1.65rem; font-weight: 700; margin: 2rem 0 .9rem; line-height: 1.25; color: #111; }
+    h2 { font-size: 1.25rem; font-weight: 700; margin: 1.9rem 0 .65rem; color: #1a1a1a;
+         border-bottom: 1px solid #ccc; padding-bottom: .25rem; }
+    h3 { font-size: 1.05rem; font-weight: 700; margin: 1.5rem 0 .45rem; color: #333; }
+    h4 { font-size: .97rem; font-weight: 700; margin: 1rem 0 .35rem; color: #444; }
+
+    /* ── Body text ── */
+    p { margin: .7rem 0; text-align: justify; hyphens: auto; }
+    strong { font-weight: 700; }
+    em { font-style: italic; }
+    hr { border: none; border-top: 1px solid #ccc; margin: 1.75rem 0; }
+
+    /* ── Lists ── */
+    ul, ol { padding-left: 1.75rem; margin: .65rem 0; }
+    li { margin: .28rem 0; }
+
+    /* ── Tables ── */
+    .tw { overflow-x: auto; margin: 1.25rem 0; }
+    table { border-collapse: collapse; width: 100%; font-size: .88rem;
+            font-family: 'Segoe UI', system-ui, sans-serif; }
+    th { background: #2e2e2e; color: #fff; padding: .5rem .75rem;
+         text-align: left; font-weight: 600; }
+    td { padding: .42rem .75rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    tr:nth-child(even) td { background: #f5f3ef; }
+
+    /* ── Code ── */
+    code { font-family: Consolas, 'Courier New', monospace; font-size: .85rem;
+           background: #eee; padding: .1em .35em; border-radius: 3px; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem 1.25rem;
+          border-radius: 6px; overflow-x: auto; margin: 1rem 0;
+          font-size: .83rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+    /* ── Blockquote ── */
+    blockquote { border-left: 4px solid #aaa; margin: 1.2rem 0;
+                 padding: .7rem 1rem; background: #f5f3ef; color: #555; font-style: italic; }
+
+    /* ── Print ── */
+    @media print {
+      body { background:#fff; color:#000; padding:0; font-size:11pt; }
+      .cover { padding-top:1rem; }
+      .toc { break-after:page; }
+      .doc-section { page-break-after:always; }
+      h1,h2,h3 { break-after:avoid; }
+      a { color:#000; text-decoration:none; }
+      .tw { overflow-x:visible; }
+    }
+
+    /* ── Dark mode ── */
+    @media (prefers-color-scheme: dark) {
+      body { background:#1a1816; color:#e4dfd8; }
+      .cover { border-color:#666; }
+      .cover .sub, .cover .meta { color:#999; }
+      .toc { background:#252220; border-color:#777; }
+      .toc h2 { color:#bbb; }
+      .toc a { color:#79aadb; }
+      .doc-section { border-color:#333; }
+      h1,h2,h3,h4 { color:#e4dfd8; }
+      h2 { border-color:#444; }
+      code { background:#2a2826; color:#e4dfd8; }
+      th { background:#3a3836; }
+      td { border-color:#333; }
+      tr:nth-child(even) td { background:#212120; }
+      blockquote { background:#252220; border-color:#666; color:#999; }
+      hr { border-color:#333; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="cover">
+    <h1>Постквантови криптографски схеми за защита на електронни документи</h1>
+    <p class="sub">Курсова работа по Информационна Сигурност</p>
+    <p class="meta">Технически университет — София</p>
+  </div>
+
+  <nav class="toc">
+    <h2>Съдържание</h2>
+    <ol>
+      <li><a href="#01-uvod">Раздел 1. Увод</a></li>
+      <li><a href="#02-literaturen-obzor">Раздел 2. Литературен обзор и съществуващи решения</a></li>
+      <li><a href="#03-cel-i-zadachi">Раздел 3. Цел и задачи на разработката</a></li>
+    </ol>
+  </nav>
+
+  <section class="doc-section" id="01-uvod">
+<h1>Раздел 1. Увод</h1>
+<p>Цифровият документооборот е неразделна част от съвременното общество. Договори, официални заявления, финансови отчети и медицинска документация все по-често съществуват единствено в електронен вид. За да могат тези документи да имат правна тежест — равностойна на тази на хартиените им аналози — те трябва да бъдат снабдени с надеждна форма на идентификация на автора и гаранция за непроменяемост след подписването. Тези изисквания се изпълняват от технологията на цифровия подпис.</p>
+<p>Съществуващата инфраструктура за цифрово подписване е изградена върху криптографски алгоритми, чиято сигурност разчита на изчислителната трудност на конкретни математически задачи — факторизация на големи числа (RSA) и намиране на дискретен логаритъм върху елиптична крива (ECDSA, EdDSA). За класическите компютри тези задачи са практически неразрешими при достатъчно голяма дължина на ключа. За квантовите компютри обаче ситуацията е различна.</p>
+<h2>1.1 Квантовата заплаха за съвременната криптография</h2>
+<p>През 1994 г. Питър Шор публикува алгоритъм, доказващ, че квантов компютър с достатъчен брой кубити може да решава задачата за факторизация и за дискретен логаритъм за полиномиално — а не за експоненциално — време [1]. Следствието е категорично: при наличие на достатъчно мощен квантов компютър, RSA-2048 и ECDSA P-256 биха станали уязвими. Подписите, издадени днес, биха могли да бъдат фалшифицирани ретроактивно.</p>
+<p>Въпросът не е дали такъв компютър ще бъде построен, а кога. По прогнози на NIST и водещи организации в областта на информационната сигурност, значителна квантова заплаха срещу класическите алгоритми може да стане реална в следващото десетилетие [2], което налага започването на миграцията към постквантова криптография днес, а не след настъпването на заплахата. Концепцията „harvest now, decrypt later&quot; — при която противникът събира криптирани данни днес с намерение да ги дешифрира след придобиване на квантов компютър — показва, че заплахата не е само бъдеща: тя е вече актуална за дългосрочно валидни документи като договори, нотариални актове и медицинска документация [2].</p>
+<h2>1.2 NIST и стандартизацията на постквантовата криптография</h2>
+<p>В отговор на тази заплаха Националният институт за стандарти и технологии на САЩ (NIST) стартира конкурс за стандартизация на постквантови алгоритми. Програмата, открита през 2016 г., приключи с публикуването на три финални стандарта през август 2024 г. [3]:</p>
+<ul>
+<li><strong>FIPS 203 (ML-KEM)</strong> — механизъм за капсулиране на ключове</li>
+<li><strong>FIPS 204 (ML-DSA)</strong> — алгоритъм за цифров подпис, базиран на модулни решетки</li>
+<li><strong>FIPS 205 (SLH-DSA)</strong> — алгоритъм за цифров подпис, базиран на хеш функции</li>
+</ul>
+<p>ML-DSA (Module-Lattice-Based Digital Signature Algorithm) е наследник на CRYSTALS-Dilithium — един от победителите в конкурса на NIST. Сигурността му почива на трудността на задачата Module Learning With Errors (Module-LWE), за чието решаване не са известни ефективни квантови алгоритми.</p>
+<p>Паралелно с публикуването на стандартите NIST дефинира конкретен timeline за миграция: класическите алгоритми ECDSA P-256 и RSA-2048 се считат за deprecated от 2030 година и не се препоръчват за федерално използване след 2035 година [6]. Това поставя организациите пред необходимостта да планират прехода към постквантова криптография в рамките на настоящото десетилетие.</p>
+<h2>1.3 Предизвикателството за съвместимост с PAdES</h2>
+<p>Стандартизирането на постквантови алгоритми не решава автоматично проблема с електронните документи. PDF подписите следват строго регламентиран формат — PAdES (PDF Advanced Electronic Signatures), дефиниран в ETSI EN 319 142 [4] и основан на CMS (Cryptographic Message Syntax, RFC 5652) [5]. Съществуващите инструменти за четене на PDF — включително Adobe Acrobat — разпознават само алгоритмите, заложени в тези стандарти: RSA, ECDSA и ограничен набор от хеш функции.</p>
+<p>ML-DSA към момента не е включен в PAdES профила. Това поражда противоречие: ако документ е подписан само с ML-DSA, той не може да бъде верифициран от Adobe Acrobat или от съдебни и административни системи, изградени около PAdES. Ако е подписан само с ECDSA, той не е защитен срещу квантова атака.</p>
+<p>Решението на това противоречие е <strong>хибридният подпис</strong> — стратегия, при която документът носи едновременно класически и постквантов подпис. Класическият подпис осигурява съвместимост с всички съществуващи инструменти, а постквантовият — дългосрочна защита след потенциалната компрометация на класическите алгоритми. Тази концепция, позната като <em>crypto-agility</em>, е препоръчвана от водещи изследователски организации в областта на информационната сигурност [2].</p>
+<h2>1.4 Структура на курсовата работа</h2>
+<p>Настоящата курсова работа разглежда проектирането и реализацията на платформата SignShield за хибридно цифрово подписване на PDF документи. В <strong>Раздел 2</strong> е представен преглед на стандартите за електронен подпис, постквантовите алгоритми и съществуващите търговски решения. <strong>Раздел 3</strong> формулира конкретните цели и задачи. <strong>Раздели 4 и 5</strong> описват избора на технологии и архитектурата на системата. <strong>Раздел 6</strong> разглежда ключовите аспекти на програмната реализация. <strong>Раздел 7</strong> представя резултатите от тестването и валидацията, а <strong>Раздел 8</strong> съдържа ръководство за потребителя.</p>
+<hr>
+<h2>Използвана литература (раздел 1)</h2>
+<p>[1] Shor, P.W. <em>Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer</em> (Полиномиални алгоритми за факторизация и дискретен логаритъм на квантов компютър). SIAM Journal on Computing, 26(5), 1484–1509. 1997. <a href="https://doi.org/10.1137/S0097539795293172">https://doi.org/10.1137/S0097539795293172</a>.</p>
+<p>[2] National Security Agency / Cybersecurity and Infrastructure Security Agency. <em>Quantum-Readiness: Migration to Post-Quantum Cryptography</em> (Квантова готовност: миграция към постквантова криптография). CISA Guidance. <a href="https://www.cisa.gov/quantum">https://www.cisa.gov/quantum</a>. 2023.</p>
+<p>[3] National Institute of Standards and Technology. <em>Post-Quantum Cryptography Standards</em> (Постквантови криптографски стандарти). FIPS 203, 204, 205. <a href="https://csrc.nist.gov/projects/post-quantum-cryptography">https://csrc.nist.gov/projects/post-quantum-cryptography</a>. Август 2024.</p>
+<p>[4] European Telecommunications Standards Institute. <em>PDF Advanced Electronic Signatures (PAdES)</em> (Усъвършенствани електронни подписи за PDF). ETSI EN 319 142-1. <a href="https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/">https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/</a>. 2016.</p>
+<p>[5] Housley, R. <em>Cryptographic Message Syntax (CMS)</em> (Криптографски синтаксис на съобщения). RFC 5652. <a href="https://datatracker.ietf.org/doc/html/rfc5652">https://datatracker.ietf.org/doc/html/rfc5652</a>. Септември 2009.</p>
+<p>[6] National Institute of Standards and Technology. <em>Transition to Post-Quantum Cryptography Standards</em> (Преход към постквантови криптографски стандарти). NIST IR 8547 (Initial Public Draft). <a href="https://csrc.nist.gov/pubs/ir/8547/ipd">https://csrc.nist.gov/pubs/ir/8547/ipd</a>. Ноември 2024.</p>
+
+</section>
+
+<section class="doc-section" id="02-literaturen-obzor">
+<h1>Раздел 2. Литературен обзор и съществуващи решения</h1>
+<h2>2.1 Цифрови подписи и стандарти за електронен подпис</h2>
+<h3>История и криптографски принципи</h3>
+<p>Концепцията за асиметричната криптография е публично формулирана от Дифи и Хелман (Diffie-Hellman) през 1976 г., когато те описват теоретичната основа на схемата с публичен и частен ключ [1]. Практическата реализация на цифровия подпис следва две години по-късно: Ривест, Шамир и Адлеман (Rivest, Shamir, Adleman) публикуват RSA алгоритъма — математическа схема, при която всеки потребител разполага с двойка ключове: публичен, достъпен за всички, и частен, познат само на притежателя [2].</p>
+<p>Принципът на цифровия подпис е следният. Подписващата страна изчислява хеш функция (дигест) върху документа, след което криптира дигеста с частния си ключ. Резултатът — цифровият подпис — се прилага към документа. Проверяващата страна декриптира подписа с публичния ключ на подписващия и сравнява получения дигест с независимо изчисления хеш на документа. Ако двете стойности съвпадат, документът е автентичен и непроменян от момента на подписване. Промяна дори на един байт в документа дава напълно различен хеш и прави подписът невалиден.</p>
+<p>RSA доминира в цифровото подписване в продължение на десетилетия. С нарастването на изчислителната мощ на компютрите обаче необходимата дължина на RSA ключа нараства пропорционално. Алгоритмите, базирани на елиптични криви (Elliptic Curve Cryptography, ECC), предлагат същото ниво на сигурност при значително по-кратък ключ. Алгоритъмът ECDSA (Elliptic Curve Digital Signature Algorithm) е стандартизиран от NIST като FIPS 186 [3]: ключ от 256 бита (P-256 крива) е приблизително еквивалентен на RSA с 3072-битов ключ по отношение на класическата устойчивост, докато самият подпис е с дължина около 64 байта — значително по-компактен от RSA подпис.</p>
+<h3>Инфраструктура от публичен ключ (PKI) и X.509 сертификати</h3>
+<p>Цифровият подпис доказва само, че документът е подписан с конкретен частен ключ. За да се свърже ключът с идентичността на конкретно лице, е необходима инфраструктура от публичен ключ (Public Key Infrastructure, PKI).</p>
+<p>PKI се изгражда около X.509 сертификатите [4] — структурирани електронни документи, в които доверен издател (Certificate Authority, CA) удостоверява, че даден публичен ключ принадлежи на конкретен субект. Сертификатите образуват верига: leaf сертификатът на потребителя е подписан от CA, а тя от своя страна — от Root CA. Проверяващата страна следва веригата до Root CA, чийто сертификат е предварително известен и доверен. Ако веригата е непрекъсната и всеки сертификат е валиден, подписът се приема.</p>
+<h3>CMS и вграждане на подпис в PDF</h3>
+<p>PKCS#7 (Public-Key Cryptography Standards #7), по-късно стандартизиран от IETF като CMS (Cryptographic Message Syntax, RFC 5652) [5], дефинира унифицирания контейнер, в който се опакова цифровият подпис. CMS описва структура, съдържаща: подписаните атрибути (хеш на документа, дата, хеш алгоритъм), самия математически подпис и сертификата на подписващия — всичко кодирано в DER (Distinguished Encoding Rules) формат съгласно ASN.1 стандарта.</p>
+<p>PAdES (PDF Advanced Electronic Signatures), дефиниран от ETSI в EN 319 142 [6], адаптира CMS за PDF документи. PAdES описва как CMS обектът се вгражда в специалното поле <code>/Contents</code> на PDF файла като шестнадесетичен низ, докато полето <code>/ByteRange</code> посочва точно кои байтови диапазони на файла са обхванати от подписа. Тази структура позволява на Adobe Acrobat и другите PDF инструменти да верифицират подписа без съдействието на сървър или на оригиналния подписващ.</p>
+<p>eIDAS (EU Regulation 910/2014) [7] е правната рамка на Европейския съюз, която урежда правната тежест на електронните подписи. Регламентът дефинира три нива: прост електронен подпис (SES), усъвършенстван електронен подпис (AdES) и квалифициран електронен подпис (QES). PAdES-базираните подписи с валиден сертификат от акредитиран издател отговарят на изискванията за AdES.</p>
+<hr>
+<h2>2.2 WebAuthn/FIDO2 и passkey автентикация</h2>
+<h3>Ограниченията на паролата</h3>
+<p>Паролата е най-разпространената форма за автентикация в уеб, но и нейното най-слабо звено. Основните проблеми са три: паролите се използват повторно в множество услуги, могат да бъдат извадени чрез phishing атаки и изискват съхранение на сървъра (дори в хеширан вид), което ги прави мишена при компрометиране на базата данни [8]. Паролата на практика прехвърля отговорността за сигурността от системата към потребителя.</p>
+<p>FIDO Alliance (Fast Identity Online) разработи алтернативен подход: автентикация, базирана на публичен ключ, при която частният ключ никога не напуска устройството. Браузърният стандарт WebAuthn (Web Authentication API), публикуван от W3C [9], реализира тази концепция в уеб средата.</p>
+<h3>Как работи WebAuthn</h3>
+<p>При регистрация устройството генерира двойка ключове за конкретния сайт (relying party). Публичният ключ се изпраща на сървъра, а частният остава защитен в хардуерен сигурен анклав — Trusted Platform Module (TPM) при Windows, Secure Enclave при Apple или хардуерен ключ (FIDO2 security key). При автентикация сървърът изпраща случайно предизвикателство (challenge); устройството го подписва с частния ключ след биометрична верификация от страна на потребителя. Паролата не участва изобщо.</p>
+<p><strong>Passkeys</strong> е потребителският термин за WebAuthn credentials, синхронизирани между устройства чрез мениджъра на акаунта (iCloud Keychain при Apple, Google Password Manager при Android/Chrome). Passkeys са защитени с биометрична верификация — Face ID, Windows Hello, Touch ID — или с PIN на устройството.</p>
+<h3>PRF extension — деривация на ключ от passkey</h3>
+<p>WebAuthn Level 3 [9] въвежда разширение PRF (Pseudo-Random Function extension). То позволява на приложението да извлича детерминиран 32-байтов псевдослучаен output от passkey credential, комбиниран с произволен salt. PRF output-ът не е самият частен ключ на passkey-а — той е отделен симетричен secret, деривиран от него при всяко биометрично потвърждение.</p>
+<p>Това открива нов модел за защита на криптографски ключове. Вместо да ги криптира с парола (PBKDF2 или Argon2), приложението може да ги криптира с AES-256 ключ, деривиран от PRF output чрез HKDF-SHA256 (RFC 5869) [10]. При всяко използване на подписващия ключ потребителят извършва биометрична верификация; устройството произвежда PRF output; HKDF деривира AES ключа; с него се декриптира подписващият ключ в паметта на браузъра само за времето на подписването. Частният ключ никога не е в plaintext на сървъра.</p>
+<p>Сравнен с парола-базирания подход, WebAuthn PRF предлага три ключни предимства: устойчивост срещу phishing (credential е обвързан с конкретния домейн и не може да се използва на фалшив сайт), устойчивост срещу credential stuffing атаки (няма повторно използвана парола) и хардуерна защита на частния ключ.</p>
+<hr>
+<h2>2.3 Постквантова криптография</h2>
+<h3>Алгоритъмът на Шор и Гроувър</h3>
+<p>Квантовите компютри използват принципите на квантовата механика — суперпозиция и заплитане (entanglement) — за едновременна обработка на множество изчислителни пътища. За конкретни задачи това дава квантово ускорение спрямо класическите компютри.</p>
+<p>Алгоритъмът на Шор (1994) [11] доказва, че квантов компютър може да решава задачата за факторизация на цели числа и за дискретен логаритъм за полиномиално — а не за експоненциално — време. Именно тези задачи стоят в основата на RSA (факторизация) и ECDSA (дискретен логаритъм върху елиптична крива). Следователно достатъчно мощен квантов компютър би могъл да изчисли частния ключ от публичния.</p>
+<p>Алгоритъмът на Гроувър (1996) предлага квантово ускорение при търсене в неструктурирано пространство, което на практика намалява ефективната дълдина на симетричните ключове наполовина. AES-128 при квантова атака с Гроувър предлага ефективна сигурност от ~64 бита — поради което AES-256 се препоръчва в постквантовия контекст.</p>
+<h3>NIST PQC програма (2016–2024)</h3>
+<p>NIST обяви конкурса за постквантови алгоритми през 2016 г. Участваха изследователски екипи от академичните среди, индустрията и националните агенции за сигурност от целия свят. Процесът премина през четири кръга на оценка по критериите сигурност, ефективност на изпълнение и практическа реализируемост на хардуер с ограничени ресурси.</p>
+<p>Финалистите бяха избрани измежду два математически подхода: <strong>решетъчни схеми</strong> (lattice-based), разчитащи на трудността на задачите Learning With Errors (LWE) и NTRU, и <strong>хеш-базирани схеми</strong> (hash-based), разчитащи на устойчивостта на едностранните хеш функции. През август 2024 г. бяха публикувани трите финални стандарта [12].</p>
+<h3>ML-DSA-65 — параметри и обосновка на избора</h3>
+<p>ML-DSA (Module-Lattice-Based Digital Signature Algorithm) е наследник на CRYSTALS-Dilithium, победителят в категорията цифрови подписи. Алгоритъмът е базиран на трудността на Module-LWE задачата: намиране на грешки в линейни уравнения върху модулни решетки, за което не са известни ефективни нито класически, нито квантови алгоритми.</p>
+<p>ML-DSA се предлага в три варианта: ML-DSA-44 (Security Category 2), ML-DSA-65 (Security Category 3) и ML-DSA-87 (Security Category 5). Основните параметри на ML-DSA-65 са представени в таблицата по-долу:</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Параметър</th>
+<th>ML-DSA-65</th>
+<th>ECDSA P-256</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Публичен ключ</td>
+<td>1 952 байта</td>
+<td>64 байта</td>
+</tr>
+<tr>
+<td>Частен ключ</td>
+<td>4 032 байта</td>
+<td>32 байта</td>
+</tr>
+<tr>
+<td>Размер на подпис</td>
+<td>~3 293 байта</td>
+<td>~64 байта</td>
+</tr>
+<tr>
+<td>Ниво на сигурност</td>
+<td>Category 3 (≈AES-192)</td>
+<td>~128 бита класическа</td>
+</tr>
+<tr>
+<td>Квантова устойчивост</td>
+<td>✅</td>
+<td>✗</td>
+</tr>
+</tbody></table></div>
+<p>Сравнен с останалите финалисти в категорията цифрови подписи, ML-DSA-65 предлага балансиран компромис. <strong>Falcon-512</strong> генерира значително по-малък подпис (~666 байта), но изисква Gaussian sampling с плаваща запетая — операция, трудна за сигурна реализация в хетерогенни среди като браузъра поради риск от timing атаки [12]. <strong>SPHINCS+-SHA2-128s</strong> е изцяло хеш-базиран и не разчита на структурни допускания за решетките, но генерира подписи с размер ~7 856 байта — над два пъти по-голям от ML-DSA-65. ML-DSA-65 е базиран на чиста цялочислена аритметика, което го прави по-проста и надеждна реализация, особено при изпълнение в среда на браузъра.</p>
+<hr>
+<h2>2.4 PAdES стандарти и вграждане на подпис в PDF</h2>
+<h3>PDF подписен речник</h3>
+<p>PDF стандартът (ISO 32000) [13] описва специален обект — подписен речник (signature dictionary). Две полета са от особено значение за верификацията:</p>
+<ul>
+<li><strong><code>/ByteRange</code></strong> — масив от четири числа, описващ кои байтови диапазони на файла са покрити от подписа. По стандарт подписът покрива всичко преди <code>/Contents</code> полето и всичко след него, но не и самото поле — тоест точно тези байтове, чийто хеш е подписан.</li>
+<li><strong><code>/Contents</code></strong> — шестнадесетичен (hex) низ, съдържащ CMS DER-кодирания подпис. При подготовката на PDF файла за подписване, на мястото на бъдещия подпис се резервира достатъчно голям placeholder от нулеви байтове, който след изчисляването на подписа се замества с реалните данни.</li>
+</ul>
+<p>Тази структура позволява байтова верификация: верифициращата страна изчислява SHA-256 хеш на байтовете, описани от <code>/ByteRange</code>, и го сравнява с хеша, вграден в CMS структурата. Ако файлът е бил модифициран след подписването — дори с добавяне на пробел — хешовете ще се различават и подписът ще бъде обявен за невалиден.</p>
+<h3>PAdES профили</h3>
+<p>ETSI EN 319 142 [6] дефинира четири основни профила на PAdES с нарастваща дългосрочност:</p>
+<ul>
+<li><strong>PAdES-B-Basic (PAdES-B-B)</strong> — минимален профил: CMS подпис + X.509 сертификат на подписващия. Не включва timestamp. Достатъчен за верификация при наличие на доверен Root CA и при действащи сертификати.</li>
+<li><strong>PAdES-B-T</strong> — добавя trusted timestamp от Time Stamp Authority (TSA), удостоверяващ точния момент на подписване независимо от часовника на клиента.</li>
+<li><strong>PAdES-B-LT</strong> — включва встроени данни за статуса на отмяна на сертификатите (CRL или OCSP), позволявайки верификация дори когато CRL сървърите са недостъпни.</li>
+<li><strong>PAdES-B-LTA</strong> — добавя архивен timestamp, позволяващ дългосрочна верификация дори след изтичане на оригиналните сертификати.</li>
+</ul>
+<p>За целите на настоящата разработка е имплементиран PAdES-B-Basic профилът. Той осигурява пълна съвместимост с Adobe Acrobat и верифицируемост при наличие на Root CA сертификата. Разширяването до PAdES-B-T изисква интеграция с Time Stamp Authority — идентифицирано като бъдеща работа при производствено внедряване.</p>
+<hr>
+<h2>2.5 Съществуващи решения</h2>
+<p>Пазарът за услуги за електронно подписване е зрял и доминиран от няколко утвърдени платформи. В настоящия раздел са разгледани три от тях — DocuSign, Adobe Sign и Dropbox Sign (бивш HelloSign) — в сравнение с разработената платформа SignShield. Целта не е изчерпателен пазарен анализ, а идентифициране на конкретните функционални разлики, обосноваващи необходимостта от разработката.</p>
+<h3>Сравнителна таблица</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Характеристика</th>
+<th align="center">SignShield</th>
+<th align="center">DocuSign</th>
+<th align="center">Adobe Sign</th>
+<th align="center">Dropbox Sign</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Класически PAdES подпис</td>
+<td align="center">✅ ECDSA P-256</td>
+<td align="center">✅ RSA/ECDSA</td>
+<td align="center">✅ RSA/ECDSA</td>
+<td align="center">✅ RSA</td>
+</tr>
+<tr>
+<td>Постквантов подпис (ML-DSA-65)</td>
+<td align="center">✅</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+</tr>
+<tr>
+<td>Passkey/PRF защита на ключове</td>
+<td align="center">✅</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+</tr>
+<tr>
+<td>Верификация без акаунт (офлайн)</td>
+<td align="center">✅</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+</tr>
+<tr>
+<td>Self-hosted / Open-source</td>
+<td align="center">✅</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+<td align="center">✗</td>
+</tr>
+<tr>
+<td>Adobe Acrobat съвместимост</td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td align="center">Частична</td>
+</tr>
+<tr>
+<td>Цена</td>
+<td align="center">Безплатно</td>
+<td align="center">$15–$65/мес.</td>
+<td align="center">$15–$79/мес.</td>
+<td align="center">$15–$25/мес.</td>
+</tr>
+</tbody></table></div>
+<p>[FIG 1: DocuSign интерфейс при подписване на документ — поставяне на поле за подпис и инициали]</p>
+<h3>DocuSign</h3>
+<p>DocuSign е световен лидер в областта на електронните подписи с над един милиард потребители и интеграции с множество корпоративни системи [14]. Платформата поддържа цифрови подписи (Digital Signatures) в съответствие с PAdES и eIDAS стандартите. Основното ограничение в контекста на настоящото изследване е пълната липса на постквантова защита: подписите са базирани на RSA и ECDSA алгоритми, чиято дългосрочна сигурност е под въпрос при сценарии с квантови компютри. Освен това частните ключове се управляват от инфраструктурата на DocuSign, а не от потребителя — компрометирането на системата би поставило под риск всички съхранени ключове.</p>
+<h3>Adobe Sign</h3>
+<p>Adobe Sign е интегрирана в Adobe Document Cloud и предлага пълна съвместимост с PAdES и Adobe Acrobat [15]. Решението е особено подходящо за организации, вече ползващи Adobe продукти. Подобно на DocuSign, Adobe Sign не поддържа постквантови алгоритми и работи изцяло в облачна среда — документите преминават през сървърите на Adobe при подписване. Passkey автентикацията е налична за вход в акаунта, но не се прилага за криптографска защита на подписващите ключове.</p>
+<h3>Dropbox Sign (HelloSign)</h3>
+<p>Dropbox Sign е насочен към малки и средни организации с опростен работен процес [16]. Подписите не винаги отговарят на изискванията за квалифицирани електронни подписи (QES) по eIDAS, а съвместимостта с Adobe Acrobat е частична в зависимост от избрания профил. Постквантова защита липсва; верификацията е обвързана с облачните системи на Dropbox.</p>
+<h3>Обобщение</h3>
+<p>Нито едно от разгледаните търговски решения не комбинира PAdES-съвместим класически подпис с постквантов алгоритъм и passkey-базирана защита на ключовете. Всички решения разчитат на облачна инфраструктура за управление на ключове, при което потребителят зависи от сигурността на доставчика. Разработената платформа SignShield адресира тези ограничения, като запазва съвместимостта с Adobe Acrobat, добавя ML-DSA-65 постквантов подпис и защитава частните ключове посредством WebAuthn PRF — директно на устройството на потребителя, без участие на сървър.</p>
+<hr>
+<h2>Използвана литература (раздел 2)</h2>
+<p>[1] Diffie, W., Hellman, M.E. <em>New Directions in Cryptography</em> (Нови насоки в криптографията). IEEE Transactions on Information Theory, 22(6), 644–654. 1976. <a href="https://doi.org/10.1109/TIT.1976.1055638">https://doi.org/10.1109/TIT.1976.1055638</a>.</p>
+<p>[2] Rivest, R.L., Shamir, A., Adleman, L. <em>A Method for Obtaining Digital Signatures and Public-Key Cryptosystems</em> (Метод за получаване на цифрови подписи и криптосистеми с публичен ключ). Communications of the ACM, 21(2), 120–126. 1978. <a href="https://doi.org/10.1145/359340.359342">https://doi.org/10.1145/359340.359342</a>.</p>
+<p>[3] National Institute of Standards and Technology. <em>Digital Signature Standard (DSS)</em> (Стандарт за цифров подпис). FIPS 186-5. <a href="https://csrc.nist.gov/pubs/fips/186-5/final">https://csrc.nist.gov/pubs/fips/186-5/final</a>. Февруари 2023.</p>
+<p>[4] Cooper, D., Santesson, S., Farrell, S., Boeyen, S., Housley, R., Polk, W. <em>Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile</em> (X.509 профил на сертификати и списъци за отмяна). RFC 5280. <a href="https://datatracker.ietf.org/doc/html/rfc5280">https://datatracker.ietf.org/doc/html/rfc5280</a>. Май 2008.</p>
+<p>[5] Housley, R. <em>Cryptographic Message Syntax (CMS)</em> (Криптографски синтаксис на съобщения). RFC 5652. <a href="https://datatracker.ietf.org/doc/html/rfc5652">https://datatracker.ietf.org/doc/html/rfc5652</a>. Септември 2009.</p>
+<p>[6] European Telecommunications Standards Institute. <em>PDF Advanced Electronic Signatures (PAdES). Part 1: Building blocks and PAdES baseline signatures</em> (Усъвършенствани електронни подписи за PDF. Част 1). ETSI EN 319 142-1. <a href="https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/">https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/</a>. 2016.</p>
+<p>[7] European Parliament and Council. <em>Regulation (EU) No 910/2014 on electronic identification and trust services for electronic transactions in the internal market (eIDAS)</em> (Регламент относно електронната идентификация и удостоверителните услуги). <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32014R0910">https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32014R0910</a>. 2014.</p>
+<p>[8] Verizon Enterprise Solutions. <em>2023 Data Breach Investigations Report</em> (Доклад за разследване на пробиви в сигурността на данни за 2023 г.). <a href="https://www.verizon.com/business/resources/reports/dbir/">https://www.verizon.com/business/resources/reports/dbir/</a>. 2023.</p>
+<p>[9] World Wide Web Consortium. <em>Web Authentication: An API for accessing Public Key Credentials, Level 3</em> (Уеб автентикация: API за достъп до публични ключови идентификатори, ниво 3). <a href="https://www.w3.org/TR/webauthn-3/">https://www.w3.org/TR/webauthn-3/</a>. 2023.</p>
+<p>[10] Krawczyk, H., Eronen, P. <em>HMAC-based Extract-and-Expand Key Derivation Function (HKDF)</em> (HMAC-базирана функция за деривация на ключове). RFC 5869. <a href="https://datatracker.ietf.org/doc/html/rfc5869">https://datatracker.ietf.org/doc/html/rfc5869</a>. Май 2010.</p>
+<p>[11] Shor, P.W. <em>Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer</em> (Полиномиални алгоритми за факторизация и дискретен логаритъм на квантов компютър). SIAM Journal on Computing, 26(5), 1484–1509. 1997. <a href="https://doi.org/10.1137/S0097539795293172">https://doi.org/10.1137/S0097539795293172</a>.</p>
+<p>[12] National Institute of Standards and Technology. <em>Module-Lattice-Based Digital Signature Standard</em> (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. <a href="https://csrc.nist.gov/pubs/fips/204/final">https://csrc.nist.gov/pubs/fips/204/final</a>. Август 2024.</p>
+<p>[13] International Organization for Standardization. <em>Document management — Portable Document Format — Part 2: PDF 2.0</em> (Управление на документи — Преносим формат на документи). ISO 32000-2:2020. <a href="https://www.iso.org/standard/75839.html">https://www.iso.org/standard/75839.html</a>. 2020.</p>
+<p>[14] DocuSign Inc. <em>DocuSign eSignature — Product Overview</em> (Преглед на продукта). <a href="https://www.docusign.com/products/electronic-signature">https://www.docusign.com/products/electronic-signature</a>. 2024.</p>
+<p>[15] Adobe Inc. <em>Adobe Acrobat Sign — Digital Signature Capabilities</em> (Възможности за цифров подпис). <a href="https://www.adobe.com/sign.html">https://www.adobe.com/sign.html</a>. 2024.</p>
+<p>[16] Dropbox Inc. <em>Dropbox Sign — How Electronic Signatures Work</em> (Как работят електронните подписи). <a href="https://sign.dropbox.com/features/electronic-signature">https://sign.dropbox.com/features/electronic-signature</a>. 2024.</p>
+
+</section>
+
+<section class="doc-section" id="03-cel-i-zadachi">
+<h1>Раздел 3. Цел и задачи на разработката</h1>
+<h2>3.1 Цел на разработката</h2>
+<p>Целта на настоящата курсова работа е проектирането и реализацията на уеб платформа за хибридно цифрово подписване на PDF документи. Платформата обединява два криптографски алгоритъма — класически ECDSA P-256 подпис, съвместим с PAdES стандарта и с Adobe Acrobat, и постквантов ML-DSA-65 подпис, стандартизиран от NIST като FIPS 204 [1]. Частните ключове са защитени чрез WebAuthn PRF механизъм, което означава, че нито потребителят не въвежда парола, нито сървърът съхранява ключовете в четим вид.</p>
+<p>Разработката цели да демонстрира приложимостта на хибридните криптографски схеми като практическа преходна стратегия — от днешната класическа инфраструктура към постквантово защитена среда — реализирана като функционално уеб приложение с реален потребителски интерфейс.</p>
+<h2>3.2 Задачи</h2>
+<p>За постигане на поставената цел са формулирани следните задачи:</p>
+<ol>
+<li><p><strong>Анализ на PAdES-B-Basic профила и CMS контейнерната структура</strong> (RFC 5652) [3] с цел определяне на минималните криптографски примитиви, необходими за съвместимост с Adobe Acrobat.</p>
+</li>
+<li><p><strong>Обосновка на избора на ML-DSA-65</strong> сред финалистите на NIST PQC стандартизационната програма — сравнителен анализ спрямо Falcon и SPHINCS+ по размер на подписа, скорост на изпълнение и ниво на сигурност.</p>
+</li>
+<li><p><strong>Проектиране на хибридна схема за подписване</strong>, съвместяваща класически ECDSA P-256 подпис в <code>/Contents</code> (за Adobe съвместимост) с ML-DSA-65 подпис в custom PDF stream (за постквантова защита).</p>
+</li>
+<li><p><strong>Реализация на вътрешна инфраструктура за издаване на сертификати (mini-CA)</strong> — Edge Function за X.509 leaf сертификати, издавани от собствен Root CA.</p>
+</li>
+<li><p><strong>Проектиране и реализация на passkey автентикация без парола</strong> — WebAuthn Level 3 с PRF extension [4] за деривация на симетричен ключ; HKDF-SHA256 (RFC 5869) [5] за разширяване към AES-256 wrapping ключ.</p>
+</li>
+<li><p><strong>Разработка на модул за верификация, работещ изцяло в браузъра</strong> — извличане на CMS структура, валидация на X.509 верига, проверка на ECDSA и ML-DSA-65 подписи, детекция на модификации след подписване.</p>
+</li>
+<li><p><strong>Валидация на реализацията</strong> — unit тестове, интеграционни тестове, E2E тестове с Adobe Acrobat Reader, browser compatibility одит, WCAG AA accessibility одит.</p>
+</li>
+</ol>
+<h2>3.3 Очаквани резултати</h2>
+<p>В резултат на изпълнението на поставените задачи се очаква:</p>
+<ul>
+<li>Работеща уеб платформа за хибридно цифрово подписване на PDF документи, публично достъпна за верификация</li>
+<li>Подписан PDF, който Adobe Acrobat разпознава като валиден в съответствие с PAdES-B-Basic стандарта</li>
+<li>Модул за верификация, работещ изцяло в браузъра, без изпращане на файлове към сървър</li>
+<li>Приемливо покритие с unit тестове върху криптографските компоненти</li>
+<li>Съответствие с WCAG AA стандарта за достъпност</li>
+</ul>
+<hr>
+<h2>Използвана литература (раздел 3)</h2>
+<p>[1] National Institute of Standards and Technology. <em>Module-Lattice-Based Digital Signature Standard</em> (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. <a href="https://csrc.nist.gov/pubs/fips/204/final">https://csrc.nist.gov/pubs/fips/204/final</a>. Август 2024.</p>
+<p>[2] European Telecommunications Standards Institute. <em>PDF Advanced Electronic Signatures (PAdES)</em> (Усъвършенствани електронни подписи за PDF). ETSI EN 319 142-1. <a href="https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/">https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/</a>. 2016.</p>
+<p>[3] Housley, R. <em>Cryptographic Message Syntax (CMS)</em> (Криптографски синтаксис на съобщения). RFC 5652. <a href="https://datatracker.ietf.org/doc/html/rfc5652">https://datatracker.ietf.org/doc/html/rfc5652</a>. Септември 2009.</p>
+<p>[4] World Wide Web Consortium. <em>Web Authentication: An API for accessing Public Key Credentials, Level 3</em> (Уеб автентикация: API за достъп до публични ключови идентификатори). <a href="https://www.w3.org/TR/webauthn-3/">https://www.w3.org/TR/webauthn-3/</a>. 2023.</p>
+<p>[5] Krawczyk, H., Eronen, P. <em>HMAC-based Extract-and-Expand Key Derivation Function (HKDF)</em> (HMAC-базирана функция за деривация на ключове). RFC 5869. <a href="https://datatracker.ietf.org/doc/html/rfc5869">https://datatracker.ietf.org/doc/html/rfc5869</a>. Май 2010.</p>
+
+</section>
+
+</div>
+</body>
+</html>
