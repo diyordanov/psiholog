@@ -8,6 +8,56 @@
 
 ---
 
+## Фаза 8: Multi-signer workflow (DocuSign-style) — ⏳ ПЛАНИРАНА, Ден 1 в прогрес
+
+Изисквано от ръководителя (2026-07-19): parallel signing — owner подписва пръв,
+всички recipients получават покана едновременно, подписват независимо в
+произволен ред, финален документ при последния подпис. Пълен план (data model,
+sequence, UI, email, time estimate) одобрен от ръководителя без промени, с 3
+уточнения: (1) incremental-update signing се разработва стъпаловидно с Adobe
+Reader тест след всяка стъпка, не само в края; (2) pg_cron reminder emails са
+**future work**, НЕ част от MVP (спестява ~0.5 ден); (3) `<CancelSigningRequestButton>`
+е задължителна част от Ден 6 (Owner UI), не опция.
+
+**Future work (извън MVP scope, за заключението на курсовата):**
+- Reminder emails (pg_cron + `send-reminders` Edge Function) — ако recipient не
+  подпише в рамките на N дни. Изисква `pg_cron` extension в Supabase.
+- Резервен домейн за Resend (демо ползва `onboarding@resend.dev`, ограничен
+  до собствения имейл на подателя — виж Е. Resend setup в плана).
+- Column-level RLS hardening на `signing_request_recipients` (в момента recipient
+  технически може да PATCH-не marker_x/marker_y на собствения си ред през
+  PostgREST — приемливо за MVP, тъй като реалният signing flow пише само
+  конкретни полета през кода).
+- Auto-soft-delete на orphaned `signing_keys` след passkey recovery (предсъществуващ
+  gap, засяга и single-signer owner flow, не само multi-signer).
+
+### Ден 1: Data model + migrations + RLS + claim RPC — ⏳ ГОТОВО ЗА REVIEW
+
+- `supabase/migrations/0010_multi_signer_requests.sql` — нови таблици
+  `signing_requests`, `signing_request_recipients`, `email_notifications` +
+  `signatures.signing_request_id` (nullable) + RLS policies + `claim_recipient_invitation()`
+  SECURITY DEFINER функция. **НЕ приложена в Supabase още — чака review.**
+- `src/lib/types.ts` (нов файл) — `SigningRequestRow`, `SigningRequestRecipientRow`,
+  `EmailNotificationRow` + discriminated union статус типове + UI-composed
+  helper типове (`SigningRequestWithRecipients`, `NewRecipientInput`).
+- `scripts/rls-test-0010.sql` — manual RLS test script (5 сценария: owner
+  isolation, recipient row-level isolation, anon deny, email_notifications
+  service_role-only write) — за пускане в Supabase SQL Editor СЛЕД прилагане
+  на миграцията.
+- `npx tsc --noEmit` ✅ чисто.
+- **Дизайн решение:** `documents.status` enum НЕ се пипа — целият multi-signer
+  progress живее в `signing_requests.status`. Избягва `ALTER TYPE ... ADD VALUE`
+  transaction gotchas и запазва съществуващия single-signer код непроменен.
+- **Дизайн решение:** линкване на recipient → `user_id` е token-scoped
+  (`claim_recipient_invitation(recipient_id)`), не automatic email match при
+  всеки signup — по-безопасно (избягва случайно линкване при несвързана
+  регистрация със същия email).
+
+**Чака:** ръчно прилагане на миграцията през Supabase Dashboard от потребителя
++ пускане на `rls-test-0010.sql` + review на SQL/типовете преди commit.
+
+---
+
 ## Фаза 7: Документация + Подготовка за защита — ⏳ NOT STARTED
 
 ### Bugfix (2026-07-19): /Name кирилица encoding + Adobe metadata
