@@ -53,8 +53,23 @@ Reader тест след всяка стъпка, не само в края; (2)
   всеки signup — по-безопасно (избягва случайно линкване при несвързана
   регистрация със същия email).
 
-**Чака:** ръчно прилагане на миграцията през Supabase Dashboard от потребителя
-+ пускане на `rls-test-0010.sql` + review на SQL/типовете преди commit.
+**Бъг открит при ръчно RLS тестване (2026-07-19) и поправен:**
+`supabase/migrations/0011_fix_signing_requests_rls_recursion.sql` —
+`ERROR 42P17: infinite recursion detected in policy for relation "signing_requests"`.
+Причина: `signing_requests_select_recipient` policy-то прави `EXISTS` заявка
+към `signing_request_recipients`, а `recipients_select_owner`/`insert`/`update`
+policies на `signing_request_recipients` правят `EXISTS` обратно към
+`signing_requests` — circular RLS dependency между двете таблици. Fix: два
+`SECURITY DEFINER` helper функции (`is_signing_request_owner()`,
+`is_signing_request_recipient()`), които заобикалят RLS при собственото си
+вътрешно четене и по този начин прекъсват цикъла.
+
+**RLS тест резултати (2026-07-19, `scripts/rls-test-0010-filled.sql` + fix):**
+Owner isolation (Тест 1/2) ✅ · Recipient row-level isolation + claim (Тест 3а/3б) ✅ ·
+Anon default-deny (Тест 4) ✅ · `email_notifications` service_role-only write,
+owner read-only (Тест 5) ✅. Всички 5 сценария потвърдени успешно след 0011 fix-а.
+
+**Ден 1 завършен ✅.**
 
 ---
 
