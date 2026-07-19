@@ -10,6 +10,23 @@
 
 ## Фаза 7: Документация + Подготовка за защита — ⏳ NOT STARTED
 
+### Bugfix (2026-07-19): /Name кирилица encoding + Adobe metadata
+
+Ръководителят провери signature dictionary metadata (PROGRESS.md checkpoint) и откри, че `/Name` полето е нечетимо в Adobe signature panel при кирилски имена.
+
+- **Bug:** `PDFString.of(signerName)` в [`pdfSigner.ts`](src/lib/pdf/pdfSigner.ts) ползва PDFDocEncoding (латиница-базирано) — кирилица излиза mojibake (`8<0 >@40=>2` вместо „Дима Йорданов"). Визуалният маркер на страницата беше OK (рисуван с embedded NotoSans font), но текстовото `/Name` metadata поле — не.
+- **Fix:** заменено с `PDFHexString.fromText()` — вградена pdf-lib utility, кодира UTF-16BE + BOM (`FEFF` prefix, PDF spec 1.7 §7.9.2.2). Не написахме custom encoding функция — вече съществуваше в библиотеката.
+- **Добавени полета:** `/Location` (`"SignShield Platform"`) и `/ContactInfo` (`"psiholog.pages.dev"`), също с `PDFHexString.fromText()`.
+- `/M` (дата) остава `PDFString.of()` — не е Unicode текст, не се нуждае от промяна.
+- Верифицирано: hex dump на нов подписан тестов PDF (`scripts/output/e2e-signed-2026-07-19T06-56-22.pdf`) — `/Name <FEFF0414043804...>` декодира точно до „Дима Йорданов".
+- 147/147 vitest теста ✅ (без регресии). `npx tsx --env-file=.env.local scripts/test-e2e-signing.ts` ✅.
+- **Ръчна проверка в Adobe Reader (2026-07-19) — ЗАВЪРШЕНА ✅:**
+  - „Signature is VALID, signed by Дима Йорданов" — кирилица правилно показана
+  - Reason: „SignShield Digital Signature" ✅ · Location: „SignShield Platform" ✅
+  - „The document has not been modified since this signature was applied"
+  - Chain build: leaf → SignShield Root CA v1, „The selected certificate path is valid"
+- **Multi-signer flow:** ⏳ отделен scope въпрос, чака отговор от ръководителя — НЕ имплементиран в тази сесия.
+
 ### Задачи
 
 - [ ] Курсова работа (текстов документ) — чака структура/шаблон от университета

@@ -182,9 +182,13 @@ export async function preparePdfForSigning(
     SubFilter:  PDFName.of('adbe.pkcs7.detached'),
     ByteRange:  ctx.obj([0, BR_PLACEHOLDER_NUM, BR_PLACEHOLDER_NUM, BR_PLACEHOLDER_NUM]),
     Contents:   PDFHexString.of('0'.repeat(CONTENTS_HEX_LENGTH)),
-    Reason:     PDFString.of('SignShield Digital Signature'),
-    M:          PDFString.of(formatPdfDate(signingDate)),
-    Name:       PDFString.of(signerName),
+    // PDFHexString.fromText() кодира UTF-16BE + BOM (PDF spec 1.7 §7.9.2.2) —
+    // PDFString.of() ползва PDFDocEncoding, което чупи кирилица (виж bugfix 2026-07-19).
+    Reason:      PDFHexString.fromText('SignShield Digital Signature'),
+    M:           PDFString.of(formatPdfDate(signingDate)), // дата, не Unicode текст
+    Name:        PDFHexString.fromText(signerName),
+    Location:    PDFHexString.fromText('SignShield Platform'),
+    ContactInfo: PDFHexString.fromText('psiholog.pages.dev'),
   });
   ctx.assign(sigDictRef, sigDict);
 
