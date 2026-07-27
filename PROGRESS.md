@@ -8,7 +8,7 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅
 
 ### Ден 2 Стъпка 1: Incremental-update signing primitive (2 подписа) — ЗАВЪРШЕНА ✅ (2026-07-27)
 
@@ -78,6 +78,58 @@ Reader тест след всяка стъпка, не само в края; (2)
   конкретни полета през кода).
 - Auto-soft-delete на orphaned `signing_keys` след passkey recovery (предсъществуващ
   gap, засяга и single-signer owner flow, не само multi-signer).
+
+### Ден 2 Стъпка 2: Generalize incremental primitive за N подписа (тествано с N=3) — ЗАВЪРШЕНА ✅ (2026-07-27)
+
+Разшири инвариантите от Стъпка 1 (2 подписа) до N=3, потвърждавайки че
+`prepareIncrementalSignature()`/`injectIncrementalSignature()` вече са
+N-агностични без промяна в кода — `findLastObjectDict()` намира ПОСЛЕДНАТА
+ревизия на Catalog/AcroForm/Page независимо от броя предходни append-и, така
+че подпис 3 се append-ва върху подпис 2 по абсолютно същия начин, по който
+подпис 2 се append-ва върху подпис 1.
+
+**Нови тестове:**
+- `src/__tests__/pdfMultiSign.test.ts` — нов `describe` блок „N=3 подписа":
+  6 теста (13 общо във файла, бяха 7). Покрива: hash на signature 1 И 2
+  непроменен след append на 3; CMS bytes на signature 1 И 2 offset-ите
+  непроменени; signature 3 хешира правилно (A3 > A2 > A1); и трите ECDSA
+  подписа крипто-верифицират; AcroForm `/Fields` съдържа 3 field refs; 3
+  отделни `/Type /Sig` обекта.
+- `scripts/test-multi-sign-3.ts` — E2E: sign owner → recipient1 → recipient2
+  (3 различни leaf certs от реален Root CA chain), sanity checks (hash
+  непроменяемост на по-старите подписи), явна верификация „чрез extraction"
+  на всеки от трите подписа поотделно (`parseCms` + `crypto.subtle.verify`
+  срещу съответния leaf public key) + потвърждение, че
+  `pdfVerifier.extractCmsDer()` намира коректно ПОСЛЕДНИЯ подпис (signature 3)
+  — очаквано поведение за текущия single-latest-signature verifier (генерализация
+  за N подписа във verify pipeline-а е Ден 3 scope, не пипната тук).
+
+**Резултати:**
+- **160/160 общо unit теста** (154 + 6 нови), `tsc --noEmit` чист.
+- E2E скрипт run (2026-07-27): 3 подписа успешно append-нати, всички sanity
+  checks и extraction верификации ✅ (виж лог по-долу).
+  ```
+  Signature 1 hash непроменен след append на 2 и 3: ✅
+  Signature 2 hash непроменен след append на 3: ✅
+  Брой /Type /Sig обекта: 3 ✅
+  Signature 1: ✅ valid (signer: CN=Дима Йорданов)
+  Signature 2: ✅ valid (signer: CN=Мария Тупарова)
+  Signature 3: ✅ valid (signer: CN=Иван Петров)
+  pdfVerifier.extractCmsDer() намира ПОСЛЕДНИЯ подпис (signature 3): ✅
+  ```
+  Изходен файл: `scripts/output/multi-signed-3-2026-07-27T09-47-02.pdf`
+  (gitignored — не е commit-нат).
+
+**Adobe Reader верификация (2026-07-27, screenshot) — ✅:**
+- „Signed and all signatures are valid." (синя лента)
+- Signature Panel: Rev. 1: Signed by Дима Йорданов ✅ · Rev. 2: Signed by
+  Мария Тупарова ✅ · Rev. 3: Signed by Иван Петров ✅ — и трите със зелена
+  отметка, кирилицата се показва коректно.
+
+**Следваща стъпка (Ден 3):** verify pipeline update — `pdfVerifier.ts`/
+`verifyService.ts` в момента поддържат само 1 `/Sig` обект (последния);
+UI ще ограничи до max 2 recipients (owner + 1) за MVP, но pipeline-ът трябва
+технически да поддържа N за защита пред комисията.
 
 ### Ден 1: Data model + migrations + RLS + claim RPC — ⏳ ГОТОВО ЗА REVIEW
 

@@ -26,3 +26,9 @@ dist-ssr
 # Test artifacts — генерирани локално, не за commit
 test-signed.pdf
 test-signed-*.pdf
+cms*.der
+hashes*.txt
+scripts/output/
+supabase/.temp/
+DESIGN_BRIEF_*.md
+FIRST_SESSION_*.md
