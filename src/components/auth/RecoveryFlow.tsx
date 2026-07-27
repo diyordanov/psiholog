@@ -38,7 +38,9 @@ export default function RecoveryFlow({ onCancel }: RecoveryFlowProps) {
     if (error) {
       // "shouldCreateUser: false" означава, че ако email-ът не съществува,
       // Supabase връща грешка. Показваме общо съобщение — не разкриваме дали
-      // акаунтът съществува (security best practice).
+      // акаунтът съществува (security best practice) — но логваме реалната
+      // причина (rate limit / SMTP-Resend грешка / друго) за debugging.
+      console.error('Recovery OTP send failed:', error);
       setErrorMessage(
         'Не можахме да изпратим линка. Провери email адреса и опитай пак.'
       );
