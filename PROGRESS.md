@@ -8,9 +8,9 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ⏳ (код готов, чака live UI потвърждение)
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅ COMPLETE
 
-### Ден 3: Verify pipeline update за N подписа — КОД ЗАВЪРШЕН ✅ (2026-07-27), чака live проверка
+### Ден 3: Verify pipeline update за N подписа — ЗАВЪРШЕНА ✅ (2026-07-27)
 
 `pdfVerifier.ts`/`verifyService.ts` преди тази стъпка поддържаха само ПОСЛЕДНИЯ
 `/Sig` обект (single-signer). Генерализирано за N подписа, N-агностично.
@@ -94,10 +94,30 @@ ECDSA + ML-DSA + верижна визуализация) + автоматичн
 при 2 последващи пълни run-а. Ако се появи отново — да се разследва
 `initTestKeys()` singleton кеша в `signingFixtures.ts` за race condition.
 
-**Чака:** ръчна проверка в `/verify` UI (dual-signed, triple-signed,
-single-signed backward compat, PDF report download) — локална проверка не е
-възможна за клиентката, затова push към `main` за Cloudflare Pages
-auto-deploy преди финално потвърждение.
+**Live UI верификация (2026-07-27, psiholog.pages.dev/verify, 4 screenshot) — ✅:**
+- Dual-signed PDF: „Подписан от 2 лица" — Дима Йорданов (собственик) + Мария
+  Тупарова (получател 1), и двамата зелени/валидни; „Пост-квантов подпис: не
+  е приложен (стар документ)" (коректно — нито един от двамата няма ML-DSA в
+  тази fixture → overall `authentic`, не `authentic_with_warnings`, защото
+  липсата е uniform, не смесена). 2 collapsible-а в Technical Details + общи
+  Цялост/Byte range секции.
+- Triple-signed PDF: „Подписан от 3 лица" — Дима Йорданов, Мария Тупарова,
+  Иван Петров, всичките зелени/валидни. 3 collapsible-а.
+- Single-signed PDF (backward compat): „Подписан от 1 лице" — вижда се и
+  ML-DSA-65 статус (валиден) — старият N=1 формат работи непроменено.
+- PDF verification report (triple-signed, 2 страници): секция „ПОДПИСВАЩ
+  1/2/3" за всеки — ECDSA статус, алгоритъм, дата, издател, cert expiry,
+  верижна визуализация (Подписал → Root CA → trust anchor), cert/sig
+  fingerprints, ML-DSA-65 статус („Няма PQ слот за този подписващ"). Footer +
+  page numbers на всяка страница — пагинацията работи коректно.
+
+**Странична поправка по време на сесията:** `RecoveryFlow.tsx` показваше
+generic грешка при всеки provider failure на `signInWithOtp()` без да логва
+причината в конзолата (за разлика от установения patterns другаде в проекта
+— виж Фаза 6 Ден 1). Добавен `console.error()`. Реалната причина за
+съобщения ото „Не можахме да изпратим линка" при тестването се оказа
+паузирана Supabase база (free tier auto-pause при неактивност) — нищо общо
+с Ден 3 кода; клиентката активира базата ръчно и login проработи отново.
 
 ### Ден 2 Стъпка 1: Incremental-update signing primitive (2 подписа) — ЗАВЪРШЕНА ✅ (2026-07-27)
 
