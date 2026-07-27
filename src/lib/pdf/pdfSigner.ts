@@ -93,6 +93,22 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Записва CMS DER hex в /Contents placeholder-а IN-PLACE (uppercase hex,
+ * padded с нули до CONTENTS_HEX_LENGTH). Споделена между injectSignatureAndPQ
+ * (единичен подпис) и injectIncrementalSignature (N-ти подпис).
+ */
+function fillContentsPlaceholder(bytes: Uint8Array, contentsOffset: number, cmsDer: Uint8Array): void {
+  if (cmsDer.length > CONTENTS_PLACEHOLDER_BYTES) {
+    throw new Error(
+      `CMS (${cmsDer.length} bytes) надвишава placeholder (${CONTENTS_PLACEHOLDER_BYTES} bytes)`,
+    );
+  }
+  const cmsHex = bytesToHex(cmsDer).toUpperCase().padEnd(CONTENTS_HEX_LENGTH, '0');
+  const hexBytes = new TextEncoder().encode(cmsHex);
+  bytes.set(hexBytes, contentsOffset + 1); // +1 прескача '<'
+}
+
 // ─── Стъпка 1: Подготовка на PDF с placeholders ──────────────────────────────
 
 /**
@@ -332,18 +348,11 @@ export function injectSignatureAndPQ(
   cmsDer: Uint8Array,
   pqData?: PqSignatureData | null,
 ): Uint8Array {
-  if (cmsDer.length > CONTENTS_PLACEHOLDER_BYTES) {
-    throw new Error(
-      `CMS (${cmsDer.length} bytes) надвишава placeholder (${CONTENTS_PLACEHOLDER_BYTES} bytes)`,
-    );
-  }
-
   const result = new Uint8Array(prepared.bytes); // копие
 
-  // 1. Инжектираме CMS hex в /Contents (след '<')
-  const cmsHex = bytesToHex(cmsDer).toUpperCase().padEnd(CONTENTS_HEX_LENGTH, '0');
-  const hexBytes = new TextEncoder().encode(cmsHex);
-  result.set(hexBytes, prepared.contentsOffset + 1); // +1 прескача '<'
+  // 1. Инжектираме CMS hex в /Contents (след '<') — fillContentsPlaceholder
+  // хвърля ако cmsDer надвишава CONTENTS_PLACEHOLDER_BYTES.
+  fillContentsPlaceholder(result, prepared.contentsOffset, cmsDer);
 
   // 2. /ByteRange е вече patch-нат от patchByteRangeInPlace() (задължително преди хеширане).
   // result е копие на prepared.bytes, което вече съдържа реалните ByteRange стойности.
@@ -438,6 +447,260 @@ function findHighestObjectNumber(pdfBytes: Uint8Array): number {
   const text = new TextDecoder().decode(pdfBytes.slice(Math.max(0, pdfBytes.length - 512)));
   const m = text.match(/\/Size\s+(\d+)/);
   return m ? parseInt(m[1]) - 1 : 100;
+}
+
+// ─── Стъпка 5: Incremental добавяне на ВТОРИ (и следващ) подпис ──────────────
+//
+// За multi-signer: всеки следващ signer подписва "over the last version" —
+// НЕ прекарваме файла пак през PDFDocument.load()/.save() (pdf-lib не
+// гарантира byte-for-byte запазване на вече подписаните региони, което би
+// счупило предния подпис). Вместо това — чист append-only incremental
+// update, по модела на buildPqIncrementalUpdate() по-горе, но по-сложен:
+// освен нов /Sig + Widget обект, трябва да REDEFINE-нем AcroForm (нов
+// /Fields ref) и Page (нов /Annots ref) — REDEFINE тук означава нова
+// ревизия на СЪЩИЯ object number на ново място във файла + нов xref entry,
+// НЕ мутация на старите байтове (те вече са част от подписания диапазон
+// на предния signer).
+
+export interface IncrementalSignOptions {
+  markerX: number;
+  markerY: number;
+  pageIndex: number;
+  /** Уникално /T поле, напр. 'Signature2', 'Signature3'. */
+  fieldName: string;
+}
+
+export interface PreparedIncrementalSignature {
+  bytes:              Uint8Array; // оригинален PDF + нов incremental block с placeholders
+  contentsOffset:     number;     // byte offset на '<' в новия /Contents <000...>
+  byteRangeNumOffset: number;     // byte offset на '0 999...' в новия /ByteRange [...]
+}
+
+/**
+ * Намира offset веднага СЛЕД matching '>>' за dictionary, започващ на dictStart
+ * (offset на отварящото '<<'). Балансира вложени << >> (напр. /Resources).
+ * Не handle-ва << / >> вътре в string/hex литерали — приемливо за AcroForm/
+ * Page dict-ове от pdf-lib, които нямат такива edge cases в тестовите PDF-и.
+ */
+function findDictEnd(bytes: Uint8Array, dictStart: number): number {
+  let depth = 0;
+  let i = dictStart;
+  while (i < bytes.length - 1) {
+    if (bytes[i] === 0x3c && bytes[i + 1] === 0x3c) { depth++; i += 2; continue; }
+    if (bytes[i] === 0x3e && bytes[i + 1] === 0x3e) {
+      depth--;
+      i += 2;
+      if (depth === 0) return i;
+      continue;
+    }
+    i++;
+  }
+  throw new Error('findDictEnd: непълен dictionary (липсва matching >>)');
+}
+
+interface ObjectDict {
+  dictStart: number; // offset на '<<'
+  dictEnd:   number; // offset веднага след matching '>>'
+  text:      string; // decoded latin1 текст на dict-а (вкл. << >>)
+}
+
+/**
+ * Намира ПОСЛЕДНОТО срещане на "\nN 0 obj" — при incremental updates това е
+ * най-новата ревизия на обекта (всяка REDEFINE се append-ва отзад, никога
+ * не мутира старите байтове). Водещото '\n' в маркера предотвратява фалшиво
+ * съвпадение (напр. obj 5 вътре в "15 0 obj").
+ */
+function findLastObjectDict(bytes: Uint8Array, objNum: number): ObjectDict {
+  const marker = new TextEncoder().encode(`\n${objNum} 0 obj`);
+  let pos = -1;
+  let found = findPattern(bytes, marker, 0);
+  while (found !== -1) { pos = found; found = findPattern(bytes, marker, found + 1); }
+  if (pos === -1) throw new Error(`Обект ${objNum} 0 obj не е намерен`);
+
+  let dictStart = pos + marker.length;
+  while (dictStart < bytes.length &&
+         (bytes[dictStart] === 0x0a || bytes[dictStart] === 0x0d || bytes[dictStart] === 0x20)) {
+    dictStart++;
+  }
+  const dictEnd = findDictEnd(bytes, dictStart);
+  return { dictStart, dictEnd, text: new TextDecoder('latin1').decode(bytes.slice(dictStart, dictEnd)) };
+}
+
+/** Извлича obj номера от "/Key N 0 R" в decoded dict текст. */
+function extractRefNumber(dictText: string, key: string): number {
+  const m = dictText.match(new RegExp(`/${key}\\s+(\\d+)\\s+0\\s+R`));
+  if (!m) throw new Error(`/${key} ref не е намерен в dict-а`);
+  return parseInt(m[1], 10);
+}
+
+/** Извлича catalog obj номера от текущия /Root в trailer-а (reuse findCatalogRef). */
+function findCatalogObjectNumber(bytes: Uint8Array): number {
+  const ref = findCatalogRef(bytes); // "N 0 R"
+  const m = ref.match(/^(\d+)/);
+  if (!m) throw new Error('findCatalogObjectNumber: невалиден /Root формат');
+  return parseInt(m[1], 10);
+}
+
+/**
+ * Подготвя incremental update, който добавя НОВ /Sig подпис (+ Widget) към
+ * вече подписан PDF — append-only, не пипа съществуващи байтове.
+ *
+ * Стъпки:
+ *   1. Catalog → AcroForm ref + Pages ref → целева страница (pageIndex-ти Kid)
+ *   2. REDEFINE AcroForm obj (същия номер, нов offset) с добавен нов field ref
+ *   3. REDEFINE Page obj (същия номер, нов offset) с добавен нов Annot ref
+ *   4. Нов Widget obj + нов Sig obj (с /Contents, /ByteRange placeholders)
+ *   5. Нов xref block (по едно subsection на пипнат/нов обект) + trailer /Prev
+ *
+ * След това — computeByteRanges/patchByteRangeInPlace/hashByteRanges (вече
+ * общи функции, работят непроменени) + подпис + injectIncrementalSignature().
+ */
+export async function prepareIncrementalSignature(
+  pdfBytes: Uint8Array,
+  signerName: string,
+  signingDate: Date,
+  options: IncrementalSignOptions,
+): Promise<PreparedIncrementalSignature> {
+  const { markerX, markerY, pageIndex, fieldName } = options;
+  const MARKER_W = 200, MARKER_H = 50;
+
+  // ── 1. Catalog → AcroForm + Pages → целева страница ────────────────────
+  const catalogNum  = findCatalogObjectNumber(pdfBytes);
+  const catalogDict = findLastObjectDict(pdfBytes, catalogNum);
+  const acroFormNum  = extractRefNumber(catalogDict.text, 'AcroForm');
+  const pagesRootNum = extractRefNumber(catalogDict.text, 'Pages');
+
+  const pagesDict = findLastObjectDict(pdfBytes, pagesRootNum);
+  const kidsMatch = pagesDict.text.match(/\/Kids\s*\[([^\]]*)\]/);
+  if (!kidsMatch) throw new Error('prepareIncrementalSignature: /Kids не е намерен');
+  const kidRefs = [...kidsMatch[1].matchAll(/(\d+)\s+0\s+R/g)].map(m => parseInt(m[1], 10));
+  if (pageIndex >= kidRefs.length) {
+    throw new Error(`prepareIncrementalSignature: страница ${pageIndex} не съществува (общо ${kidRefs.length})`);
+  }
+  const pageNum = kidRefs[pageIndex];
+
+  const acroFormDict = findLastObjectDict(pdfBytes, acroFormNum);
+  const pageDict      = findLastObjectDict(pdfBytes, pageNum);
+
+  // ── 2. Нови object номера (следват последния наличен) ──────────────────
+  const nextObjNum   = findHighestObjectNumber(pdfBytes) + 1;
+  const sigObjNum     = nextObjNum;
+  const widgetObjNum  = nextObjNum + 1;
+  const formObjNum    = nextObjNum + 2; // /AP appearance stream (рамка, без текст — виж бележка)
+
+  // ── 3. Redefine AcroForm: добавяме widgetObjNum във /Fields ─────────────
+  const fieldsMatch = acroFormDict.text.match(/\/Fields\s*\[([^\]]*)\]/);
+  if (!fieldsMatch) throw new Error('prepareIncrementalSignature: /Fields не е намерен в AcroForm');
+  const newFieldsArray  = `/Fields [${fieldsMatch[1]}${widgetObjNum} 0 R ]`;
+  const newAcroFormText = acroFormDict.text.replace(/\/Fields\s*\[[^\]]*\]/, newFieldsArray);
+
+  // ── 4. Redefine Page: добавяме widgetObjNum в /Annots (или го създаваме) ──
+  const annotsMatch = pageDict.text.match(/\/Annots\s*\[([^\]]*)\]/);
+  let newPageText: string;
+  if (annotsMatch) {
+    const newAnnotsArray = `/Annots [${annotsMatch[1]}${widgetObjNum} 0 R ]`;
+    newPageText = pageDict.text.replace(/\/Annots\s*\[[^\]]*\]/, newAnnotsArray);
+  } else {
+    // няма /Annots още — добавяме преди затварящото '>>'
+    newPageText = `${pageDict.text.slice(0, -2)}/Annots [${widgetObjNum} 0 R ]\n>>`;
+  }
+
+  // ── 5. Unicode-safe metadata (виж bugfix 2026-07-19: PDFHexString.fromText) ──
+  const reasonHex      = PDFHexString.fromText('SignShield Digital Signature').toString();
+  const nameHex        = PDFHexString.fromText(signerName).toString();
+  const locationHex    = PDFHexString.fromText('SignShield Platform').toString();
+  const contactInfoHex = PDFHexString.fromText('psiholog.pages.dev').toString();
+
+  // ── 6. Построяваме новите обекти като raw PDF текст, offset-ите се       ──
+  // ── следят аритметично (без re-scan) — по модела на buildPqIncrementalUpdate.
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  let offset = pdfBytes.length;
+  const push = (s: string) => { const b = enc.encode(s); parts.push(b); offset += b.length; };
+
+  const acroFormOffset = offset + 1; // +1 прескача водещото '\n'
+  push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
+
+  const pageOffset = offset + 1;
+  push(`\n${pageNum} 0 obj\n${newPageText}\nendobj\n`);
+
+  const widgetOffset = offset + 1;
+  push(
+    `\n${widgetObjNum} 0 obj\n<<\n/Type /Annot\n/Subtype /Widget\n/FT /Sig\n` +
+    `/V ${sigObjNum} 0 R\n/Rect [${markerX} ${markerY} ${markerX + MARKER_W} ${markerY + MARKER_H}]\n` +
+    `/P ${pageNum} 0 R\n/T (${fieldName})\n/F 4\n/AP << /N ${formObjNum} 0 R >>\n>>\nendobj\n`,
+  );
+
+  // Appearance stream: само рамка/фон (без текст — избягва CID font encoding
+  // за кирилица в raw incremental update; виж бележка в началото на Стъпка 5).
+  // Координати спрямо собствения /BBox на формата (0,0)-(MARKER_W,MARKER_H),
+  // Widget-ният /Rect позиционира формата на страницата.
+  const formOffset = offset + 1;
+  const apStreamContent =
+    'q\n0.94 0.94 0.98 rg\n0.25 0.25 0.70 RG\n0.5 w\n' +
+    `0.25 0.25 ${MARKER_W - 0.5} ${MARKER_H - 0.5} re\nB\nQ\n`;
+  const apStreamBytes = enc.encode(apStreamContent);
+  push(
+    `\n${formObjNum} 0 obj\n<<\n/Type /XObject\n/Subtype /Form\n` +
+    `/BBox [0 0 ${MARKER_W} ${MARKER_H}]\n/Resources << >>\n/Length ${apStreamBytes.length}\n>>\n` +
+    `stream\n${apStreamContent}endstream\nendobj\n`,
+  );
+
+  const sigOffset = offset + 1;
+  push(`\n${sigObjNum} 0 obj\n<<\n/Type /Sig\n/Filter /Adobe.PPKLite\n/SubFilter /adbe.pkcs7.detached\n/ByteRange [`);
+  const byteRangeNumOffset = offset; // веднага след '['
+  push('0 999999999 999999999 999999999]\n/Contents <');
+  const contentsOffset = offset - 1; // offset на '<' самия (последният push-нат символ)
+  push('0'.repeat(CONTENTS_HEX_LENGTH));
+  push(
+    `>\n/Reason ${reasonHex}\n/M (${formatPdfDate(signingDate)})\n/Name ${nameHex}\n` +
+    `/Location ${locationHex}\n/ContactInfo ${contactInfoHex}\n>>\nendobj\n`,
+  );
+
+  // ── 7. xref block: по едно subsection на пипнат/нов обект (сортирано) ───
+  const xrefEntries = [
+    { num: acroFormNum,  off: acroFormOffset },
+    { num: pageNum,      off: pageOffset },
+    { num: widgetObjNum, off: widgetOffset },
+    { num: formObjNum,   off: formOffset },
+    { num: sigObjNum,    off: sigOffset },
+  ].sort((a, b) => a.num - b.num);
+
+  const xrefBlockStart = offset;
+  let xref = '\nxref\n';
+  for (const e of xrefEntries) {
+    xref += `${e.num} 1\n${String(e.off).padStart(10, '0')} 00000 n \n`;
+  }
+  const xrefKeyword = xrefBlockStart + 1; // +1 за водещото '\n'
+  push(xref);
+
+  const prevXref = findStartXref(pdfBytes);
+  const newSize  = formObjNum + 1; // Size = (най-високият object number в тази ревизия) + 1
+  push(`trailer\n<< /Size ${newSize} /Root ${findCatalogRef(pdfBytes)} /Prev ${prevXref} >>\nstartxref\n${xrefKeyword}\n%%EOF\n`);
+
+  // ── 8. Сглобяваме финалните bytes ────────────────────────────────────────
+  const totalLen = parts.reduce((n, p) => n + p.length, 0);
+  const combined = new Uint8Array(pdfBytes.length + totalLen);
+  combined.set(pdfBytes, 0);
+  let pos = pdfBytes.length;
+  for (const p of parts) { combined.set(p, pos); pos += p.length; }
+
+  return { bytes: combined, contentsOffset, byteRangeNumOffset };
+}
+
+/**
+ * Инжектира CMS DER в /Contents placeholder-а на incremental подпис (Стъпка
+ * 5) — БЕЗ /PostQuantumSignature append (виж бележка в началото на Стъпка 5:
+ * Ден 2 Стъпка 1 тества чист ECDSA/CMS incremental primitive; PQ per-signer
+ * интеграция е следваща задача, не част от този scope).
+ */
+export function injectIncrementalSignature(
+  prepared: PreparedIncrementalSignature,
+  cmsDer: Uint8Array,
+): Uint8Array {
+  const result = new Uint8Array(prepared.bytes);
+  fillContentsPlaceholder(result, prepared.contentsOffset, cmsDer);
+  return result;
 }
 
 // ─── Публично помощно API ─────────────────────────────────────────────────────

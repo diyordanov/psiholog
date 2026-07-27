@@ -35,7 +35,7 @@ import { buildSignedAttrs, buildCmsDetached } from '../../lib/pdf/cmsBuilder';
 const FIXED_ML_DSA_SEED = new Uint8Array(32).fill(0x42);
 
 /** Минимален валиден PDF за тестови fixtures (без съдържание). */
-const MINIMAL_PDF = new TextEncoder().encode(
+export const MINIMAL_PDF = new TextEncoder().encode(
   '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
   '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n' +
   '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +

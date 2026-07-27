@@ -8,7 +8,55 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — ⏳ ПЛАНИРАНА, Ден 1 в прогрес
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅
+
+### Ден 2 Стъпка 1: Incremental-update signing primitive (2 подписа) — ЗАВЪРШЕНА ✅ (2026-07-27)
+
+Най-рисковата задача от целия план (виж бележка в оригиналния план: `preparePdfForSigning()`
+не може да се preизползва за recipient — pdf-lib пре-сериализира целия файл при
+`.save()`, което би счупило вече вградения подпис на owner-а).
+
+**Нови функции в [`pdfSigner.ts`](src/lib/pdf/pdfSigner.ts):**
+- `prepareIncrementalSignature()` — чист append-only incremental update: намира
+  Catalog → AcroForm → Pages → целева страница (raw byte parsing, без pdf-lib),
+  redefine-ва AcroForm (`/Fields`) и Page (`/Annots`) обектите (нова ревизия,
+  същия object number, нов offset — НЕ мутация на стари байтове), добавя нов
+  `/Sig` obj + `/Widget` obj + `/AP` appearance stream (рамка без текст).
+- `injectIncrementalSignature()` — инжектира CMS DER в новия `/Contents`
+  placeholder (без `/PostQuantumSignature` — извън scope на тази стъпка).
+- Рефакторинг: `fillContentsPlaceholder()` изведена от `injectSignatureAndPQ()`
+  за преизползване (identical behavior, unit тестовете минават непроменени).
+- `computeByteRanges()`/`patchByteRangeInPlace()`/`hashByteRanges()` останаха
+  **напълно непроменени** — вече бяха generic спрямо `contentsOffset`/
+  `byteRangeNumOffset`, работят коректно и за N-тия подпис без промяна.
+
+**Съзнателен scope decision:** appearance stream-ът на recipient-ския marker е
+само фон+рамка, БЕЗ текст — рисуването на кирилица в raw incremental update
+изисква ръчно CID/Identity-H font encoding (Type0 font + FontFile2 embed),
+значителен допълнителен обем крехък код за визуален detail. Owner-ският
+маркер (рисуван от pdf-lib ПРЕДИ първия подпис) остава с пълен текст.
+Text-in-appearance за recipient е flagged като future enhancement.
+
+**Тестове:**
+- `src/__tests__/pdfMultiSign.test.ts` — 7/7 ✅: signature 1 hash непроменен
+  след append на signature 2, signature 1 CMS bytes непроменени, signature 2
+  хешира правилно (покрива и signature 1), и двата ECDSA подписа
+  крипто-верифицират с WebCrypto, AcroForm `/Fields` съдържа 2 field refs,
+  2 отделни `/Type /Sig` обекта, ясна грешка при несъществуваща страница.
+- `scripts/test-multi-sign.ts` — E2E: 2 различни leaf certs (owner + recipient)
+  подписани от реален Root CA chain.
+- **154/154 общо unit теста** (без регресии), `tsc --noEmit` чист.
+
+**Adobe Reader верификация (2026-07-27, 2 screenshot сесии) — ✅:**
+- "Signed and all signatures are valid."
+- Rev. 1: Signed by Дима Йорданов — valid, document not modified
+- Rev. 2: Signed by Мария Тупарова — valid, document not modified
+- И двата визуални маркера видими на страницата (owner: пълен текст; recipient: рамка)
+
+**Следваща стъпка:** Ден 2 Стъпка 2 — generalize primitive-а за N подписа
+(рекурсивно приложение на `prepareIncrementalSignature()` върху вече
+multi-signed PDF), Adobe тест с 3+ подписа преди Ден 3 (verify pipeline update:
+`pdfVerifier.ts`/`verifyService.ts` в момента поддържат само 1 `/Sig` обект).
 
 Изисквано от ръководителя (2026-07-19): parallel signing — owner подписва пръв,
 всички recipients получават покана едновременно, подписват независимо в
