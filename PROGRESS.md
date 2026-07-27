@@ -134,6 +134,13 @@ documents.status = signed ✅
 без screenshot gate тук (по план). Cleanup: temp акаунтите се изтриват в
 `finally` блок (cascade delete чисти всички свързани редове).
 
+**Live регресионна проверка (2026-07-27, psiholog.pages.dev, след push на
+`e24a5e0`) — ✅:** Backward-compat single-signer flow (без recipients, UI-то
+все още няма избор на recipients — Ден 5-6) — качване → подписване → сваляне
+→ `/verify` (1 лице, валиден). Потвърждава, че новата `signAsOwner()`-базирана
+`signDocument()` реализация (нов signing_requests ред + нов storage path
+формат за ВСЯКО подписване) не чупи съществуващия production flow.
+
 **Следваща стъпка (Ден 5-6):** UI wiring — Owner flow (InviteRecipientsModal,
 покана на до 2 recipients за MVP), Recipient flow (InvitationLandingPage,
 SigningRequestStatus), `<CancelSigningRequestButton>`.
