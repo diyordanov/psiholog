@@ -1,18 +1,23 @@
 /**
  * verifyService.ts
- * Оркестрира пълния signing verification flow.
+ * Оркестрира пълния signing verification flow — Ден 3 (Фаза 8): генерализирано
+ * за N подписа (multi-signer PDF-и от incremental-update signing pipeline-а).
  *
  * Flow:
- *   1. PDF sanitization (scanPdf) — отхвърля malicious PDF
- *   2. extractByteRange()         — намира подписания диапазон
- *   3. extractCmsDer()            — извлича CMS DER от /Contents
- *   4. extractPqStream()          — извлича ML-DSA-65 JSON (или null)
- *   5. computeSignedHash()        — SHA-256 на ByteRange bytes
- *   6. parseCms()                 — извлича leaf cert, signedAttrs, sig
- *   7. verifyCertChain()          — валидира leaf cert срещу Root CA
- *   8. verifyEcdsaSignature()     — ECDSA P-256 верификация
- *   9. verifyMlDsaSignature()     — ML-DSA-65 верификация (ако е налична)
- *  10. assemblResult()            — определя overall status
+ *   1. PDF sanitization (scanPdf)       — отхвърля malicious PDF
+ *   2. extractAllSignatures()           — намира ВСИЧКИ /Sig обекта (файлов ред)
+ *   3. extractAllPqStreams()            — намира ВСИЧКИ /PostQuantumSignature streams
+ *   4. За всеки /Sig обект:
+ *        computeSignedHash()            — SHA-256 на своя ByteRange
+ *        parseCms()                     — leaf cert, signedAttrs, sig
+ *        verifyCertChain()              — валидира leaf cert срещу Root CA
+ *        verifyEcdsaSignature()         — ECDSA P-256 верификация
+ *        verifyMlDsaSignature()         — ако има асоцииран PQ stream
+ *   5. determineOverall()                — приоритет: tampered > invalid >
+ *                                          authentic_with_warnings > authentic
+ *
+ * N=1 (single-signer PDF) е частен случай: extractAllSignatures() връща масив
+ * с 1 елемент — same code path, без специален case.
  *
  * Offline верификация: нищо не напуска браузъра. Root CA cert идва от
  * rootCaCert.ts (bundled в build-а). Дългосрочно валидна — работи и след
@@ -23,13 +28,13 @@ import * as x509 from '@peculiar/x509';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { scanPdf } from '../pdfSanitizer';
 import {
-  extractByteRange, extractCmsDer, extractPqStream,
-  extractSigningDate, computeSignedHash, bytesToHexStr, decodeBase64url,
+  extractAllSignatures, extractAllPqStreams, countSignatureMarkers,
+  computeSignedHash, bytesToHexStr, decodeBase64url,
 } from '../pdf/pdfVerifier';
 import { parseCms, makeSignedAttrsSet } from '../pdf/cmsParser';
 import { ROOT_CA_CERT_PEM } from '../crypto/rootCaCert';
 import type {
-  VerifyResult, EcdsaVerifyResult, MlDsaVerifyResult, CertChainStatus,
+  VerifyResult, SignerResult, EcdsaVerifyResult, MlDsaVerifyResult, CertChainStatus,
 } from './types';
 
 // Root CA cert — PEM → DER, зарежда се веднъж при import на модула
@@ -195,10 +200,117 @@ export function verifyMlDsaSignature(
   }
 }
 
+/**
+ * Верифицира ЕДИН /Sig обект (raw extraction резултат) → SignerResult.
+ * Никога не хвърля — при повредена CMS структура връща signer с
+ * ecdsa.status='invalid' и ясно errorMessage, вместо да прекъсне целия flow
+ * (така другите N-1 подписа в документа продължават да се верифицират и
+ * показват коректно).
+ */
+async function verifySingleSigner(
+  pdfBytes: Uint8Array,
+  raw: { index: number; byteRange: [number, number, number, number] | null; cmsDer: Uint8Array | null; signedAt: Date | null },
+  pqData: import('../pdf/pdfSigner').PqSignatureData | undefined,
+  rootCaCertDer: Uint8Array,
+): Promise<SignerResult> {
+  // Структурно повреден /Sig обект (липсва ByteRange или Contents в dict-а) —
+  // не можем да изчислим hash или да парснем CMS.
+  if (!raw.byteRange || !raw.cmsDer) {
+    const ecdsa: EcdsaVerifyResult = {
+      status: 'invalid',
+      algorithm: 'ecdsa-p256',
+      signerName: '—',
+      signedAt: raw.signedAt,
+      certStatus: null,
+      certExpiry: null,
+      certIssuer: null,
+      certDer: null,
+      sigBytes: null,
+      tampered: false,
+      errorMessage: !raw.byteRange
+        ? 'ByteRange не е намерен за този подпис.'
+        : 'Не може да се извлече CMS подпис от този слот.',
+    };
+    return { signerIndex: raw.index, ecdsa, mlDsa: null, signerName: ecdsa.signerName, signedAt: ecdsa.signedAt };
+  }
+
+  const computedHash = computeSignedHash(pdfBytes, raw.byteRange);
+  const mlDsa: MlDsaVerifyResult | null = pqData ? verifyMlDsaSignature(pqData, computedHash) : null;
+
+  let ecdsa: EcdsaVerifyResult;
+  try {
+    const { leafCertDer, signedAttrsImplicit, messageDigest, ecdsaSigP1363 } = parseCms(raw.cmsDer);
+    const chainResult = await verifyCertChain(leafCertDer, rootCaCertDer);
+    const ecdsaResult = await verifyEcdsaSignature(
+      leafCertDer, signedAttrsImplicit, ecdsaSigP1363, messageDigest, computedHash,
+    );
+    ecdsa = {
+      status: ecdsaResult.valid ? 'valid' : 'invalid',
+      algorithm: 'ecdsa-p256',
+      signerName: chainResult.signerName,
+      signedAt: raw.signedAt,
+      certStatus: chainResult.status,
+      certExpiry: chainResult.expiry,
+      certIssuer: chainResult.issuerName,
+      certDer: leafCertDer,
+      sigBytes: ecdsaSigP1363,
+      tampered: ecdsaResult.tampered,
+      errorMessage: ecdsaResult.errorMessage,
+    };
+  } catch (e) {
+    ecdsa = {
+      status: 'invalid',
+      algorithm: 'ecdsa-p256',
+      signerName: '—',
+      signedAt: raw.signedAt,
+      certStatus: null,
+      certExpiry: null,
+      certIssuer: null,
+      certDer: null,
+      sigBytes: null,
+      tampered: false,
+      errorMessage: `Невалидна CMS структура: ${e instanceof Error ? e.message : 'неизвестна'}`,
+    };
+  }
+
+  return { signerIndex: raw.index, ecdsa, mlDsa, signerName: ecdsa.signerName, signedAt: ecdsa.signedAt };
+}
+
+/**
+ * Определя overall status от резултатите на всички подписващи.
+ *
+ * Приоритет (най-тежкото печели):
+ *   1. tampered                — hash mismatch при поне един подпис
+ *   2. invalid                 — ECDSA sig fail / chain untrusted / ML-DSA invalid
+ *                                 при поне един подпис (вкл. повредена CMS структура)
+ *   3. authentic_with_warnings — изтекъл сертификат ИЛИ "смесена" PQ защита
+ *                                 (поне 1 signer има валиден ML-DSA, друг няма PQ изобщо)
+ *   4. authentic                — всичко чисто
+ *
+ * Забележка: НЕ следваме буквално "any ECDSA invalid → tampered" (опростен
+ * реминдър от плана) — пазим по-прецизното разграничение tampered (hash
+ * mismatch, документът е пипнат) vs invalid (подпис/верига невалидни, но
+ * данните са същите), установено още в single-signer verifyService и
+ * потвърдено от съществуващите modified-body/modified-signature fixtures.
+ */
+function determineOverall(signers: SignerResult[]): VerifyResult['overall'] {
+  if (signers.some(s => s.ecdsa.tampered)) return 'tampered';
+  if (signers.some(s => s.ecdsa.status === 'invalid')) return 'invalid';
+  if (signers.some(s => s.ecdsa.certStatus === 'chain_invalid')) return 'invalid';
+  if (signers.some(s => s.mlDsa?.status === 'invalid')) return 'invalid';
+
+  const anyExpired      = signers.some(s => s.ecdsa.certStatus === 'expired');
+  const anyValidMlDsa   = signers.some(s => s.mlDsa?.status === 'valid');
+  const anyMissingMlDsa = signers.some(s => s.mlDsa === null || s.mlDsa.status === 'not_included');
+  if (anyExpired || (anyValidMlDsa && anyMissingMlDsa)) return 'authentic_with_warnings';
+
+  return 'authentic';
+}
+
 // ─── Главен orchestrator ──────────────────────────────────────────────────────
 
 /**
- * Верифицира подписан PDF документ.
+ * Верифицира подписан PDF документ — поддържа N подписа (N≥1).
  *
  * Верификацията е изцяло client-side — документът никога не напуска браузъра.
  * Работи offline; не изисква backend.
@@ -219,125 +331,58 @@ export async function verifyDocument(
       overall: 'error',
       documentHash: null,
       byteRange: null,
-      ecdsa: null,
-      mlDsa: null,
+      signers: [],
+      totalSigners: 0,
       errorMessage: `Файлът съдържа потенциално опасен код: ${sanitization.threats.join(', ')}.`,
     };
   }
 
-  // ── 2. Извличане на ByteRange ─────────────────────────────────────────────
-  const byteRange = extractByteRange(pdfBytes);
-  if (!byteRange) {
+  // ── 2. Извличане на ВСИЧКИ /Sig обекта (файлов ред = ред на подписване) ───
+  const rawSignatures = extractAllSignatures(pdfBytes);
+  if (rawSignatures.length === 0) {
+    const hasMarkers = countSignatureMarkers(pdfBytes) > 0;
     return {
-      overall: 'unsigned',
+      overall: hasMarkers ? 'error' : 'unsigned',
       documentHash: null,
       byteRange: null,
-      ecdsa: null,
-      mlDsa: null,
-      errorMessage: 'PDF не съдържа цифров подпис.',
+      signers: [],
+      totalSigners: 0,
+      errorMessage: hasMarkers
+        ? 'Не може да се извлече CMS подпис от PDF.'
+        : 'PDF не съдържа цифров подпис.',
     };
   }
 
-  // ── 3. Извличане на CMS DER ───────────────────────────────────────────────
-  const cmsDer = extractCmsDer(pdfBytes);
-  if (!cmsDer) {
-    return {
-      overall: 'error',
-      documentHash: null,
-      byteRange,
-      ecdsa: null,
-      mlDsa: null,
-      errorMessage: 'Не може да се извлече CMS подпис от PDF.',
-    };
+  // ── 3. ML-DSA-65 streams (опционални, асоциирани по signerIndex) ─────────
+  const pqEntries = extractAllPqStreams(pdfBytes);
+  const pqByIndex = new Map<number, import('../pdf/pdfSigner').PqSignatureData>();
+  for (const e of pqEntries) if (!pqByIndex.has(e.signerIndex)) pqByIndex.set(e.signerIndex, e.data);
+
+  // ── 4. Верификация на всеки подписващ поотделно ──────────────────────────
+  const signers: SignerResult[] = [];
+  for (const raw of rawSignatures) {
+    signers.push(await verifySingleSigner(pdfBytes, raw, pqByIndex.get(raw.index), rootCaCertDer));
   }
 
-  // ── 4. ML-DSA-65 stream (опционален) ─────────────────────────────────────
-  const pqData = extractPqStream(pdfBytes);
+  // ── 5. documentHash / byteRange на ниво резултат ─────────────────────────
+  // Взимаме ПОСЛЕДНИЯ /Sig с валиден ByteRange — той покрива целия файл,
+  // включително всички предходни подписи (най-представителен за "цялост").
+  const lastWithByteRange = [...rawSignatures].reverse().find(r => r.byteRange);
+  const byteRange = lastWithByteRange?.byteRange ?? null;
+  const documentHash = byteRange ? bytesToHexStr(computeSignedHash(pdfBytes, byteRange)) : null;
 
-  // ── 5. Compute document hash ──────────────────────────────────────────────
-  const computedHash = computeSignedHash(pdfBytes, byteRange);
-  const documentHash = bytesToHexStr(computedHash);
-
-  // ── 6. CMS parsing ────────────────────────────────────────────────────────
-  let parsed;
-  try {
-    parsed = parseCms(cmsDer);
-  } catch (e) {
-    return {
-      overall: 'error',
-      documentHash,
-      byteRange,
-      ecdsa: null,
-      mlDsa: null,
-      errorMessage: `Невалидна CMS структура: ${e instanceof Error ? e.message : 'неизвестна'}`,
-    };
-  }
-
-  const { leafCertDer, signedAttrsImplicit, messageDigest, ecdsaSigP1363 } = parsed;
-
-  // ── 7. Cert chain ─────────────────────────────────────────────────────────
-  const chainResult = await verifyCertChain(leafCertDer, rootCaCertDer);
-  const signedAt    = extractSigningDate(pdfBytes);
-
-  // ── 8. ECDSA верификация ──────────────────────────────────────────────────
-  const ecdsaResult = await verifyEcdsaSignature(
-    leafCertDer, signedAttrsImplicit, ecdsaSigP1363, messageDigest, computedHash,
-  );
-
-  const ecdsaVerify: EcdsaVerifyResult = {
-    status:    ecdsaResult.tampered ? 'invalid' : (ecdsaResult.valid ? 'valid' : 'invalid'),
-    algorithm: 'ecdsa-p256',
-    signerName: chainResult.signerName,
-    signedAt,
-    certStatus:  chainResult.status,
-    certExpiry:  chainResult.expiry,
-    certIssuer:  chainResult.issuerName,
-    certDer:     leafCertDer,
-    sigBytes:    ecdsaSigP1363,
-    errorMessage: ecdsaResult.errorMessage,
-  };
-
-  // ── 9. ML-DSA верификация ─────────────────────────────────────────────────
-  let mlDsaVerify: MlDsaVerifyResult;
-  if (!pqData) {
-    mlDsaVerify = { status: 'not_included', algorithm: 'ml-dsa-65' };
-  } else {
-    mlDsaVerify = verifyMlDsaSignature(pqData, computedHash);
-  }
-
-  // ── 10. Overall status ────────────────────────────────────────────────────
-  const overall = determineOverall(ecdsaResult.tampered, ecdsaVerify, mlDsaVerify);
+  // ── 6. Overall status ─────────────────────────────────────────────────────
+  const overall = determineOverall(signers);
+  const firstError = signers.find(s => s.ecdsa.errorMessage)?.ecdsa.errorMessage;
 
   return {
     overall,
     documentHash,
     byteRange,
-    ecdsa: ecdsaVerify,
-    mlDsa: mlDsaVerify,
+    signers,
+    totalSigners: signers.length,
+    errorMessage: overall === 'invalid' || overall === 'tampered' ? firstError : undefined,
   };
-}
-
-/**
- * Определя overall status от резултатите на отделните подписи.
- *
- * Логика:
- *   - tampered:        документът е модифициран → 'tampered' (приоритет)
- *   - ECDSA invalid:   невалиден подпис/chain → 'invalid'
- *   - ML-DSA invalid:  невалиден PQ подпис → 'invalid'
- *   - Всичко OK:       'authentic'
- *   - expired cert:    'authentic' (подписът е бил валиден; UI показва предупреждение)
- */
-function determineOverall(
-  tampered: boolean,
-  ecdsa: EcdsaVerifyResult,
-  mlDsa: MlDsaVerifyResult,
-): VerifyResult['overall'] {
-  if (tampered) return 'tampered';
-  if (ecdsa.status === 'invalid') return 'invalid';
-  // chain_invalid = сертификатът е от непозната CA → документът е invalid
-  if (ecdsa.certStatus === 'chain_invalid') return 'invalid';
-  if (mlDsa.status === 'invalid') return 'invalid';
-  return 'authentic';
 }
 
 // ─── Utils ────────────────────────────────────────────────────────────────────

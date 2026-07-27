@@ -2,18 +2,19 @@
  * TechnicalDetails.tsx
  * Layer 2 — collapsible технически детайли след Layer 1 hero статуса.
  *
- * Секции:
- *   1. Класически подпис (ECDSA P-256)
- *   2. Пост-квантов подпис (ML-DSA-65)
- *   3. Цялост на документа (hash)
- *   4. Byte range
+ * Ден 3 (Фаза 8): генерализирано за N подписа — по един collapsible за
+ * ВСЕКИ подписващ (ECDSA + ML-DSA + сертификат в самата секция), плюс две
+ * общи секции накрая:
+ *   Signer 1, Signer 2, … Signer N   (по един collapsible за подписващ)
+ *   Цялост на документа (общо)
+ *   Byte range (общо)
  */
 import { useState } from 'react';
 import {
   ChevronDown, ChevronRight,
   CheckCircle, XCircle, MinusCircle, Copy,
 } from 'lucide-react';
-import type { VerifyResult, SignatureStatus, CertChainStatus } from '../../lib/verify/types';
+import type { VerifyResult, SignatureStatus, CertChainStatus, SignerResult } from '../../lib/verify/types';
 import CertificateModal from './CertificateModal';
 
 interface Props {
@@ -37,6 +38,11 @@ function fmtDate(d: Date | null): string {
   }) + ' г.';
 }
 
+/** Роля по подразбиране за signerIndex — owner е първият подписал. */
+function roleLabel(signerIndex: number): string {
+  return signerIndex === 0 ? 'собственик' : `получател ${signerIndex}`;
+}
+
 /** Иконка според статуса на конкретния подпис (ECDSA или ML-DSA) — зелено/червено/сиво. */
 function StatusIcon({ status }: { status: SignatureStatus }) {
   if (status === 'valid')        return <CheckCircle size={14} className="text-green-600" />;
@@ -55,8 +61,8 @@ function CertStatusBadge({ status }: { status: CertChainStatus | null }) {
   return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cfg.cls}`}>{cfg.text}</span>;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function Section({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
   const contentId = `section-${title.replace(/\s+/g, '-').toLowerCase()}`;
   return (
     <div className="border-b border-neutral-200/70 last:border-0">
@@ -83,6 +89,55 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** Съдържанието на един signer collapsible: ECDSA + ML-DSA + сертификат. */
+function SignerDetails({ signer, onShowCert }: { signer: SignerResult; onShowCert: () => void }) {
+  const { ecdsa, mlDsa } = signer;
+  return (
+    <>
+      <Field label="Статус">
+        <StatusIcon status={ecdsa.status} />
+        {ecdsa.status === 'valid' ? 'Валиден' : 'Невалиден'}
+      </Field>
+      <Field label="Алгоритъм">ECDSA P-256 / SHA-256</Field>
+      <Field label="Роля">{roleLabel(signer.signerIndex)}</Field>
+      <Field label="Дата">{fmtDateTime(ecdsa.signedAt)}</Field>
+      <Field label="Издател">{ecdsa.certIssuer || '—'}</Field>
+      <Field label="Cert изтича">{fmtDate(ecdsa.certExpiry)}</Field>
+      <Field label="Верига">
+        <CertStatusBadge status={ecdsa.certStatus} />
+      </Field>
+      {ecdsa.certDer && (
+        <Field label="Сертификат">
+          <button onClick={onShowCert} className="text-indigo-600 underline hover:text-indigo-800">
+            Виж пълен сертификат
+          </button>
+        </Field>
+      )}
+      {ecdsa.errorMessage && (
+        <Field label="Грешка"><span className="text-red-600">{ecdsa.errorMessage}</span></Field>
+      )}
+
+      <div className="mt-3 border-t border-neutral-200/70 pt-2">
+        <Field label="ML-DSA-65">
+          {mlDsa === null ? (
+            <span className="text-neutral-400">Няма PQ слот за този подписващ</span>
+          ) : (
+            <>
+              <StatusIcon status={mlDsa.status} />
+              {mlDsa.status === 'valid'        ? 'Валиден'
+               : mlDsa.status === 'invalid'    ? 'Невалиден'
+               : 'Не е приложен'}
+            </>
+          )}
+        </Field>
+        {mlDsa?.errorMessage && mlDsa.status !== 'not_included' && (
+          <Field label="PQ грешка"><span className="text-red-600">{mlDsa.errorMessage}</span></Field>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 /**
@@ -91,9 +146,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  * не извиква verifyService — само чете вече изчисления `result`.
  */
 export default function TechnicalDetails({ result }: Props) {
-  const [certModalOpen, setCertModalOpen] = useState(false);
-
-  const { ecdsa, mlDsa, documentHash, byteRange } = result;
+  const [certModalIndex, setCertModalIndex] = useState<number | null>(null);
+  const { signers, documentHash, byteRange } = result;
+  const certSigner = certModalIndex !== null ? signers[certModalIndex] : undefined;
 
   return (
     <div className="glass-panel mt-4 overflow-hidden rounded-2xl">
@@ -101,68 +156,24 @@ export default function TechnicalDetails({ result }: Props) {
         Технически детайли
       </p>
 
-      {/* 1. ECDSA */}
-      <Section title="Класически подпис (ECDSA P-256)">
-        {ecdsa ? (
-          <>
-            <Field label="Статус">
-              <StatusIcon status={ecdsa.status} />
-              {ecdsa.status === 'valid' ? 'Валиден' : 'Невалиден'}
-            </Field>
-            <Field label="Алгоритъм">ECDSA P-256 / SHA-256</Field>
-            <Field label="Подписал">{ecdsa.signerName || '—'}</Field>
-            <Field label="Дата">{fmtDateTime(ecdsa.signedAt)}</Field>
-            <Field label="Издател">{ecdsa.certIssuer || '—'}</Field>
-            <Field label="Cert изтича">{fmtDate(ecdsa.certExpiry)}</Field>
-            <Field label="Верига">
-              <CertStatusBadge status={ecdsa.certStatus} />
-            </Field>
-            {ecdsa.certDer && (
-              <Field label="Сертификат">
-                <button
-                  onClick={() => setCertModalOpen(true)}
-                  className="text-indigo-600 underline hover:text-indigo-800"
-                >
-                  Виж пълен сертификат
-                </button>
-              </Field>
-            )}
-            {ecdsa.errorMessage && (
-              <Field label="Грешка"><span className="text-red-600">{ecdsa.errorMessage}</span></Field>
-            )}
-          </>
-        ) : (
-          <p className="text-neutral-400">Не е намерен ECDSA подпис.</p>
-        )}
-      </Section>
+      {/* Един collapsible за всеки подписващ */}
+      {signers.map((signer, i) => (
+        <Section
+          key={signer.signerIndex}
+          title={`Подписващ ${i + 1} (${roleLabel(signer.signerIndex)}): ${signer.signerName || '—'}`}
+          defaultOpen={signers.length === 1}
+        >
+          <SignerDetails signer={signer} onShowCert={() => setCertModalIndex(i)} />
+        </Section>
+      ))}
 
-      {/* 2. ML-DSA */}
-      <Section title="Пост-квантов подпис (ML-DSA-65)">
-        {mlDsa ? (
-          <>
-            <Field label="Статус">
-              <StatusIcon status={mlDsa.status} />
-              {mlDsa.status === 'valid'       ? 'Валиден'
-               : mlDsa.status === 'invalid'   ? 'Невалиден'
-               : 'Не е приложен'}
-            </Field>
-            <Field label="Алгоритъм">ML-DSA-65 (FIPS 204)</Field>
-            {mlDsa.status === 'not_included' && (
-              <p className="text-neutral-400 italic">
-                Документът е подписан без пост-квантова защита (стар формат).
-                Класическият подпис е напълно валиден.
-              </p>
-            )}
-            {mlDsa.errorMessage && mlDsa.status !== 'not_included' && (
-              <Field label="Грешка"><span className="text-red-600">{mlDsa.errorMessage}</span></Field>
-            )}
-          </>
-        ) : (
-          <p className="text-neutral-400">Не е намерен ML-DSA подпис.</p>
-        )}
-      </Section>
+      {signers.length === 0 && (
+        <Section title="Подпис">
+          <p className="text-neutral-400">Не е намерен цифров подпис.</p>
+        </Section>
+      )}
 
-      {/* 3. Цялост */}
+      {/* Цялост на документа (общо за всички подписи) */}
       <Section title="Цялост на документа">
         {documentHash ? (
           <>
@@ -183,7 +194,7 @@ export default function TechnicalDetails({ result }: Props) {
         )}
       </Section>
 
-      {/* 4. Byte range */}
+      {/* Byte range (общо, последния /Sig — покрива целия файл) */}
       <Section title="Покрити байтове (byte range)">
         {byteRange ? (
           <>
@@ -198,8 +209,8 @@ export default function TechnicalDetails({ result }: Props) {
         )}
       </Section>
 
-      {certModalOpen && ecdsa?.certDer && (
-        <CertificateModal certDer={ecdsa.certDer} onClose={() => setCertModalOpen(false)} />
+      {certSigner?.ecdsa.certDer && (
+        <CertificateModal certDer={certSigner.ecdsa.certDer} onClose={() => setCertModalIndex(null)} />
       )}
     </div>
   );

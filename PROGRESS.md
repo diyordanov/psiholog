@@ -8,7 +8,96 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ⏳ (код готов, чака live UI потвърждение)
+
+### Ден 3: Verify pipeline update за N подписа — КОД ЗАВЪРШЕН ✅ (2026-07-27), чака live проверка
+
+`pdfVerifier.ts`/`verifyService.ts` преди тази стъпка поддържаха само ПОСЛЕДНИЯ
+`/Sig` обект (single-signer). Генерализирано за N подписа, N-агностично.
+
+**`src/lib/pdf/pdfVerifier.ts` — нови функции (старите остават непроменени):**
+- `extractAllSignatures()` — намира ВСИЧКИ `/Type /Sig` обекта (файлов ред =
+  ред на подписване), за всеки локализира dict границите (backward до
+  най-близкото предхождащо `<<`, forward чрез `findDictEnd` — балансиран
+  `<< >>` scan, споделен с `pdfSigner.ts`) и extract-ва `/ByteRange`,
+  `/Contents`, `/M` bounded в рамките на своя dict. Никога не пропуска
+  намерен marker — при повреден dict връща запис с `null` полета, вместо
+  тихо да го изпусне.
+- `extractAllPqStreams()` — намира ВСИЧКИ `/PostQuantumSignature` streams,
+  асоциирани по `signerIndex` (explicit поле в JSON payload-а, или позиционен
+  fallback за текущия single-PQ случай).
+- `countSignatureMarkers()` — разграничава "наистина unsigned" (0 marker-а) от
+  "поврежден подпис" (marker намерен, но extraction неуспешна).
+- `findDictEnd()` в `pdfSigner.ts` — export-нат (беше private), споделен между
+  incremental signing и verify extraction.
+- `PqSignatureData.signerIndex?` — нов опционален field (forward-compat).
+
+**`src/lib/verify/types.ts` — нова схема (breaking change, съзнателно):**
+- `VerifyResult.ecdsa`/`.mlDsa` премахнати → заменени с `signers: SignerResult[]`
+  + `totalSigners`. `SignerResult` = `{ signerIndex, ecdsa, mlDsa, signerName, signedAt }`.
+  N=1 е частен случай: `signers.length === 1`.
+- Нов `OverallStatus`: `authentic_with_warnings` — изтекъл сертификат ИЛИ
+  "смесена" PQ защита (един signer има валиден ML-DSA, друг няма PQ слот).
+- `EcdsaVerifyResult.tampered?` — explicit флаг (hash mismatch), отделен от
+  `status:'invalid'` (sig/chain failure) — пази прецизното tampered/invalid
+  разграничение от single-signer версията.
+
+**`src/lib/verify/verifyService.ts` — orchestrator preписан:**
+- `verifySingleSigner()` — верифицира ЕДИН `/Sig` обект, НИКОГА не хвърля;
+  при повредена CMS структура връща `SignerResult` с `ecdsa.status='invalid'`
+  вместо да прекъсва целия flow — останалите N-1 подписа продължават да се
+  верифицират коректно (ключов инвариант: "corrupt one signature от N — само
+  тя се показва invalid").
+- `determineOverall()` приоритет: `tampered` (hash mismatch) > `invalid`
+  (sig/chain/ML-DSA fail) > `authentic_with_warnings` (expired cert ИЛИ
+  смесена PQ защита) > `authentic`. Съзнателно НЕ следва буквално "any ECDSA
+  invalid → tampered" от плана — пази старото по-прецизно tampered/invalid
+  разграничение (потвърдено от modified-body/modified-signature fixtures).
+- `documentHash`/`byteRange` на резултата = последния `/Sig` (покрива целия
+  файл, вкл. всички предходни подписи).
+
+**`src/lib/verify/reportGenerator.ts`:** секция за всеки signer (роля +
+ECDSA + ML-DSA + верижна визуализация) + автоматична пагинация (`Ctx` state
+машина, `ensureSpace()`/`newPage()`) вместо фиксиран 1-page layout. Footer на
+всяка страница.
+
+**`src/components/verify/TechnicalDetails.tsx`:** по един collapsible за
+всеки signer (роля + име в заглавието), плюс общи "Цялост на документа" и
+"Byte range" секции. Cert modal state вече индексиран по signer, не глобален.
+
+**`src/components/verify/VerifyResult.tsx`:** Layer 1 показва "Подписан от N
+лица" + списък signer redове (икона + име + роля + дата). `getKind`/`getHeading`
+опростени да четат `overall` директно (вкл. `authentic_with_warnings`),
+вместо да ровят в `ecdsa.certStatus`.
+
+**Тестове:**
+- `src/__tests__/verifyService.test.ts` — 10-те стари single-signer fixture
+  сценария преминаха на новата схема (`r.signers[0].ecdsa` вместо `r.ecdsa`);
+  expired-cert сега очаква `authentic_with_warnings` (не голо `authentic`).
+  Добавени: N=2 (owner + 1 recipient), N=3 (owner + 2 recipients),
+  corrupt-one-of-N (recipient ECDSA sig корумпиран КОНСТРУКЦИОННО — по модела
+  на `makeModifiedSignaturePdf`, не post-hoc byte flip във файла, защото
+  post-hoc flip в произволен CMS offset не гарантира детерминирано счупване).
+- `src/__tests__/reportGenerator.test.ts` — обновени fixtures към `signers[]`
+  схемата + нов N=3 smoke тест + `getPages()` добавен в pdf-lib мока
+  (нужен за per-page footer пагинацията).
+- `src/__tests__/edgeCases.test.ts` — 2 теста обновени: garbage-CMS фикстурата
+  сега коректно се категоризира като `invalid` (сигнатура е намерена, но
+  счупена) вместо generic `error`; unsigned тестът чете `signers`/`totalSigners`
+  вместо премахнатите `ecdsa`/`mlDsa` top-level полета.
+- **175/175 общо unit теста** (стабилно при 2 последователни пълни run-а),
+  `tsc --noEmit` чист.
+
+**Забележка за нестабилност при разработка:** един-единствен run показа
+флейки failure на expired-cert теста (несвързан с моя код — race при
+паралелно изпълнение на describe blocks в същия файл); не се възпроизведе
+при 2 последващи пълни run-а. Ако се появи отново — да се разследва
+`initTestKeys()` singleton кеша в `signingFixtures.ts` за race condition.
+
+**Чака:** ръчна проверка в `/verify` UI (dual-signed, triple-signed,
+single-signed backward compat, PDF report download) — локална проверка не е
+възможна за клиентката, затова push към `main` за Cloudflare Pages
+auto-deploy преди финално потвърждение.
 
 ### Ден 2 Стъпка 1: Incremental-update signing primitive (2 подписа) — ЗАВЪРШЕНА ✅ (2026-07-27)
 

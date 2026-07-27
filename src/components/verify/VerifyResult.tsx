@@ -1,17 +1,20 @@
 /**
  * VerifyResult.tsx
- * Layer 1: Hero статус (иконка + заглавие + ключови данни).
- * Layer 2: TechnicalDetails (collapsible секции).
+ * Layer 1: Hero статус (иконка + заглавие + списък подписващи).
+ * Layer 2: TechnicalDetails (collapsible секции, по един за всеки подписващ).
+ *
+ * Ден 3 (Фаза 8): генерализирано за N подписа — Layer 1 показва броя
+ * подписващи ("Подписан от 2 лица") + списък с име/дата/статус за всеки.
  *
  * Цветова схема:
- *   green  → authentic + cert ok
- *   yellow → authentic + cert expired
+ *   green  → authentic
+ *   yellow → authentic_with_warnings (изтекъл cert или "смесена" PQ защита)
  *   red    → tampered | invalid | error
  *   neutral→ unsigned
  */
 import { useState } from 'react';
 import { CheckCircle, AlertTriangle, XCircle, Info, RotateCcw, Download, Loader2 } from 'lucide-react';
-import type { VerifyResult as VResult } from '../../lib/verify/types';
+import type { VerifyResult as VResult, SignerResult } from '../../lib/verify/types';
 import TechnicalDetails from './TechnicalDetails';
 import { generateVerificationReport, reportFileName } from '../../lib/verify/reportGenerator';
 
@@ -25,16 +28,10 @@ interface Props {
 
 type DisplayKind = 'green' | 'yellow' | 'red' | 'neutral';
 
-/**
- * Извежда цвета на Layer 1 банера от overall резултата и статуса на сертификатната
- * верига. authentic + изтекъл сертификат е отделен случай (yellow) — подписът
- * все още е математически валиден, но доверието в сертификата е под въпрос.
- */
 function getKind(r: VResult): DisplayKind {
   if (r.overall === 'unsigned') return 'neutral';
   if (r.overall === 'error' || r.overall === 'tampered' || r.overall === 'invalid') return 'red';
-  // authentic
-  if (r.ecdsa?.certStatus === 'expired') return 'yellow';
+  if (r.overall === 'authentic_with_warnings') return 'yellow';
   return 'green';
 }
 
@@ -50,15 +47,13 @@ const KIND_CFG: Record<DisplayKind, {
 /** Заглавие на Layer 1 банера — текстовото обяснение, съответстващо на getKind. */
 function getHeading(r: VResult): string {
   switch (r.overall) {
-    case 'authentic':
-      return r.ecdsa?.certStatus === 'expired'
-        ? 'Документът е автентичен — сертификатът е изтекъл'
-        : 'Документът е автентичен и непроменен';
-    case 'tampered':  return 'Документът е модифициран след подписване';
-    case 'invalid':
-      return r.ecdsa?.certStatus === 'chain_invalid'
-        ? 'Подписът е от неизвестен издател'
-        : 'Подписът е невалиден';
+    case 'authentic':                return 'Документът е автентичен и непроменен';
+    case 'authentic_with_warnings':  return 'Документът е автентичен — с предупреждения';
+    case 'tampered':                 return 'Документът е модифициран след подписване';
+    case 'invalid': {
+      const anyChainInvalid = r.signers.some(s => s.ecdsa.certStatus === 'chain_invalid');
+      return anyChainInvalid ? 'Подписът е от неизвестен издател' : 'Подписът е невалиден';
+    }
     case 'unsigned':  return 'Документът не съдържа цифров подпис';
     case 'error':     return 'Грешка при верификация';
   }
@@ -70,6 +65,25 @@ function fmtDateTime(d: Date | null): string {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
   }) + ' UTC';
+}
+
+/** Роля по подразбиране за signerIndex — owner е първият подписал. */
+function roleLabel(signerIndex: number): string {
+  return signerIndex === 0 ? 'собственик' : `получател ${signerIndex}`;
+}
+
+/** Малка иконка + текст статус за един подписващ в списъка на Layer 1. */
+function SignerRow({ signer }: { signer: SignerResult }) {
+  const ok = signer.ecdsa.status === 'valid';
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      {ok ? <CheckCircle size={14} className="shrink-0 text-green-600" aria-hidden="true" />
+          : <XCircle size={14} className="shrink-0 text-red-600" aria-hidden="true" />}
+      <span className="font-medium text-neutral-800">{signer.signerName || '—'}</span>
+      <span className="text-neutral-400">({roleLabel(signer.signerIndex)})</span>
+      {signer.signedAt && <span className="text-neutral-500">— {fmtDateTime(signer.signedAt)}</span>}
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -116,7 +130,13 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
     }
   }
 
-  const showReport = result.overall === 'authentic' || result.overall === 'tampered' || result.overall === 'invalid';
+  const showReport = result.overall === 'authentic' || result.overall === 'authentic_with_warnings'
+    || result.overall === 'tampered' || result.overall === 'invalid';
+
+  // Информационен текст за липсващ PQ — само ако НИКОЙ подписващ няма ML-DSA
+  // (uniform отсъствие, не warning-worthy несъответствие между подписите).
+  const noSignerHasPq = result.signers.length > 0
+    && result.signers.every(s => s.mlDsa === null || s.mlDsa.status === 'not_included');
 
   return (
     <div className="animate-fadeInUp space-y-4">
@@ -129,31 +149,24 @@ export default function VerifyResult({ result, fileName, onReset }: Props) {
             <p className="text-sm text-neutral-500 truncate" title={fileName}>{fileName}</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-900">{heading}</h2>
 
-            {/* PQ не е приложен — само информация, не warning */}
-            {result.overall === 'authentic' && result.mlDsa?.status === 'not_included' && (
+            {result.totalSigners > 0 && (
+              <p className="mt-1 text-sm text-neutral-600">
+                {result.totalSigners === 1 ? 'Подписан от 1 лице' : `Подписан от ${result.totalSigners} лица`}
+              </p>
+            )}
+
+            {/* PQ не е приложен изобщо — само информация, не warning */}
+            {result.overall === 'authentic' && noSignerHasPq && (
               <p className="mt-1 text-sm text-neutral-600">
                 Пост-квантов подпис: не е приложен (стар документ)
               </p>
             )}
 
-            {/* Основни данни */}
-            {result.ecdsa && (
-              <dl className="mt-3 grid grid-cols-1 gap-1 sm:grid-cols-2 text-sm">
-                {result.ecdsa.signerName && (
-                  <div>
-                    <dt className="inline text-neutral-500">Подписал: </dt>
-                    <dd className="inline font-medium text-neutral-800">{result.ecdsa.signerName}</dd>
-                  </div>
-                )}
-                {result.ecdsa.signedAt && (
-                  <div>
-                    <dt className="inline text-neutral-500">Дата: </dt>
-                    <dd className="inline font-medium text-neutral-800">
-                      {fmtDateTime(result.ecdsa.signedAt)}
-                    </dd>
-                  </div>
-                )}
-              </dl>
+            {/* Списък подписващи */}
+            {result.signers.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {result.signers.map(s => <SignerRow key={s.signerIndex} signer={s} />)}
+              </div>
             )}
 
             {/* Съобщения при грешка/unsigned */}

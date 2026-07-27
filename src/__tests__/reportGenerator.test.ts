@@ -1,7 +1,7 @@
 /**
  * reportGenerator.test.ts
  * Smoke тестове — проверяваме, че generateVerificationReport() връща валиден PDF
- * за всеки от 4-те OverallStatus сценария.
+ * за всеки от 4-те OverallStatus сценария + N-signer (Ден 3) сценарий.
  *
  * Не тестваме pixel-perfect layout — само:
  *  • Функцията завършва без хвърляне на грешка.
@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateVerificationReport, reportFileName } from '../lib/verify/reportGenerator';
-import type { VerifyResult } from '../lib/verify/types';
+import type { VerifyResult, SignerResult, EcdsaVerifyResult } from '../lib/verify/types';
 
 // ─── NotoSans fetch mock ──────────────────────────────────────────────────────
 // Реален NotoSans е 500KB+ — за тестове mock-ваме с минимален TTF.
@@ -32,7 +32,8 @@ globalThis.fetch = vi.fn().mockResolvedValue({
   ok: true,
 });
 
-// Mock pdf-lib и fontkit на module ниво
+// Mock pdf-lib и fontkit на module ниво.
+// getPages() е нужен за footer-а на всяка страница (пагинация, Ден 3).
 vi.mock('pdf-lib', async () => {
   const actual = await vi.importActual<typeof import('pdf-lib')>('pdf-lib');
   return {
@@ -44,14 +45,21 @@ vi.mock('pdf-lib', async () => {
           widthOfTextAtSize: () => 50,
           encodeText: (t: string) => new TextEncoder().encode(t),
         };
-        return {
-          registerFontkit: vi.fn(),
-          embedFont: vi.fn().mockResolvedValue(fakeFont),
-          addPage: vi.fn().mockReturnValue({
+        const pages: unknown[] = [];
+        const makePage = () => {
+          const page = {
             drawText: vi.fn(),
             drawRectangle: vi.fn(),
             drawLine: vi.fn(),
-          }),
+          };
+          pages.push(page);
+          return page;
+        };
+        return {
+          registerFontkit: vi.fn(),
+          embedFont: vi.fn().mockResolvedValue(fakeFont),
+          addPage: vi.fn().mockImplementation(makePage),
+          getPages: vi.fn().mockImplementation(() => pages),
           save: vi.fn().mockResolvedValue(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2D])), // %PDF-
         };
       }),
@@ -61,7 +69,7 @@ vi.mock('pdf-lib', async () => {
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 
-function fakeEcdsa(overrides?: Partial<VerifyResult['ecdsa']>): VerifyResult['ecdsa'] {
+function fakeEcdsa(overrides?: Partial<EcdsaVerifyResult>): EcdsaVerifyResult {
   return {
     status: 'valid',
     algorithm: 'ecdsa-p256',
@@ -76,13 +84,26 @@ function fakeEcdsa(overrides?: Partial<VerifyResult['ecdsa']>): VerifyResult['ec
   };
 }
 
+function fakeSigner(index: number, overrides?: Partial<SignerResult>): SignerResult {
+  const ecdsa = fakeEcdsa(overrides?.ecdsa as Partial<EcdsaVerifyResult>);
+  return {
+    signerIndex: index,
+    ecdsa,
+    mlDsa: { status: 'valid', algorithm: 'ml-dsa-65', sigBytes: new Uint8Array([0x11, 0x22]) },
+    signerName: ecdsa.signerName,
+    signedAt: ecdsa.signedAt,
+    ...overrides,
+  };
+}
+
 function fakeResult(overrides?: Partial<VerifyResult>): VerifyResult {
+  const signers = overrides?.signers ?? [fakeSigner(0)];
   return {
     overall: 'authentic',
     documentHash: 'a'.repeat(64),
     byteRange: [0, 1000, 1200, 800],
-    ecdsa: fakeEcdsa(),
-    mlDsa: { status: 'valid', algorithm: 'ml-dsa-65', sigBytes: new Uint8Array([0x11, 0x22]) },
+    signers,
+    totalSigners: signers.length,
     ...overrides,
   };
 }
@@ -94,7 +115,7 @@ describe('generateVerificationReport', () => {
     vi.mocked(globalThis.fetch).mockClear();
   });
 
-  it('authentic — връща Uint8Array', async () => {
+  it('authentic (N=1) — връща Uint8Array', async () => {
     const result = fakeResult({ overall: 'authentic' });
     const bytes = await generateVerificationReport(result, 'договор-2026.pdf');
     expect(bytes).toBeInstanceOf(Uint8Array);
@@ -104,7 +125,7 @@ describe('generateVerificationReport', () => {
   it('tampered — завършва без грешка', async () => {
     const result = fakeResult({
       overall: 'tampered',
-      ecdsa: fakeEcdsa({ status: 'invalid', errorMessage: 'Документът е модифициран.' }),
+      signers: [fakeSigner(0, { ecdsa: fakeEcdsa({ status: 'invalid', errorMessage: 'Документът е модифициран.' }) })],
     });
     await expect(generateVerificationReport(result, 'договор.pdf')).resolves.toBeInstanceOf(Uint8Array);
   });
@@ -112,19 +133,47 @@ describe('generateVerificationReport', () => {
   it('invalid (chain_invalid) — завършва без грешка', async () => {
     const result = fakeResult({
       overall: 'invalid',
-      ecdsa: fakeEcdsa({ status: 'invalid', certStatus: 'chain_invalid', errorMessage: 'Непозната CA.' }),
-      mlDsa: { status: 'not_included', algorithm: 'ml-dsa-65' },
+      signers: [{
+        signerIndex: 0,
+        ecdsa: fakeEcdsa({ status: 'invalid', certStatus: 'chain_invalid', errorMessage: 'Непозната CA.' }),
+        mlDsa: { status: 'not_included', algorithm: 'ml-dsa-65' },
+        signerName: 'Иван Петров',
+        signedAt: new Date('2026-01-15T10:30:00Z'),
+      }],
     });
     await expect(generateVerificationReport(result, 'test.pdf')).resolves.toBeInstanceOf(Uint8Array);
   });
 
-  it('authentic + expired cert — жълт статус, без грешка', async () => {
+  it('authentic_with_warnings (изтекъл cert) — завършва без грешка', async () => {
+    const ecdsa = fakeEcdsa({ certStatus: 'expired', certExpiry: new Date('2024-01-01') });
     const result = fakeResult({
-      overall: 'authentic',
-      ecdsa: fakeEcdsa({ certStatus: 'expired', certExpiry: new Date('2024-01-01') }),
-      mlDsa: { status: 'not_included', algorithm: 'ml-dsa-65' },
+      overall: 'authentic_with_warnings',
+      signers: [{
+        signerIndex: 0, ecdsa,
+        mlDsa: { status: 'not_included', algorithm: 'ml-dsa-65' },
+        signerName: ecdsa.signerName, signedAt: ecdsa.signedAt,
+      }],
     });
     await expect(generateVerificationReport(result, 'стар-договор.pdf')).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('N=3 подписа (multi-signer) — секция за всеки, завършва без грешка', async () => {
+    const result = fakeResult({
+      overall: 'authentic_with_warnings',
+      signers: [
+        fakeSigner(0, { signerName: 'Собственик', ecdsa: fakeEcdsa({ signerName: 'Собственик' }) }),
+        { signerIndex: 1, ecdsa: fakeEcdsa({ signerName: 'Получател 1' }), mlDsa: null, signerName: 'Получател 1', signedAt: new Date('2026-01-16T09:00:00Z') },
+        { signerIndex: 2, ecdsa: fakeEcdsa({ signerName: 'Получател 2' }), mlDsa: null, signerName: 'Получател 2', signedAt: new Date('2026-01-17T09:00:00Z') },
+      ],
+    });
+    const bytes = await generateVerificationReport(result, 'multi-signed.pdf');
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('unsigned (signers празен) — завършва без грешка', async () => {
+    const result = fakeResult({ overall: 'unsigned', signers: [], totalSigners: 0, documentHash: null, byteRange: null });
+    await expect(generateVerificationReport(result, 'test.pdf')).resolves.toBeInstanceOf(Uint8Array);
   });
 });
 

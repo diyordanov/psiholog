@@ -117,10 +117,11 @@ describe('Edge cases — verifyDocument()', () => {
     expect(result.overall).toBe('unsigned');
   });
 
-  it('5. PDF с garbage /Contents (invalid CMS DER) → error с ясно съобщение', async () => {
+  it('5. PDF с garbage /Contents (invalid CMS DER) → invalid (Ден 3: показва се като счупен подпис, не се губи)', async () => {
     const result = await verifyDocument(pdfWithGarbageCms());
-    // Може да е 'error' (parseCms хвърля) или 'unsigned' (ако byte range e извън файла)
-    expect(['error', 'unsigned']).toContain(result.overall);
+    // Ден 3: /Type /Sig е намерен → signers[0] с ecdsa.status='invalid' вместо
+    // мълчаливо изпускане (старото поведение връщаше generic 'error').
+    expect(['error', 'invalid']).toContain(result.overall);
   });
 
   it('6. Много голям буфер (49 MB нули) → завършва под 3 секунди, unsigned', async () => {
@@ -146,11 +147,11 @@ describe('Edge cases — verifyDocument()', () => {
     expect(result.overall).toBe('unsigned');
   });
 
-  it('9. Нормален PDF без подпис → unsigned с null полета', async () => {
+  it('9. Нормален PDF без подпис → unsigned с празен signers масив', async () => {
     const result = await verifyDocument(minimalPdf());
     expect(result.overall).toBe('unsigned');
-    expect(result.ecdsa).toBeNull();
-    expect(result.mlDsa).toBeNull();
+    expect(result.signers).toEqual([]);
+    expect(result.totalSigners).toBe(0);
     expect(result.documentHash).toBeNull();
   });
 

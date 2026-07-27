@@ -1,13 +1,20 @@
 /**
  * verifyService.test.ts
- * Integration тестове за verifyDocument() с всички 10 fixture сценария.
+ * Integration тестове за verifyDocument() с всички 10 fixture сценария
+ * (single-signer, N=1) + Ден 3 (Фаза 8) N-signer тестове (N=2, N=3, corrupt-one).
  *
- * Fixture матрица:
+ * Схема на резултата (Ден 3): VerifyResult.signers[] — по един SignerResult
+ * за всеки /Sig обект, файлов ред (owner пръв). N=1 е частен случай:
+ * signers.length === 1, всички стари fixtures продължават да минават без
+ * промяна в signing логиката, само в assertion пътя (r.signers[0].ecdsa вместо
+ * старото r.ecdsa).
+ *
+ * Fixture матрица (single-signer, N=1):
  *   valid-hybrid       → authentic, ECDSA valid, ML-DSA valid
  *   valid-ecdsa-only   → authentic, ECDSA valid, ML-DSA not_included
  *   modified-body      → tampered,  ECDSA invalid (hash mismatch)
  *   modified-signature → invalid,   ECDSA invalid (sig verify fail, hash match)
- *   expired-cert       → authentic, ECDSA valid,  cert expired (warning)
+ *   expired-cert       → authentic_with_warnings, ECDSA valid, cert expired
  *   untrusted-ca       → invalid,   chain_invalid
  *   unsigned           → unsigned
  *   malicious          → error (sanitizer reject)
@@ -16,9 +23,17 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import * as x509 from '@peculiar/x509';
 import { verifyDocument } from '../lib/verify/verifyService';
 import {
-  initTestKeys, type TestKeys,
+  preparePdfForSigning, computeByteRanges, patchByteRangeInPlace, hashByteRanges,
+  injectSignatureAndPQ, prepareIncrementalSignature, injectIncrementalSignature,
+  encodeBase64url,
+} from '../lib/pdf/pdfSigner';
+import { buildSignedAttrs, buildCmsDetached } from '../lib/pdf/cmsBuilder';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
+import {
+  initTestKeys, type TestKeys, MINIMAL_PDF,
   makeValidHybridPdf, makeValidEcdsaOnlyPdf,
   makeModifiedBodyPdf, makeModifiedSignaturePdf,
   makeExpiredCertPdf, makeUntrustedCaPdf,
@@ -71,17 +86,22 @@ describe('valid-hybrid PDF (ECDSA + ML-DSA)', () => {
     const r = await verify(validHybrid);
     expect(r.overall).toBe('authentic');
   });
+  it('totalSigners е 1 (N=1 backward compat)', async () => {
+    const r = await verify(validHybrid);
+    expect(r.totalSigners).toBe(1);
+    expect(r.signers).toHaveLength(1);
+  });
   it('ECDSA е valid', async () => {
     const r = await verify(validHybrid);
-    expect(r.ecdsa?.status).toBe('valid');
+    expect(r.signers[0].ecdsa.status).toBe('valid');
   });
   it('ML-DSA е valid', async () => {
     const r = await verify(validHybrid);
-    expect(r.mlDsa?.status).toBe('valid');
+    expect(r.signers[0].mlDsa?.status).toBe('valid');
   });
   it('cert е ok (не expired, не chain_invalid)', async () => {
     const r = await verify(validHybrid);
-    expect(r.ecdsa?.certStatus).toBe('ok');
+    expect(r.signers[0].ecdsa.certStatus).toBe('ok');
   });
   it('documentHash е 64-символен hex string', async () => {
     const r = await verify(validHybrid);
@@ -89,7 +109,7 @@ describe('valid-hybrid PDF (ECDSA + ML-DSA)', () => {
   });
   it('signerName е "Test Signer" (от cert CN)', async () => {
     const r = await verify(validHybrid);
-    expect(r.ecdsa?.signerName).toBe('Test Signer');
+    expect(r.signers[0].signerName).toBe('Test Signer');
   });
 });
 
@@ -102,11 +122,11 @@ describe('valid ECDSA-only PDF (без ML-DSA stream)', () => {
   });
   it('ECDSA е valid', async () => {
     const r = await verify(validEcdsaOnly);
-    expect(r.ecdsa?.status).toBe('valid');
+    expect(r.signers[0].ecdsa.status).toBe('valid');
   });
-  it('ML-DSA е not_included', async () => {
+  it('ML-DSA е null (няма PQ слот изобщо)', async () => {
     const r = await verify(validEcdsaOnly);
-    expect(r.mlDsa?.status).toBe('not_included');
+    expect(r.signers[0].mlDsa).toBeNull();
   });
 });
 
@@ -119,11 +139,11 @@ describe('modified-body PDF (байт flip в документа)', () => {
   });
   it('ECDSA е invalid', async () => {
     const r = await verify(modifiedBody);
-    expect(r.ecdsa?.status).toBe('invalid');
+    expect(r.signers[0].ecdsa.status).toBe('invalid');
   });
   it('error message споменава модификация', async () => {
     const r = await verify(modifiedBody);
-    expect(r.ecdsa?.errorMessage).toMatch(/модифициран/i);
+    expect(r.signers[0].ecdsa.errorMessage).toMatch(/модифициран/i);
   });
 });
 
@@ -137,7 +157,7 @@ describe('modified-signature PDF (flip в /Contents)', () => {
   });
   it('ECDSA е invalid', async () => {
     const r = await verify(modifiedSig);
-    expect(r.ecdsa?.status).toBe('invalid');
+    expect(r.signers[0].ecdsa.status).toBe('invalid');
   });
   it('overall НЕ е tampered (данните са непроменени)', async () => {
     const r = await verify(modifiedSig);
@@ -148,18 +168,17 @@ describe('modified-signature PDF (flip в /Contents)', () => {
 // ─── 5. expired-cert ─────────────────────────────────────────────────────────
 
 describe('expired-cert PDF', () => {
-  it('overall е authentic (подписът е бил валиден)', async () => {
-    // За fake timers: виж коментара по-долу
+  it('overall е authentic_with_warnings (подписът е бил валиден, но cert-ът е изтекъл)', async () => {
     const r = await verify(expiredCert);
-    expect(r.overall).toBe('authentic');
+    expect(r.overall).toBe('authentic_with_warnings');
   });
   it('certStatus е expired', async () => {
     const r = await verify(expiredCert);
-    expect(r.ecdsa?.certStatus).toBe('expired');
+    expect(r.signers[0].ecdsa.certStatus).toBe('expired');
   });
   it('ECDSA status е valid (математически подписът е верен)', async () => {
     const r = await verify(expiredCert);
-    expect(r.ecdsa?.status).toBe('valid');
+    expect(r.signers[0].ecdsa.status).toBe('valid');
   });
 });
 
@@ -172,7 +191,7 @@ describe('untrusted-ca PDF (чужд Root CA)', () => {
   });
   it('certStatus е chain_invalid', async () => {
     const r = await verify(untrustedCa);
-    expect(r.ecdsa?.certStatus).toBe('chain_invalid');
+    expect(r.signers[0].ecdsa.certStatus).toBe('chain_invalid');
   });
 });
 
@@ -183,10 +202,10 @@ describe('unsigned PDF', () => {
     const r = await verify(unsignedPdf);
     expect(r.overall).toBe('unsigned');
   });
-  it('ecdsa и mlDsa са null', async () => {
+  it('signers е празен масив, totalSigners е 0', async () => {
     const r = await verify(unsignedPdf);
-    expect(r.ecdsa).toBeNull();
-    expect(r.mlDsa).toBeNull();
+    expect(r.signers).toEqual([]);
+    expect(r.totalSigners).toBe(0);
   });
   it('error message споменава "не съдържа"', async () => {
     const r = await verify(unsignedPdf);
@@ -216,7 +235,7 @@ describe('old-format PDF (ML-DSA без publicKeyB64url)', () => {
   });
   it('ML-DSA е not_included (empty public key)', async () => {
     const r = await verify(oldFormat);
-    expect(r.mlDsa?.status).toBe('not_included');
+    expect(r.signers[0].mlDsa?.status).toBe('not_included');
   });
 });
 
@@ -229,11 +248,11 @@ describe('ml-dsa-invalid PDF (corrupted PQ signature)', () => {
   });
   it('ECDSA е valid (само PQ е счупен)', async () => {
     const r = await verify(mlDsaInvalid);
-    expect(r.ecdsa?.status).toBe('valid');
+    expect(r.signers[0].ecdsa.status).toBe('valid');
   });
   it('ML-DSA е invalid', async () => {
     const r = await verify(mlDsaInvalid);
-    expect(r.mlDsa?.status).toBe('invalid');
+    expect(r.signers[0].mlDsa?.status).toBe('invalid');
   });
 });
 
@@ -261,5 +280,227 @@ describe('verifyDocument инварианти', () => {
     const garbage = new Uint8Array([0x00, 0x01, 0x02, 0x03]);
     await expect(verifyDocument(garbage, { rootCaCertDer: keys.rootCaCertDer }))
       .resolves.toMatchObject({ overall: expect.stringMatching(/unsigned|error/) });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ден 3 (Фаза 8): N-signer verify pipeline — N=2, N=3, corrupt-one-of-N
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SIGNING_DATE = new Date('2026-07-19T10:00:00Z');
+
+/** Owner: preparePdfForSigning + injectSignatureAndPQ (с опционален PQ подпис). */
+async function signAsOwner(withPq: boolean) {
+  const prepared = await preparePdfForSigning(
+    new Uint8Array(MINIMAL_PDF), 'Owner Test', SIGNING_DATE,
+    { markerX: 30, markerY: 30, pageIndex: 0 },
+  );
+  const byteRange = computeByteRanges(prepared);
+  patchByteRangeInPlace(prepared, byteRange);
+  const messageDigest = hashByteRanges(prepared.bytes, byteRange);
+  const signedAttrs = buildSignedAttrs(messageDigest);
+  const sigP1363 = new Uint8Array(
+    await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey,
+      signedAttrs as unknown as Uint8Array<ArrayBuffer>,
+    ),
+  );
+  const cmsDer = buildCmsDetached(messageDigest, sigP1363, keys.leafCertDer, keys.rootCaCertDer);
+
+  let pqData = null;
+  if (withPq) {
+    const mlSig = ml_dsa65.sign(messageDigest, keys.mlDsaSecretKey);
+    pqData = {
+      algorithm: 'ml-dsa-65',
+      signedHash: encodeBase64url(messageDigest),
+      signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
+      attestation: { hasCert: false },
+      byteRange: [...byteRange],
+    };
+  }
+  return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
+}
+
+/** Recipient: prepareIncrementalSignature + injectIncrementalSignature (без PQ — incremental flow не го поддържа). */
+async function signAsRecipient(
+  prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array, fieldName: string, markerX: number,
+) {
+  const prepared = await prepareIncrementalSignature(
+    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName },
+  );
+  const byteRange = computeByteRanges(prepared);
+  patchByteRangeInPlace(prepared, byteRange);
+  const messageDigest = hashByteRanges(prepared.bytes, byteRange);
+  const signedAttrs = buildSignedAttrs(messageDigest);
+  const sigP1363 = new Uint8Array(
+    await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' }, privateKey,
+      signedAttrs as unknown as Uint8Array<ArrayBuffer>,
+    ),
+  );
+  const cmsDer = buildCmsDetached(messageDigest, sigP1363, certDer, keys.rootCaCertDer);
+  return injectIncrementalSignature(prepared, cmsDer);
+}
+
+describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', () => {
+  let recipientKeys: CryptoKeyPair;
+  let recipientCertDer: Uint8Array;
+  let dualSigned: Uint8Array;
+
+  beforeAll(async () => {
+    recipientKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const cert = await x509.X509CertificateGenerator.create({
+      serialNumber: '30', subject: 'CN=Recipient N2', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipientKeys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    recipientCertDer = new Uint8Array(cert.rawData);
+
+    const ownerSigned = await signAsOwner(true); // owner ИМА PQ
+    dualSigned = await signAsRecipient(ownerSigned, 'Recipient N2', recipientKeys.privateKey, recipientCertDer, 'Signature2', 260);
+  }, 60_000);
+
+  it('totalSigners е 2', async () => {
+    const r = await verify(dualSigned);
+    expect(r.totalSigners).toBe(2);
+    expect(r.signers).toHaveLength(2);
+  });
+
+  it('и двата ECDSA подписа са valid', async () => {
+    const r = await verify(dualSigned);
+    expect(r.signers[0].ecdsa.status).toBe('valid');
+    expect(r.signers[1].ecdsa.status).toBe('valid');
+  });
+
+  it('signerName-ите идват от cert CN (не от /Name полето)', async () => {
+    const r = await verify(dualSigned);
+    // signerName = CN от X.509 сертификата — owner тук преизползва keys.leafCertDer
+    // (CN=Test Signer), /Name полето в PDF-а ("Owner Test") е отделен, чисто
+    // визуален маркер и не участва в signerName резолюцията.
+    expect(r.signers[0].signerName).toBe('Test Signer');
+    expect(r.signers[1].signerName).toBe('Recipient N2');
+  });
+
+  it('owner има валиден ML-DSA, recipient няма PQ слот (mlDsa === null)', async () => {
+    const r = await verify(dualSigned);
+    expect(r.signers[0].mlDsa?.status).toBe('valid');
+    expect(r.signers[1].mlDsa).toBeNull();
+  });
+
+  it('overall е authentic_with_warnings ("смесена" PQ защита — owner има, recipient няма)', async () => {
+    const r = await verify(dualSigned);
+    expect(r.overall).toBe('authentic_with_warnings');
+  });
+
+  it('signerIndex е 0 за owner, 1 за recipient (файлов ред)', async () => {
+    const r = await verify(dualSigned);
+    expect(r.signers[0].signerIndex).toBe(0);
+    expect(r.signers[1].signerIndex).toBe(1);
+  });
+});
+
+describe('N=3 подписа (owner + 2 recipients, от multi-sign-3 fixtures)', () => {
+  let recipient1Keys: CryptoKeyPair, recipient2Keys: CryptoKeyPair;
+  let recipient1CertDer: Uint8Array, recipient2CertDer: Uint8Array;
+  let tripleSigned: Uint8Array;
+
+  beforeAll(async () => {
+    recipient1Keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    recipient2Keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const cert1 = await x509.X509CertificateGenerator.create({
+      serialNumber: '31', subject: 'CN=Recipient N3 A', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipient1Keys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    const cert2 = await x509.X509CertificateGenerator.create({
+      serialNumber: '32', subject: 'CN=Recipient N3 B', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipient2Keys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    recipient1CertDer = new Uint8Array(cert1.rawData);
+    recipient2CertDer = new Uint8Array(cert2.rawData);
+
+    const ownerSigned = await signAsOwner(false); // без PQ — тества "всички без PQ" пътя (не warning)
+    const dual = await signAsRecipient(ownerSigned, 'Recipient N3 A', recipient1Keys.privateKey, recipient1CertDer, 'Signature2', 260);
+    tripleSigned = await signAsRecipient(dual, 'Recipient N3 B', recipient2Keys.privateKey, recipient2CertDer, 'Signature3', 30);
+  }, 60_000);
+
+  it('totalSigners е 3', async () => {
+    const r = await verify(tripleSigned);
+    expect(r.totalSigners).toBe(3);
+    expect(r.signers).toHaveLength(3);
+  });
+
+  it('и трите ECDSA подписа са valid', async () => {
+    const r = await verify(tripleSigned);
+    expect(r.signers.every(s => s.ecdsa.status === 'valid')).toBe(true);
+  });
+
+  it('signerIndex-ите са 0, 1, 2 (файлов ред)', async () => {
+    const r = await verify(tripleSigned);
+    expect(r.signers.map(s => s.signerIndex)).toEqual([0, 1, 2]);
+  });
+
+  it('overall е authentic (никой няма PQ — не е "смесена" защита)', async () => {
+    const r = await verify(tripleSigned);
+    expect(r.overall).toBe('authentic');
+  });
+
+  it('documentHash покрива целия файл (byteRange на последния подпис)', async () => {
+    const r = await verify(tripleSigned);
+    expect(r.documentHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.byteRange![1]).toBeGreaterThan(0);
+  });
+});
+
+describe('Corrupt one signature от N — само тя се показва invalid, останалите valid', () => {
+  it('корупция на recipient ECDSA sig bytes (signature 2 от 2) не засяга owner (signature 1)', async () => {
+    const recipientKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const cert = await x509.X509CertificateGenerator.create({
+      serialNumber: '33', subject: 'CN=Recipient Corrupt', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipientKeys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    const recipientCertDer = new Uint8Array(cert.rawData);
+
+    const ownerSigned = await signAsOwner(false);
+
+    // Подписваме recipient-а РЪЧНО (не чрез signAsRecipient helper-а), за да
+    // флипнем P1363 sig байтовете ПРЕДИ да ги вградим в CMS — гарантирано
+    // невалиден ECDSA подпис, детерминирано (по модела на
+    // makeModifiedSignaturePdf в signingFixtures.ts), вместо крехко post-hoc
+    // флипване на произволни hex символи във финалния файл (може да уцели
+    // байт, който не участва в криптографската проверка).
+    const prepared = await prepareIncrementalSignature(
+      ownerSigned, 'Recipient Corrupt', SIGNING_DATE,
+      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2' },
+    );
+    const byteRange = computeByteRanges(prepared);
+    patchByteRangeInPlace(prepared, byteRange);
+    const messageDigest = hashByteRanges(prepared.bytes, byteRange);
+    const signedAttrs = buildSignedAttrs(messageDigest);
+    const realSig = new Uint8Array(
+      await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' }, recipientKeys.privateKey,
+        signedAttrs as unknown as Uint8Array<ArrayBuffer>,
+      ),
+    );
+    const corruptedSig = new Uint8Array(realSig);
+    corruptedSig[12] ^= 0xFF;
+    corruptedSig[13] ^= 0xFF;
+    const cmsDer = buildCmsDetached(messageDigest, corruptedSig, recipientCertDer, keys.rootCaCertDer);
+    const dualSigned = injectIncrementalSignature(prepared, cmsDer);
+
+    const r = await verify(dualSigned);
+
+    expect(r.totalSigners).toBe(2);
+    expect(r.signers[0].ecdsa.status).toBe('valid');   // owner непроменен
+    expect(r.signers[1].ecdsa.status).toBe('invalid'); // recipient корумпиран
+    expect(r.overall).toBe('invalid');
   });
 });

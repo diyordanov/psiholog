@@ -56,6 +56,12 @@ export interface PqSignatureData {
   publicKeyB64url: string;        // base64url на ML-DSA-65 публичен ключ
   attestation:     unknown;       // JSON attestation от DB (parse-нат обект)
   byteRange:       number[];      // [0, A, B, C]
+  /**
+   * 0-based индекс на подписващия (file order), за N-signer PQ асоцииране
+   * (Ден 3 verify pipeline). Опционален — липсва при единичен ECDSA+PQ подпис
+   * (single-signer flow), verifyService асоциира позиционно (index 0) в този случай.
+   */
+  signerIndex?:    number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -482,7 +488,7 @@ export interface PreparedIncrementalSignature {
  * Не handle-ва << / >> вътре в string/hex литерали — приемливо за AcroForm/
  * Page dict-ове от pdf-lib, които нямат такива edge cases в тестовите PDF-и.
  */
-function findDictEnd(bytes: Uint8Array, dictStart: number): number {
+export function findDictEnd(bytes: Uint8Array, dictStart: number): number {
   let depth = 0;
   let i = dictStart;
   while (i < bytes.length - 1) {
