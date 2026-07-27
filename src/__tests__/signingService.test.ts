@@ -150,13 +150,15 @@ function setupDocumentAndSignatureMocks({
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                storage_path:      `${USER_ID}/test.pdf`,
-                original_filename: 'test.pdf',
-                status:            docStatus,
-              },
-              error: null,
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  storage_path:      `${USER_ID}/test.pdf`,
+                  original_filename: 'test.pdf',
+                  status:            docStatus,
+                },
+                error: null,
+              }),
             }),
           }),
         }),
@@ -164,6 +166,20 @@ function setupDocumentAndSignatureMocks({
           eq: vi.fn().mockResolvedValue({ error: null }),
         }),
       };
+    }
+    if (table === 'signing_requests') {
+      const chain: Record<string, unknown> = {};
+      ['select', 'eq', 'is', 'in', 'order', 'limit'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+      chain['maybeSingle'] = vi.fn().mockResolvedValue({ data: null, error: null }); // няма активна заявка
+      chain['insert'] = vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: 'sr-id' }, error: null }),
+      });
+      chain['update'] = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+      return chain;
+    }
+    if (table === 'signing_request_recipients') {
+      return { insert: vi.fn().mockResolvedValue({ error: null }) };
     }
     return mockChain({ data: null, error: null });
   });
@@ -366,7 +382,9 @@ describe('signDocument', () => {
 
     expect(result.pqSkipped).toBe(false);
     expect(result.signatureId).toBe('new-sig-id');
-    expect(result.signedStoragePath).toBe(`${USER_ID}/${DOC_ID}_signed.pdf`);
+    // Ден 4: storage path конвенцията е '<signing_request_id>/v<version>.pdf'
+    // (не вече '<userId>/<documentId>_signed.pdf') — 'sr-id' идва от мока по-горе.
+    expect(result.signedStoragePath).toBe('sr-id/v1.pdf');
   });
 
   it('успешно подписване — pqSkipped=true (само ECDSA, няма ML-DSA-65 ключ)', async () => {

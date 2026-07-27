@@ -75,9 +75,11 @@ function setupMocks() {
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: { storage_path: 'u/test.pdf', original_filename: 'test.pdf', status: 'uploaded' },
-              error: null,
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: { storage_path: 'u/test.pdf', original_filename: 'test.pdf', status: 'uploaded' },
+                error: null,
+              }),
             }),
           }),
         }),
@@ -92,6 +94,17 @@ function setupMocks() {
         select: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({ data: { id: 'sig-id' }, error: null }),
       });
+      return chain;
+    }
+    if (table === 'signing_requests') {
+      const chain: Record<string, unknown> = {};
+      ['select', 'eq', 'is', 'in', 'order', 'limit'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+      chain['maybeSingle'] = vi.fn().mockResolvedValue({ data: null, error: null }); // няма активна заявка
+      chain['insert'] = vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: 'sr-id' }, error: null }),
+      });
+      chain['update'] = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
       return chain;
     }
     return { select: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: null }) };

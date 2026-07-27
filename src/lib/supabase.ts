@@ -7,8 +7,11 @@
  */
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// import.meta.env е Vite-специфично — недостъпно при `tsx` Node скриптове
+// (виж scripts/test-multi-signer-e2e.ts). process.env fallback е само за
+// тази ситуация; в браузъра import.meta.env винаги е налично и има приоритет.
+const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(

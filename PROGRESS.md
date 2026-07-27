@@ -8,7 +8,135 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅ COMPLETE
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅ COMPLETE
+
+### Ден 4: signingService.ts refactor — signAsOwner() / signAsRecipient() — ЗАВЪРШЕНА ✅ (2026-07-27)
+
+Backend logic за multi-signer signing flow, преди UI (Ден 5-6) и email (Ден 7).
+
+**`src/lib/signingService.ts` — нови функции:**
+- `signAsOwner(documentId, userId, signerName, position, recipients, rpId, ...)` —
+  създава `signing_requests` (status='draft'), insert-ва `signing_request_recipients`
+  редове (ако има поканени), подписва PDF стандартно (`preparePdfForSigning` —
+  owner е ВИНАГИ signer #1 във файла), качва `v1.pdf`, финален статус:
+  `recipients.length === 0` → `completed` + `documents.status='signed'`
+  (backward-compat single-signer случай); иначе → `awaiting_recipients`.
+- `signAsRecipient(recipientId, userId, signerName, rpId, ...)` — валидира
+  security (`recipient.user_id === userId`) и статус (`!== 'signed'`), сваля
+  последната версия, подписва INCREMENTALLY (`prepareIncrementalSignature` от
+  Ден 2), качва нова версия, optimistic-concurrency UPDATE на `version`, при
+  последен recipient → `signing_requests.status='completed'` +
+  `documents.status='signed'`.
+- `signDocument()` (backward compat) — тънък wrapper: `signAsOwner(...,
+  recipients: [], ...)`, връща същия `SignDocumentResult` shape. UI
+  (`SignDocumentModal.tsx`) работи БЕЗ промяна.
+- Storage path конвенция сменена от `<userId>/<documentId>_signed.pdf` на
+  `<signing_request_id>/v<version>.pdf` — важи за ВСИЧКИ подписвания вече
+  (вкл. backward-compat single-signer), не само multi-signer. Изисква нов
+  RLS модел (виж migrations 0012-0014 по-долу).
+
+**Retry logic — optimistic concurrency (задължително обяснение преди commit):**
+
+Проблем: двама recipients могат да подпишат "едновременно" (overlapping
+requests). И двамата четат `signing_requests.version = N`, сваля същия PDF,
+подписват го incrementally, но само ЕДИН може да "спечели" — вторият трябва
+да разбере, че версията вече е сменена, да свали НАЙ-НОВАТА версия, и да
+подпише НАНОВО (различен message digest → старият му подпис вече е невалиден
+за новия byte range).
+
+Detection — две независими "сигнатури" за race, и двете хвърлят вътрешен
+`ConcurrentSignError` (никога не излиза извън `signAsRecipient()`):
+  1. **Storage upload conflict** — качването на `v{N+1}.pdf` е с `upsert:
+     false`; ако друг recipient вече е качил същия version номер, upload-ът
+     се проваля с "resource already exists".
+  2. **DB version mismatch** — `UPDATE signing_requests SET version=N+1, ...
+     WHERE id=X AND version=N` — ако version вече не е N (друг спечели
+     междувременно), `UPDATE` засяга 0 реда.
+
+И двата случая се хващат в `attemptRecipientSign()` (ЕДИН опит) и мятат
+`ConcurrentSignError`. `signAsRecipient()` обвива това в retry loop (max 3
+опита, `MAX_RECIPIENT_SIGN_RETRIES`): при `ConcurrentSignError` — целият
+`attemptRecipientSign()` се извиква НАНОВО от нулата (re-fetch на
+`signing_request` + `recipient` ред, re-download на най-новата версия, НОВ
+PRF ceremony — биометричен tap се повтаря, защото message digest-ът се е
+сменил и старият подпис е невалиден). Всяка друга грешка (validation, PRF
+cancel, липсващи ключове) излиза ВЕДНАГА, без retry — retry-ва се само
+конкретно "race с друг подписващ". След 3 неуспешни опита — ясно съобщение
+с инструкция да презаредят страницата (акцептирано ниво за MVP; при истински
+edge case с 3+ едновременни recipients в рамките на секунди, ръчен retry от
+потребителя решава проблема).
+
+**Открити и поправени RLS gaps по време на реалния E2E тест (важно):**
+Планът предполагаше, че само `optimistic concurrency` ще проявява "race"
+поведение, но реалният тест показа, че `signAsRecipient()` винаги хвърляше
+"друг участник подписа" ДОРИ БЕЗ никаква конкуренция — истинската причина
+беше липсваща RLS, не race:
+- `signing_requests` имаше UPDATE policy само за owner-а (migration 0010) —
+  recipient-ският optimistic-concurrency UPDATE винаги засягаше 0 реда (RLS
+  филтрира тихо, без грешка) → погрешно тълкувано като version mismatch.
+  **Fix:** `migration 0013` — нов `signing_requests_update_recipient` policy.
+- `documents` имаше UPDATE policy само за owner-а (migration 0001) —
+  recipient (последен подписващ) не можеше да сложи `status='signed'`.
+  **По-опасно от горното:** RLS-блокирано UPDATE НЕ хвърля грешка от
+  PostgREST — просто засяга 0 реда тихо; кодът първоначално не проверяваше
+  rows-affected на тази UPDATE и би "успял" мълчаливо БЕЗ документът
+  действително да мине в `signed`. **Fix:** `migration 0013` — нов
+  `documents_update_signing_recipient` policy (+ `is_document_signing_recipient()`
+  SECURITY DEFINER helper) + код промяна: и двете completion UPDATE-и вече
+  ползват `.select('id')` и explicit проверка на `rows.length === 0` (fail
+  loud вместо silent no-op).
+- След `migration 0013`, "complete document" UPDATE-ът ВСЕ ОЩЕ връщаше 0 реда
+  — причината: PostgREST `RETURNING` (от `.select()` след `.update()`) минава
+  през SELECT RLS, не само UPDATE RLS; `documents_select_own` позволява
+  SELECT само на owner-а. **Fix:** `migration 0014` — нов
+  `documents_select_signing_recipient` policy (огледален на 0013, ползва
+  същия helper). `signing_requests` нямаше този проблем — вече си имаше
+  `signing_requests_select_recipient` от migration 0010/0011.
+
+**Storage RLS (multi-signer path):** `migration 0012` — recipient не може да
+чете/пише в `signed-documents` bucket под owner-ската `<userId>/` папка
+(folder-prefix-per-uploader RLS от migration 0001). Нова конвенция
+`<signing_request_id>/v<version>.pdf` + нови storage policies през
+`is_signing_request_owner()`/`is_signing_request_recipient()` (вече
+съществуващи helper функции от migration 0011). Старите `*_own` policies
+остават непроменени (permissive OR) — legacy single-signer файлове
+продължават да работят.
+
+**`src/lib/supabase.ts` — малка добавка:** `import.meta.env` е Vite-специфично
+и е `undefined` под plain `tsx` Node изпълнение (нужно за integration test
+скрипта) — добавен `process.env` fallback (`?? process.env.VITE_SUPABASE_URL`),
+не променя браузърното поведение (import.meta.env винаги е приоритет там).
+
+**Тестове:**
+- `src/__tests__/signingService.test.ts` + `src/__tests__/signing.test.ts` —
+  обновени mock-ове за новия `signing_requests` DB път (documents SELECT вече
+  има `.eq('user_id')`, storage path форматът се смени) — всички стари тестове
+  минават непроменени в логиката си.
+- `src/__tests__/signAsOwnerRecipient.test.ts` (нов) — 10 теста: signAsOwner
+  с 0/1/2 recipients, active-request guard; signAsRecipient success path,
+  last-recipient completion, invalid recipient (security), already-signed
+  guard, concurrent race → retry success, изчерпани retries → ясна грешка.
+- **185/185 общо unit теста**, `tsc --noEmit` чист.
+
+**Integration test (реален Supabase, 2026-07-27) — ✅ УСПЕШЕН:**
+`scripts/test-multi-signer-e2e.ts` — изисква `SUPABASE_SERVICE_ROLE_KEY` (admin
+API за temp test акаунти) + `ROOT_CA_PRIVATE_KEY_B64`. Създава 2 temp Supabase
+Auth акаунта (owner + recipient), реален ECDSA keypair + leaf cert (подписан
+от реалния Root CA) за всеки, mock PRF ceremony (WebAuthn не се automate-ва),
+реален `documents`/`storage` upload, пълен `signAsOwner()` → `claim_recipient_
+invitation` RPC → `signAsRecipient()` flow. Резултат:
+```
+signing_requests.status = completed ✅
+documents.status = signed ✅
+```
+Финален PDF свален локално (`scripts/output/multi-signer-e2e-*.pdf`) — ръчна
+проверка в Adobe Reader (2 signature entries, valid) остава на потребителя,
+без screenshot gate тук (по план). Cleanup: temp акаунтите се изтриват в
+`finally` блок (cascade delete чисти всички свързани редове).
+
+**Следваща стъпка (Ден 5-6):** UI wiring — Owner flow (InviteRecipientsModal,
+покана на до 2 recipients за MVP), Recipient flow (InvitationLandingPage,
+SigningRequestStatus), `<CancelSigningRequestButton>`.
 
 ### Ден 3: Verify pipeline update за N подписа — ЗАВЪРШЕНА ✅ (2026-07-27)
 
