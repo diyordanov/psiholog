@@ -91,3 +91,100 @@ export async function cancelSigningRequest(requestId: string, userId: string): P
 
   await logAuditEvent(userId, 'signing_request_cancelled', requestId);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ден 6: Recipient страна — invitation claim + детайли
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Token-scoped claim на покана — линква auth.uid() към recipient реда.
+ * SECURITY DEFINER RPC (migration 0010), идемпотентна — безопасно за
+ * повторно извикване (напр. при всяко зареждане на PendingInvitationsPage).
+ *
+ * Хвърля с ясно съобщение (директно от Postgres RAISE EXCEPTION) при:
+ *   - невалиден recipientId ("Поканата не е намерена.")
+ *   - email mismatch ("Тази покана е изпратена до друг email адрес.")
+ *   - вече claim-ната от друг акаунт ("Поканата вече е приета от друг акаунт.")
+ */
+export async function claimInvitation(recipientId: string): Promise<SigningRequestRecipientRow> {
+  const { data, error } = await supabase.rpc('claim_recipient_invitation', { p_recipient_id: recipientId });
+  if (error || !data) {
+    throw new Error(error?.message ?? 'Поканата не е намерена.');
+  }
+  return data as SigningRequestRecipientRow;
+}
+
+export interface InvitationDetails {
+  recipient: SigningRequestRecipientRow;
+  request: SigningRequestRow;
+  documentFilename: string;
+  ownerName: string;
+}
+
+/**
+ * Зарежда пълните детайли за ЕДНА покана — ИЗИСКВА recipient вече да е
+ * claim-нат (user_id линкнат). Преди claim, RLS на `signing_requests`/
+ * `documents`/`profiles` (migrations 0011/0014/0015) блокира тези четения —
+ * затова InvitationLandingPage/listMyInvitations() винаги викат
+ * claimInvitation() ПРЕДИ тази функция.
+ */
+export async function getInvitationDetails(recipientId: string): Promise<InvitationDetails> {
+  const { data: recipient, error: recErr } = await supabase
+    .from('signing_request_recipients')
+    .select(RECIPIENT_COLUMNS)
+    .eq('id', recipientId)
+    .single();
+  if (recErr || !recipient) throw new Error(recErr?.message ?? 'Поканата не е намерена.');
+  const recipientRow = recipient as SigningRequestRecipientRow;
+
+  const { data: request, error: reqErr } = await supabase
+    .from('signing_requests')
+    .select(SIGNING_REQUEST_COLUMNS)
+    .eq('id', recipientRow.signing_request_id)
+    .single();
+  if (reqErr || !request) throw new Error(reqErr?.message ?? 'Заявката не е намерена.');
+  const requestRow = request as SigningRequestRow;
+
+  const [{ data: doc, error: docErr }, { data: profile }] = await Promise.all([
+    supabase.from('documents').select('original_filename').eq('id', requestRow.document_id).single(),
+    supabase.from('profiles').select('display_name').eq('id', requestRow.owner_user_id).maybeSingle(),
+  ]);
+  if (docErr || !doc) throw new Error(docErr?.message ?? 'Документът не е намерен.');
+
+  return {
+    recipient: recipientRow,
+    request: requestRow,
+    documentFilename: doc.original_filename as string,
+    ownerName: (profile?.display_name as string | undefined) ?? 'Собственик',
+  };
+}
+
+/**
+ * Зарежда ВСИЧКИ покани на текущия потребител по email — покрива едновременно
+ * pre-claim редове (чрез "recipients_select_by_own_email" fallback policy) и
+ * вече claim-нати (чрез "recipients_select_own"). Auto-claim-ва всеки все още
+ * unclaimed ред, преди да зареди пълните детайли — "unclaimed" остава
+ * невидим implementation detail за PendingInvitationsPage.
+ */
+export async function listMyInvitations(email: string): Promise<InvitationDetails[]> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const { data: rows, error } = await supabase
+    .from('signing_request_recipients')
+    .select(RECIPIENT_COLUMNS)
+    .eq('invited_email', normalizedEmail)
+    .order('invited_at', { ascending: false });
+  if (error) throw new Error(error.message);
+
+  const recipientRows = (rows ?? []) as SigningRequestRecipientRow[];
+
+  await Promise.all(
+    recipientRows.filter(r => r.user_id === null).map(r => claimInvitation(r.id)),
+  );
+
+  return Promise.all(recipientRows.map(r => getInvitationDetails(r.id)));
+}
+
+/** Покана е "чакаща" ако recipient-ът все още не е подписал И заявката не е приключила/отменена. */
+export function isInvitationPending(details: InvitationDetails): boolean {
+  return details.recipient.status !== 'signed' && details.request.status === 'awaiting_recipients';
+}

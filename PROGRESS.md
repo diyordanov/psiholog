@@ -8,7 +8,114 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ⏳ (код готов, чака live UI потвърждение)
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ✅, Ден 6 ⏳ (код готов, чака live UI потвърждение + screenshots)
+
+### Ден 6: Recipient UI — InvitationLandingPage + PendingInvitationsPage + RecipientSigningModal — код готов (2026-07-28)
+
+Recipient-ската страна на multi-signer flow-а — огледален на Ден 5 (owner UI), но
+без избор на позиция (фиксирана от owner-а при поканата) и с public route за
+непознати посетители. Реални email-и (Ден 7) остават извън scope тук.
+
+**Ред на работа (по изрична инструкция):** първо `usePrfCeremony` extraction
+(deduplication на PRF ceremony логиката между `SignDocumentModal` и
+`InviteRecipientsModal`, извикана от двата преди новия recipient код), после
+трите нови компонента.
+
+**`src/hooks/usePrfCeremony.ts` (нов)** — споделен hook за single-vs-dual PRF
+ceremony + iOS-safe ordering (captured веднъж — extractors се "запомнят" при
+първо извикване). Извлечен от идентичния inline код в `SignDocumentModal.tsx`
+и `InviteRecipientsModal.tsx` (вкл. локалния `saltsEqual` helper); и двата
+рефакторирани да ползват `performCeremony()` вместо дублирана логика.
+**Забележка:** `RecipientSigningModal` НЕ ползва този hook — виж по-долу.
+
+**Нови файлове:**
+- `src/components/invitations/InvitationLandingPage.tsx` — публичен route
+  `/invite/:recipientId` (регистриран в `App.tsx` ПРЕДИ auth-gate-а, по същия
+  модел като `/verify`). State machine:
+  - `not_logged_in` — генерично съобщение + вграден `<AuthScreen/>` НА СЪЩАТА
+    страница (без redirect round-trip) — след успешен login/signup
+    компонентът реактивно преминава в следващото състояние (auth state се
+    следи през `useAuth()`).
+  - `checking` → `claimInvitation(recipientId)` (SECURITY DEFINER RPC,
+    migration 0010) → `getInvitationDetails(recipientId)`.
+  - `wrong_email` — RPC грешката съдържа "друг email" → специфичен UI с
+    „Излез и влез с правилен акаунт" (`supabase.auth.signOut()`).
+  - `error` — catch-all за всичко друго (невалиден token, вече claim-нат от
+    друг акаунт) — показва директно RPC съобщението (вече е ясно на
+    български, не се remap-ва в отделни enum стойности).
+  - `cancelled` — `request.status === 'cancelled'`.
+  - `details` — успешен claim → owner, документ, позиция + бутон „Подпиши"
+    → отваря `RecipientSigningModal`.
+- `src/components/invitations/PendingInvitationsPage.tsx` — recipient
+  dashboard (5-ти таб). `listMyInvitations(email)` (auto-claim на всички
+  все още unclaimed покани при зареждане + пълни детайли за всички),
+  филтрирани през `isInvitationPending()` за списъка. Empty state „Нямате
+  чакащи покани". Всеки ред → „Подпиши" отваря `RecipientSigningModal`.
+- `src/components/documents/RecipientSigningModal.tsx` — 2-стъпков модал
+  (не 3, за разлика от `SignDocumentModal`/`InviteRecipientsModal`):
+  Стъпка 1 „Потвърждение" (read-only preview с маркер на ФИКСИРАНАТА от
+  owner-а позиция — без клик-за-позициониране), Стъпка 2 „Подписване"
+  (progress checkpoints 5/15/35/55/75/100, по-малко от owner-ските
+  5/15/35/55/70/85/100 — incremental flow няма ML-DSA-65 стъпка). Reuse на
+  `ModalHeader`/`ModalFooter`/`InfoRow`/`usePdfThumbnail` от
+  `SignDocumentModal.tsx` (вече `export`-нати от Ден 5). `ModalHeader`
+  разширен с опционален `totalSteps` проп (default 3) — recipient модалът
+  подава `totalSteps={2}`.
+  **Ключова разлика от `usePrfCeremony`:** НЕ capture-ва PRF резултата
+  предварително — `signAsRecipient()` подава `undefined` за
+  `extractPrf`/`extractDualPrf`, което кара `signingService.ts` да ползва
+  default-ите си (`browserPrfExtractor`/`browserDualPrfExtractor` директно) —
+  тези правят НОВ WebAuthn prompt при всяко извикване, нужно защото
+  `signAsRecipient()` retry-ва до 3 пъти при race с друг recipient
+  (`ConcurrentSignError`, виж Ден 4) и всеки retry сменя message digest-а
+  (старият PRF резултат вече не е валиден). UI-я показва каквото label подаде
+  retry loop-ът вътрешно (напр. „Друг участник подписа междувременно —
+  повторен опит (2/3)...") — не е нужна отделна retry логика в компонента.
+
+**Обновени файлове:**
+- `src/lib/signingRequestService.ts` — нови функции за recipient страната:
+  `claimInvitation()`, `getInvitationDetails()` (ИЗИСКВА recipient вече
+  claim-нат — RLS на `signing_requests`/`documents`/`profiles` блокира
+  четенето преди това), `listMyInvitations()` (auto-claim + bulk детайли по
+  email), `isInvitationPending()`.
+- `src/hooks/usePendingInvitationsCount.ts` (нов) — брой pending покани за
+  badge-а в главната навигация. Explicit `refresh()` (не Supabase Realtime —
+  няма realtime инфраструктура другаде в проекта) — вика се след claim/sign
+  действия, за да обнови badge-а веднага.
+- `src/App.tsx` — route `/invite/:recipientId` (regex match върху
+  `pathname`, ПРЕДИ auth-gate-а, като `/verify`); 5-ти таб „Покани" в
+  `MainApp` навигацията (badge с брой pending, скрит при 0); нов
+  `PendingInvitationsPage` таб.
+- `supabase/migrations/0015_recipient_select_owner_profile.sql` (нов) —
+  RLS: recipient (claim-нат) може да чете `profiles.display_name` на
+  owner-а на своята заявка (SECURITY DEFINER helper
+  `is_signing_owner_of_recipient()`, същия pattern като migrations
+  0011/0013/0014). За разлика от 0012-0014 (открити reactively при E2E
+  провал), тази е добавена ПРОАКТИВНО преди UI имплементацията — приложен
+  урок от Ден 4-5 сесията. **ВАЖНО: не е приложена още в Supabase** — трябва
+  да се пусне ръчно в SQL Editor преди recipient страницата да работи live.
+- `src/components/documents/SignDocumentModal.tsx` — refactor към
+  `usePrfCeremony`; `ModalHeader` разширен с `totalSteps` проп.
+- `src/components/documents/InviteRecipientsModal.tsx` — refactor към
+  `usePrfCeremony` (без промяна на поведение).
+
+**Future work (документирано тук по изрична молба):** expiry механизъм за
+покани (напр. изтичане след N дни) е пропуснат за MVP scope — покана остава
+валидна безсрочно, докато не бъде приета или заявката отменена от owner-а.
+Тема за заключението на курсовата работа.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **185/185 unit
+теста** (непроменени спрямо Ден 5 — Ден 6 добавя нов UI код без нови unit
+тестове в плана; refactor-ът към `usePrfCeremony` потвърден да не чупи
+съществуващите тестове за `SignDocumentModal`/`InviteRecipientsModal`).
+Ръчен UI тест (screenshots) — чака се преди commit, виж gate-а по-долу.
+
+**Commit gate (изрична инструкция):** НЕ се commit-ва преди screenshots от:
+InvitationLandingPage (4 състояния: logged_out, logged_in_correct,
+logged_in_wrong, invalid_token), PendingInvitationsPage с 2 покани в списъка,
+badge indicator в главната навигация (с брой), RecipientSigningModal Стъпка 1
+(потвърждение), RecipientSigningModal Стъпка 2 (прогрес — може mid-progress),
+full completion state в owner-ския dashboard (Routing 3/3).
 
 ### Ден 5: Owner UI — InviteRecipientsModal + SigningRequestStatus + CancelSigningRequestButton — код готов (2026-07-28)
 

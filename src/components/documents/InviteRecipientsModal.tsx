@@ -16,8 +16,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Mail, Trash2, Fingerprint, AlertTriangle, CheckCircle, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { signAsOwner, resolveSigningKeys, type ResolvedKeys, type SigningRequestResult } from '../../lib/signingService';
-import { browserPrfExtractor, browserDualPrfExtractor } from '../../lib/crypto/keyProtection';
-import type { PrfResult, DualPrfResult, PrfExtractor, DualPrfExtractor } from '../../lib/crypto/keyProtection';
+import { usePrfCeremony, type PrfCeremonyResult } from '../../hooks/usePrfCeremony';
 import type { NewRecipientInput } from '../../lib/types';
 import {
   clickToMarkerPos, usePdfThumbnail, ModalHeader, ModalFooter, InfoRow, DEFAULT_MARKER,
@@ -68,13 +67,6 @@ function validateNewRecipientEmail(
   if (existing.includes(email)) return 'Този email вече е добавен.';
   if (existing.length >= MAX_RECIPIENTS) return `Максимум ${MAX_RECIPIENTS} участника за MVP.`;
   return null;
-}
-
-/** Байт-по-байт сравнение на два PRF salt-а — за разпознаване кой mock extractor резултат да върне. */
-function saltsEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
 }
 
 const SIGNING_STEPS: [number, string][] = [
@@ -505,6 +497,7 @@ function StepConfirmSign({
 export default function InviteRecipientsModal({
   documentId, storagePath, filename, userId, ownerEmail, onDone, onClose,
 }: InviteRecipientsModalProps) {
+  const { performCeremony } = usePrfCeremony();
   const [stage, setStage] = useState<Stage>('recipients');
   const [recipientEmails, setRecipientEmails] = useState<string[]>([]);
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -581,22 +574,10 @@ export default function InviteRecipientsModal({
 
     const rpId = window.location.hostname;
 
-    // ── PRF ceremony(ies) FIRST — iOS user-gesture context, виж SignDocumentModal ──
-    let capturedPrf: PrfResult | null = null;
-    let capturedPrfMlDsa: PrfResult | null = null;
-    let capturedDualPrf: DualPrfResult | null = null;
-
+    // ── PRF ceremony(ies) FIRST (виж usePrfCeremony.ts за iOS-safe ordering) ──
+    let ceremony: PrfCeremonyResult;
     try {
-      if (preflightKeys.singlePrf && preflightKeys.mlDsaData) {
-        capturedDualPrf = await browserDualPrfExtractor(
-          preflightKeys.ecdsaData.prfSalt, preflightKeys.mlDsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId,
-        );
-      } else if (preflightKeys.mlDsaData) {
-        capturedPrf = await browserPrfExtractor(preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId);
-        capturedPrfMlDsa = await browserPrfExtractor(preflightKeys.mlDsaData.prfSalt, rpId, preflightKeys.mlDsaData.credentialId);
-      } else {
-        capturedPrf = await browserPrfExtractor(preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId);
-      }
+      ceremony = await performCeremony(preflightKeys, rpId);
     } catch (err) {
       setSignError(err instanceof Error ? err.message : 'Биометричната верификация неуспешна.');
       return;
@@ -611,13 +592,6 @@ export default function InviteRecipientsModal({
       }
     }
 
-    const mlDsaSalt = preflightKeys.mlDsaData?.prfSalt;
-    const mockPrfExtractor: PrfExtractor = async (salt) => {
-      if (capturedPrfMlDsa && mlDsaSalt && saltsEqual(salt, mlDsaSalt)) return capturedPrfMlDsa;
-      return capturedPrf!;
-    };
-    const mockDualPrfExtractor: DualPrfExtractor = async () => capturedDualPrf!;
-
     const recipients: NewRecipientInput[] = recipientEmails.map(email => ({
       email,
       position: markers[email] ?? DEFAULT_MARKER,
@@ -628,8 +602,8 @@ export default function InviteRecipientsModal({
         documentId, userId, signerName,
         { page: ownerMarker.page, x: ownerMarker.x, y: ownerMarker.y },
         recipients, rpId, fontBytes,
-        capturedPrf || capturedPrfMlDsa ? mockPrfExtractor : undefined,
-        capturedDualPrf ? mockDualPrfExtractor : undefined,
+        ceremony.extractPrf,
+        ceremony.extractDualPrf,
         (pct, label) => { setProgress(pct); setProgressLabel(label); },
       );
       setProgress(100);
@@ -640,7 +614,7 @@ export default function InviteRecipientsModal({
     } catch (err) {
       setSignError(err instanceof Error ? err.message : String(err));
     }
-  }, [preflightKeys, markers, documentId, userId, signerName, recipientEmails, onDone]);
+  }, [preflightKeys, markers, documentId, userId, signerName, recipientEmails, onDone, performCeremony]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 px-4 backdrop-blur-sm">

@@ -16,8 +16,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { supabase } from '../../lib/supabase';
 import { signDocument, resolveSigningKeys, getSignedDownloadUrl, type SignDocumentResult, type ResolvedKeys } from '../../lib/signingService';
-import { browserPrfExtractor, browserDualPrfExtractor } from '../../lib/crypto/keyProtection';
-import type { PrfResult, DualPrfResult, PrfExtractor, DualPrfExtractor } from '../../lib/crypto/keyProtection';
+import { usePrfCeremony, type PrfCeremonyResult } from '../../hooks/usePrfCeremony';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -584,15 +583,6 @@ function StepSigning({ progress, progressLabel, error, result, onRetry, onDownlo
   );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Байт-по-байт сравнение на два PRF salt-а — ползва се за да разпознаем кой mock extractor да върне резултата. */
-function saltsEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export default function SignDocumentModal({
@@ -603,6 +593,7 @@ export default function SignDocumentModal({
   onDone,
   onClose,
 }: SignDocumentModalProps) {
+  const { performCeremony } = usePrfCeremony();
   const [stage, setStage] = useState<ModalStage>('position');
   const [marker, setMarker] = useState<MarkerPos | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
@@ -656,38 +647,10 @@ export default function SignDocumentModal({
 
     const rpId = window.location.hostname;
 
-    // ── PRF ceremony(ies) FIRST ──────────────────────────────────────────────
-    // iOS Safari изисква navigator.credentials.get() да е в "user gesture context".
-    // Всеки await за мрежа (fetch, supabase) преди WebAuthn губи този контекст
-    // и iOS тихо блокира Face ID без да показва грешка.
-    // Решение: PRF преди всичко останало; signDocument получава mock extractor.
-    let capturedPrf: PrfResult | null = null;
-    let capturedPrfMlDsa: PrfResult | null = null;
-    let capturedDualPrf: DualPrfResult | null = null;
-
+    // ── PRF ceremony(ies) FIRST (виж usePrfCeremony.ts за iOS-safe ordering) ──
+    let ceremony: PrfCeremonyResult;
     try {
-      if (preflightKeys.singlePrf && preflightKeys.mlDsaData) {
-        // Един tap → два ключа
-        capturedDualPrf = await browserDualPrfExtractor(
-          preflightKeys.ecdsaData.prfSalt,
-          preflightKeys.mlDsaData.prfSalt,
-          rpId,
-          preflightKeys.ecdsaData.credentialId,
-        );
-      } else if (preflightKeys.mlDsaData) {
-        // Два отделни credential-а → два tapа
-        capturedPrf = await browserPrfExtractor(
-          preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId,
-        );
-        capturedPrfMlDsa = await browserPrfExtractor(
-          preflightKeys.mlDsaData.prfSalt, rpId, preflightKeys.mlDsaData.credentialId,
-        );
-      } else {
-        // Само ECDSA
-        capturedPrf = await browserPrfExtractor(
-          preflightKeys.ecdsaData.prfSalt, rpId, preflightKeys.ecdsaData.credentialId,
-        );
-      }
+      ceremony = await performCeremony(preflightKeys, rpId);
     } catch (err) {
       setSigningError(err instanceof Error ? err.message : 'Биометричната верификация неуспешна.');
       return;
@@ -705,16 +668,6 @@ export default function SignDocumentModal({
       }
     }
 
-    // ── Mock PRF extractors — връщат pre-captured резултати, без нов UI prompt ──
-    const mlDsaSalt = preflightKeys.mlDsaData?.prfSalt;
-    const mockPrfExtractor: PrfExtractor = async (salt) => {
-      if (capturedPrfMlDsa && mlDsaSalt && saltsEqual(salt, mlDsaSalt)) {
-        return capturedPrfMlDsa;
-      }
-      return capturedPrf!;
-    };
-    const mockDualPrfExtractor: DualPrfExtractor = async () => capturedDualPrf!;
-
     try {
       const result = await signDocument(
         documentId,
@@ -723,8 +676,8 @@ export default function SignDocumentModal({
         { page: marker.page, x: marker.x, y: marker.y },
         rpId,
         fontBytes,
-        capturedPrf || capturedPrfMlDsa ? mockPrfExtractor : undefined,
-        capturedDualPrf ? mockDualPrfExtractor : undefined,
+        ceremony.extractPrf,
+        ceremony.extractDualPrf,
         (pct, label) => { setProgress(pct); setProgressLabel(label); },
       );
 
@@ -734,7 +687,7 @@ export default function SignDocumentModal({
     } catch (err) {
       setSigningError(err instanceof Error ? err.message : String(err));
     }
-  }, [marker, preflightKeys, documentId, userId, signerName]);
+  }, [marker, preflightKeys, documentId, userId, signerName, performCeremony]);
 
   /**
    * Сваля току-що подписания PDF локално.
@@ -821,11 +774,11 @@ export default function SignDocumentModal({
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
-export function ModalHeader({ step, title, onClose }: { step?: number; title: string; onClose?: () => void }) {
+export function ModalHeader({ step, totalSteps = 3, title, onClose }: { step?: number; totalSteps?: number; title: string; onClose?: () => void }) {
   return (
     <div className="flex items-center justify-between border-b border-neutral-100/70 px-6 py-4">
       <div>
-        {step && <p className="text-xs text-neutral-400 mb-0.5">Стъпка {step} от 3</p>}
+        {step && <p className="text-xs text-neutral-400 mb-0.5">Стъпка {step} от {totalSteps}</p>}
         <h2 className="text-base font-semibold text-neutral-800">{title}</h2>
       </div>
       {onClose && (

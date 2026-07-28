@@ -25,8 +25,11 @@ import DocumentList from './components/documents/DocumentList';
 import KeyManagement from './components/keys/KeyManagement';
 import VerifyPage from './components/verify/VerifyPage';
 import HowItWorksPage from './components/howItWorks/HowItWorksPage';
+import InvitationLandingPage from './components/invitations/InvitationLandingPage';
+import PendingInvitationsPage from './components/invitations/PendingInvitationsPage';
+import { usePendingInvitationsCount } from './hooks/usePendingInvitationsCount';
 
-type ActiveTab = 'documents' | 'keys' | 'verify' | 'how-it-works';
+type ActiveTab = 'documents' | 'keys' | 'invitations' | 'verify' | 'how-it-works';
 
 /**
  * Проверява дали текущият URL съдържа ?recovery=1.
@@ -72,6 +75,12 @@ function AppContent() {
   // /verify е публична страница — показва се без auth, дори на не-логнати потребители
   if (window.location.pathname === '/verify') {
     return <VerifyPage standalone />;
+  }
+
+  // /invite/:recipientId — публичен route (сам управлява собствения си auth state machine)
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) {
+    return <InvitationLandingPage recipientId={inviteMatch[1]} />;
   }
 
   // Инициализираме на true веднага ако ?recovery=1 е в URL-а.
@@ -156,9 +165,20 @@ function AppContent() {
   return <MainApp userId={session.user.id} />;
 }
 
-/** Главното приложение с таб навигация: Документи | Ключове | Провери | Как работи. */
+/** Главното приложение с таб навигация: Документи | Ключове | Покани | Провери | Как работи. */
 function MainApp({ userId }: { userId: string }) {
+  const { session } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('documents');
+  const userEmail = session?.user.email ?? null;
+  const { count: pendingCount, refresh: refreshPendingCount } = usePendingInvitationsCount(userEmail);
+
+  const tabs: [ActiveTab, string][] = [
+    ['documents', 'Документи'],
+    ['keys', 'Ключове'],
+    ['invitations', pendingCount > 0 ? `Покани (${pendingCount})` : 'Покани'],
+    ['verify', 'Провери документ'],
+    ['how-it-works', 'Как работи'],
+  ];
 
   return (
     <main className="min-h-screen">
@@ -171,14 +191,7 @@ function MainApp({ userId }: { userId: string }) {
 
         <nav className="mx-auto max-w-4xl px-4 pb-3 sm:px-6">
           <div className="flex gap-1 overflow-x-auto rounded-xl bg-neutral-900/5 p-1 scrollbar-hide">
-            {(
-              [
-                ['documents', 'Документи'],
-                ['keys', 'Ключове'],
-                ['verify', 'Провери документ'],
-                ['how-it-works', 'Как работи'],
-              ] as [ActiveTab, string][]
-            ).map(([tab, label]) => (
+            {tabs.map(([tab, label]) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -197,6 +210,9 @@ function MainApp({ userId }: { userId: string }) {
 
       {activeTab === 'documents'    && <DocumentList userId={userId} onNavigateKeys={() => setActiveTab('keys')} onNavigateHowItWorks={() => setActiveTab('how-it-works')} />}
       {activeTab === 'keys'         && <KeyManagement userId={userId} />}
+      {activeTab === 'invitations'  && userEmail && (
+        <PendingInvitationsPage userId={userId} userEmail={userEmail} onInvitationsChanged={refreshPendingCount} />
+      )}
       {activeTab === 'verify'       && <VerifyPage standalone={false} />}
       {activeTab === 'how-it-works' && <HowItWorksPage />}
     </main>
