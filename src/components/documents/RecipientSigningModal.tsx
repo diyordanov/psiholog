@@ -192,16 +192,29 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
               {preflightError && (
                 <div className="flex gap-2 rounded-lg bg-red-50 px-3 py-2.5">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" />
-                  <p className="text-xs text-red-700">{preflightError}</p>
+                  <div className="text-xs text-red-700">
+                    <p>{preflightError}</p>
+                    {/* /invite/ е standalone route без таб навигация — recipient без
+                        ключове няма как да стигне до "Ключове" сам, затова директен
+                        линк с ?tab=keys (App.tsx MainApp го чете при mount). */}
+                    {preflightError.includes('ECDSA P-256 ключ') && (
+                      <a href="/?tab=keys" className="mt-1 inline-block font-medium underline hover:text-red-800">
+                        Генерирай ключ →
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
 
               {hasNoCert && (
                 <div className="flex gap-2 rounded-lg bg-red-50 px-3 py-2.5">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" />
-                  <p className="text-xs text-red-700">
-                    ECDSA ключът няма сертификат. Отидете в „Ключове" → „Издай сертификат".
-                  </p>
+                  <div className="text-xs text-red-700">
+                    <p>ECDSA ключът няма сертификат. Отидете в „Ключове" → „Издай сертификат".</p>
+                    <a href="/?tab=keys" className="mt-1 inline-block font-medium underline hover:text-red-800">
+                      Отиди в „Ключове" →
+                    </a>
+                  </div>
                 </div>
               )}
 
