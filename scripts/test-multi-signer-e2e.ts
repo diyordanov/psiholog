@@ -188,6 +188,210 @@ async function setupTestSigner(
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+/** Тестов минимален PDF (споделен между двата сценария). */
+function makeTestPdfBytes(): Uint8Array {
+  return new TextEncoder().encode(
+    '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n' +
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +
+    'xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n' +
+    '0000000058 00000 n \n0000000115 00000 n \n' +
+    'trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n191\n%%EOF\n',
+  );
+}
+
+/** Качва тестов PDF под owner-ската storage папка + insert documents ред. Изисква активна owner сесия. */
+async function uploadTestDocument(ownerUserId: string, filename: string): Promise<string> {
+  const storagePath = `${ownerUserId}/${filename}`;
+  const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, makeTestPdfBytes(), {
+    contentType: 'application/pdf', upsert: true,
+  });
+  if (upErr) throw new Error(`upload original PDF failed: ${upErr.message}`);
+
+  const { data: docRow, error: docErr } = await supabase.from('documents').insert({
+    user_id: ownerUserId,
+    original_filename: filename,
+    storage_path: storagePath,
+    original_hash_sha256: toByteaHex(new Uint8Array(32)), // не се верифицира тук
+    status: 'uploaded',
+  }).select('id').single();
+  if (docErr || !docRow) throw new Error(`insert documents failed: ${docErr?.message}`);
+  return docRow.id as string;
+}
+
+/**
+ * Сценарий 1: owner + 1 recipient — пълен multi-signer flow.
+ * Връща пътя на финалния PDF (за ръчна Adobe Reader проверка).
+ */
+async function runMultiSignerScenario(
+  admin: ReturnType<typeof createClient>, caPrivKey: CryptoKey, fontBytes: Uint8Array,
+): Promise<string> {
+  console.log('\n═══ Сценарий 1: multi-signer (owner + 1 recipient) ═══');
+  let ownerUserId: string | undefined;
+  let recipientUserId: string | undefined;
+
+  try {
+    console.log('\n👤 Създаване на owner test акаунт...');
+    const owner = await setupTestSigner(admin, caPrivKey, 'owner', 20);
+    ownerUserId = owner.userId;
+    console.log(`   ✓ ${owner.email}`);
+
+    console.log('\n👤 Създаване на recipient test акаунт...');
+    const recipient = await setupTestSigner(admin, caPrivKey, 'recipient', 21);
+    recipientUserId = recipient.userId;
+    console.log(`   ✓ ${recipient.email}`);
+
+    console.log('\n📝 Owner: качване на тестов PDF...');
+    await supabase.auth.signInWithPassword({ email: owner.email, password: owner.password });
+    const documentId = await uploadTestDocument(owner.userId, 'e2e-multisigner-test.pdf');
+    console.log(`   ✓ documents.id = ${documentId}`);
+
+    console.log('\n✍️  Owner: signAsOwner() (с покана към recipient)...');
+    const ownerResult = await signAsOwner(
+      documentId, owner.userId, 'E2E Owner', { page: 0, x: 30, y: 30 },
+      [{ email: recipient.email, position: { page: 0, x: 260, y: 30 } }],
+      'localhost', fontBytes, owner.extractPrf,
+    );
+    console.log(`   ✓ signing_requests.id = ${ownerResult.signingRequestId}, status = ${ownerResult.status}`);
+    if (ownerResult.status !== 'awaiting_recipients') {
+      throw new Error(`❌ Очаквано status='awaiting_recipients', получено '${ownerResult.status}'`);
+    }
+
+    const { data: recipientRow, error: recFetchErr } = await supabase
+      .from('signing_request_recipients')
+      .select('id')
+      .eq('signing_request_id', ownerResult.signingRequestId)
+      .eq('invited_email', recipient.email.toLowerCase())
+      .single();
+    if (recFetchErr || !recipientRow) throw new Error(`fetch recipient row failed: ${recFetchErr?.message}`);
+    const recipientRowId = recipientRow.id as string;
+    console.log(`   ✓ signing_request_recipients.id = ${recipientRowId}`);
+
+    await supabase.auth.signOut();
+
+    console.log('\n🔗 Recipient: claim_recipient_invitation()...');
+    await supabase.auth.signInWithPassword({ email: recipient.email, password: recipient.password });
+    const { error: claimErr } = await supabase.rpc('claim_recipient_invitation', { p_recipient_id: recipientRowId });
+    if (claimErr) throw new Error(`claim_recipient_invitation failed: ${claimErr.message}`);
+    console.log('   ✓ claimed');
+
+    console.log('\n✍️  Recipient: signAsRecipient()...');
+    const recipientResult = await signAsRecipient(
+      recipientRowId, recipient.userId, 'E2E Recipient', 'localhost', fontBytes, recipient.extractPrf,
+    );
+    console.log(`   ✓ version = ${recipientResult.version}, allSigned = ${recipientResult.allSigned}, status = ${recipientResult.status}`);
+    if (!recipientResult.allSigned || recipientResult.status !== 'completed') {
+      throw new Error(`❌ Очаквано allSigned=true, status='completed', получено allSigned=${recipientResult.allSigned}, status='${recipientResult.status}'`);
+    }
+
+    await supabase.auth.signOut();
+
+    console.log('\n🔍 Финална проверка (admin client)...');
+    const { data: finalSr } = await admin.from('signing_requests').select('status, version').eq('id', ownerResult.signingRequestId).single();
+    const { data: finalDoc } = await admin.from('documents').select('status, signed_storage_path').eq('id', documentId).single();
+    console.log(`   signing_requests.status = ${finalSr?.status} (очаквано 'completed') ${finalSr?.status === 'completed' ? '✅' : '❌'}`);
+    console.log(`   documents.status = ${finalDoc?.status} (очаквано 'signed') ${finalDoc?.status === 'signed' ? '✅' : '❌'}`);
+
+    if (finalSr?.status !== 'completed' || finalDoc?.status !== 'signed') {
+      throw new Error('❌ Финалният DB статус не съответства на очакваното.');
+    }
+
+    const { data: pdfBlob, error: dlErr } = await admin.storage
+      .from('signed-documents')
+      .download(finalDoc.signed_storage_path as string);
+    if (dlErr || !pdfBlob) throw new Error(`download final PDF failed: ${dlErr?.message}`);
+
+    mkdirSync('scripts/output', { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const outPath = `scripts/output/multi-signer-e2e-${ts}.pdf`;
+    writeFileSync(outPath, new Uint8Array(await pdfBlob.arrayBuffer()));
+
+    console.log(`\n📁 Финален PDF запазен: ${outPath}`);
+    console.log('   Провери РЪЧНО в Adobe Reader: 2 signature entries (E2E Owner, E2E Recipient), и двата valid.');
+    console.log('\n✅ Сценарий 1 (multi-signer) УСПЕШЕН.');
+    return outPath;
+
+  } finally {
+    console.log('\n🧹 Cleanup (Сценарий 1): изтриване на test акаунти...');
+    if (ownerUserId)     await admin.auth.admin.deleteUser(ownerUserId).catch(e => console.error('   ⚠ delete owner failed:', e.message));
+    if (recipientUserId) await admin.auth.admin.deleteUser(recipientUserId).catch(e => console.error('   ⚠ delete recipient failed:', e.message));
+    console.log('   ✓ готово');
+  }
+}
+
+/**
+ * Сценарий 2: backward compat — signAsOwner() с 0 recipients (empty array).
+ * Гарантира, че бъдещи refactor-и на signAsOwner()/signAsRecipient() не
+ * чупят single-signer path-а (signDocument() wrapper-ът минава ТОЧНО оттук).
+ *
+ * Проверява:
+ *   - signing_requests.status = 'completed' ВЕДНАГА (без да чака recipients)
+ *   - documents.status = 'signed'
+ *   - signatures ред е създаден
+ *   - НЯМА нито един signing_request_recipients ред за тази заявка
+ */
+async function runSingleSignerScenario(
+  admin: ReturnType<typeof createClient>, caPrivKey: CryptoKey, fontBytes: Uint8Array,
+): Promise<void> {
+  console.log('\n═══ Сценарий 2: single-signer backward compat (0 recipients) ═══');
+  let ownerUserId: string | undefined;
+
+  try {
+    console.log('\n👤 Създаване на owner test акаунт...');
+    const owner = await setupTestSigner(admin, caPrivKey, 'solo-owner', 22);
+    ownerUserId = owner.userId;
+    console.log(`   ✓ ${owner.email}`);
+
+    console.log('\n📝 Owner: качване на тестов PDF...');
+    await supabase.auth.signInWithPassword({ email: owner.email, password: owner.password });
+    const documentId = await uploadTestDocument(owner.userId, 'e2e-singlesigner-test.pdf');
+    console.log(`   ✓ documents.id = ${documentId}`);
+
+    console.log('\n✍️  Owner: signAsOwner() с recipients=[] (backward compat)...');
+    const result = await signAsOwner(
+      documentId, owner.userId, 'E2E Solo Owner', { page: 0, x: 30, y: 30 },
+      [], // 0 recipients — backward compat
+      'localhost', fontBytes, owner.extractPrf,
+    );
+    console.log(`   ✓ signing_requests.id = ${result.signingRequestId}, status = ${result.status}, version = ${result.version}`);
+
+    if (result.status !== 'completed') {
+      throw new Error(`❌ Очаквано status='completed' ВЕДНАГА (0 recipients), получено '${result.status}'`);
+    }
+
+    await supabase.auth.signOut();
+
+    console.log('\n🔍 Финална проверка (admin client)...');
+    const { data: finalDoc } = await admin.from('documents').select('status, signed_storage_path').eq('id', documentId).single();
+    console.log(`   documents.status = ${finalDoc?.status} (очаквано 'signed') ${finalDoc?.status === 'signed' ? '✅' : '❌'}`);
+    if (finalDoc?.status !== 'signed') {
+      throw new Error(`❌ Очаквано documents.status='signed', получено '${finalDoc?.status}'`);
+    }
+
+    const { data: sigRows } = await admin.from('signatures').select('id').eq('signing_request_id', result.signingRequestId);
+    console.log(`   signatures records = ${sigRows?.length ?? 0} (очаквано 1) ${sigRows?.length === 1 ? '✅' : '❌'}`);
+    if (!sigRows || sigRows.length !== 1) {
+      throw new Error(`❌ Очаквано точно 1 signatures ред, получено ${sigRows?.length ?? 0}`);
+    }
+    if (sigRows[0].id !== result.signatureId) {
+      throw new Error(`❌ signatures.id (${sigRows[0].id}) не съвпада с result.signatureId (${result.signatureId})`);
+    }
+
+    const { data: recRows } = await admin.from('signing_request_recipients').select('id').eq('signing_request_id', result.signingRequestId);
+    console.log(`   signing_request_recipients records = ${recRows?.length ?? 0} (очаквано 0) ${(recRows?.length ?? 0) === 0 ? '✅' : '❌'}`);
+    if (recRows && recRows.length > 0) {
+      throw new Error(`❌ Очаквано 0 signing_request_recipients редове, получено ${recRows.length}`);
+    }
+
+    console.log('\n✅ Сценарий 2 (single-signer backward compat) УСПЕШЕН.');
+
+  } finally {
+    console.log('\n🧹 Cleanup (Сценарий 2): изтриване на test акаунт...');
+    if (ownerUserId) await admin.auth.admin.deleteUser(ownerUserId).catch(e => console.error('   ⚠ delete solo-owner failed:', e.message));
+    console.log('   ✓ готово');
+  }
+}
+
 async function main() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const anonKey     = process.env.VITE_SUPABASE_ANON_KEY;
@@ -216,131 +420,12 @@ async function main() {
   const caPrivKey = await crypto.subtle.importKey('pkcs8', caKeyDer, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   console.log('   ✓ заредена');
 
-  let ownerUserId: string | undefined;
-  let recipientUserId: string | undefined;
+  const fontBytes = new Uint8Array(readFileSync('public/fonts/NotoSans-Regular.ttf'));
 
-  try {
-    // ── 1. Тестови потребители ──────────────────────────────────────────────
-    console.log('\n👤 Създаване на owner test акаунт...');
-    const owner = await setupTestSigner(admin, caPrivKey, 'owner', 20);
-    ownerUserId = owner.userId;
-    console.log(`   ✓ ${owner.email}`);
+  await runMultiSignerScenario(admin, caPrivKey, fontBytes);
+  await runSingleSignerScenario(admin, caPrivKey, fontBytes);
 
-    console.log('\n👤 Създаване на recipient test акаунт...');
-    const recipient = await setupTestSigner(admin, caPrivKey, 'recipient', 21);
-    recipientUserId = recipient.userId;
-    console.log(`   ✓ ${recipient.email}`);
-
-    // ── 2. Owner: качва тестов PDF + documents ред ──────────────────────────
-    console.log('\n📝 Owner: качване на тестов PDF...');
-    await supabase.auth.signInWithPassword({ email: owner.email, password: owner.password });
-
-    const fontBytes = new Uint8Array(readFileSync('public/fonts/NotoSans-Regular.ttf'));
-    const testPdfBytes = new TextEncoder().encode(
-      '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n' +
-      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n' +
-      '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +
-      'xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n' +
-      '0000000058 00000 n \n0000000115 00000 n \n' +
-      'trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n191\n%%EOF\n',
-    );
-    const storagePath = `${owner.userId}/e2e-multisigner-test.pdf`;
-    const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, testPdfBytes, {
-      contentType: 'application/pdf', upsert: true,
-    });
-    if (upErr) throw new Error(`upload original PDF failed: ${upErr.message}`);
-
-    const { data: docRow, error: docErr } = await supabase.from('documents').insert({
-      user_id: owner.userId,
-      original_filename: 'e2e-multisigner-test.pdf',
-      storage_path: storagePath,
-      original_hash_sha256: toByteaHex(new Uint8Array(32)), // не се верифицира тук
-      status: 'uploaded',
-    }).select('id').single();
-    if (docErr || !docRow) throw new Error(`insert documents failed: ${docErr?.message}`);
-    const documentId = docRow.id as string;
-    console.log(`   ✓ documents.id = ${documentId}`);
-
-    // ── 3. Owner: signAsOwner() с 1 recipient ───────────────────────────────
-    console.log('\n✍️  Owner: signAsOwner() (с покана към recipient)...');
-    const ownerResult = await signAsOwner(
-      documentId, owner.userId, 'E2E Owner', { page: 0, x: 30, y: 30 },
-      [{ email: recipient.email, position: { page: 0, x: 260, y: 30 } }],
-      'localhost', fontBytes, owner.extractPrf,
-    );
-    console.log(`   ✓ signing_requests.id = ${ownerResult.signingRequestId}, status = ${ownerResult.status}`);
-    if (ownerResult.status !== 'awaiting_recipients') {
-      throw new Error(`❌ Очаквано status='awaiting_recipients', получено '${ownerResult.status}'`);
-    }
-
-    // Owner вижда recipient реда (RLS: recipients_select_owner)
-    const { data: recipientRow, error: recFetchErr } = await supabase
-      .from('signing_request_recipients')
-      .select('id')
-      .eq('signing_request_id', ownerResult.signingRequestId)
-      .eq('invited_email', recipient.email.toLowerCase())
-      .single();
-    if (recFetchErr || !recipientRow) throw new Error(`fetch recipient row failed: ${recFetchErr?.message}`);
-    const recipientRowId = recipientRow.id as string;
-    console.log(`   ✓ signing_request_recipients.id = ${recipientRowId}`);
-
-    await supabase.auth.signOut();
-
-    // ── 4. Recipient: claim invitation + signAsRecipient() ──────────────────
-    console.log('\n🔗 Recipient: claim_recipient_invitation()...');
-    await supabase.auth.signInWithPassword({ email: recipient.email, password: recipient.password });
-    const { error: claimErr } = await supabase.rpc('claim_recipient_invitation', { p_recipient_id: recipientRowId });
-    if (claimErr) throw new Error(`claim_recipient_invitation failed: ${claimErr.message}`);
-    console.log('   ✓ claimed');
-
-    console.log('\n✍️  Recipient: signAsRecipient()...');
-    const recipientResult = await signAsRecipient(
-      recipientRowId, recipient.userId, 'E2E Recipient', 'localhost', fontBytes, recipient.extractPrf,
-    );
-    console.log(`   ✓ version = ${recipientResult.version}, allSigned = ${recipientResult.allSigned}, status = ${recipientResult.status}`);
-    if (!recipientResult.allSigned || recipientResult.status !== 'completed') {
-      throw new Error(`❌ Очаквано allSigned=true, status='completed', получено allSigned=${recipientResult.allSigned}, status='${recipientResult.status}'`);
-    }
-
-    await supabase.auth.signOut();
-
-    // ── 5. Финална проверка (admin, за да заобиколим RLS без сесия) ─────────
-    console.log('\n🔍 Финална проверка (admin client)...');
-    const { data: finalSr } = await admin.from('signing_requests').select('status, version').eq('id', ownerResult.signingRequestId).single();
-    const { data: finalDoc } = await admin.from('documents').select('status, signed_storage_path').eq('id', documentId).single();
-    console.log(`   signing_requests.status = ${finalSr?.status} (очаквано 'completed') ${finalSr?.status === 'completed' ? '✅' : '❌'}`);
-    console.log(`   documents.status = ${finalDoc?.status} (очаквано 'signed') ${finalDoc?.status === 'signed' ? '✅' : '❌'}`);
-
-    if (finalSr?.status !== 'completed' || finalDoc?.status !== 'signed') {
-      throw new Error('❌ Финалният DB статус не съответства на очакваното.');
-    }
-
-    // ── 6. Сваляне на финалния PDF локално ──────────────────────────────────
-    const { data: pdfBlob, error: dlErr } = await admin.storage
-      .from('signed-documents')
-      .download(finalDoc.signed_storage_path as string);
-    if (dlErr || !pdfBlob) throw new Error(`download final PDF failed: ${dlErr?.message}`);
-
-    mkdirSync('scripts/output', { recursive: true });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const outPath = `scripts/output/multi-signer-e2e-${ts}.pdf`;
-    writeFileSync(outPath, new Uint8Array(await pdfBlob.arrayBuffer()));
-
-    console.log(`\n📁 Финален PDF запазен: ${outPath}`);
-    console.log('\n🔍 Провери РЪЧНО в Adobe Reader:');
-    console.log('   1. Отвори файла → Signature Panel');
-    console.log('   2. 2 signature entries (E2E Owner, E2E Recipient)');
-    console.log('   3. И двата "Signed and valid" + "Document has not been modified"');
-
-    console.log('\n✅ Integration тест УСПЕШЕН.');
-
-  } finally {
-    // ── Cleanup: изтриваме test акаунтите (cascade чисти всичко останало) ──
-    console.log('\n🧹 Cleanup: изтриване на test акаунти...');
-    if (ownerUserId)     await admin.auth.admin.deleteUser(ownerUserId).catch(e => console.error('   ⚠ delete owner failed:', e.message));
-    if (recipientUserId) await admin.auth.admin.deleteUser(recipientUserId).catch(e => console.error('   ⚠ delete recipient failed:', e.message));
-    console.log('   ✓ готово');
-  }
+  console.log('\n✅✅ И ДВАТА сценария УСПЕШНИ.');
 }
 
 main().catch(e => {

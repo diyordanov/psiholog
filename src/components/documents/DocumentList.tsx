@@ -9,16 +9,24 @@
  *   - Бутон "Свали подписан" → при status='signed', сваля подписания PDF
  *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB)
  */
-import { useEffect, useState, useCallback } from 'react';
-import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle, Sparkles, ArrowRight, Clock } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle, Sparkles, ArrowRight, Clock, Users, Ban } from 'lucide-react';
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
 import { fetchBestKeyId } from '../../lib/signingKeyStore';
 import { getSignedDownloadUrl } from '../../lib/signingService';
 import { logAuditEvent } from '../../lib/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
+import { useMultiSignerActions } from '../../hooks/useMultiSignerActions';
+import type { SigningRequestWithRecipients } from '../../lib/types';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
 import SignDocumentModal from './SignDocumentModal';
+import InviteRecipientsModal from './InviteRecipientsModal';
+import SigningRequestStatus from './SigningRequestStatus';
+import CancelSigningRequestButton from './CancelSigningRequestButton';
+
+/** Активни (не финални) статуси на signing_requests — State B. */
+const ACTIVE_REQUEST_STATUSES = new Set(['draft', 'owner_signing', 'awaiting_recipients']);
 
 type StatusFilter = 'all' | 'signed' | 'pending';
 
@@ -31,7 +39,10 @@ interface DocumentListProps {
 export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWorks }: DocumentListProps) {
   const { user } = useAuth();
   const displayName = (user?.user_metadata.display_name as string | undefined) ?? 'там';
+  const ownerEmail = user?.email ?? '';
+  const multiSignerActions = useMultiSignerActions(userId);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [signingRequests, setSigningRequests] = useState<SigningRequestWithRecipients[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -46,6 +57,9 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
   const [signPreflight, setSignPreflight] = useState<string | null>(null); // inline error bellow doc
   const [signPreflightId, setSignPreflightId] = useState<string | null>(null);
 
+  // Multi-signer: „Изпрати за подписване" state
+  const [invitingDoc, setInvitingDoc] = useState<DocumentRow | null>(null);
+
   // Loading/action states
   const [loadingUrl, setLoadingUrl] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -55,21 +69,39 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
   // Toast state
   const [toast, setToast] = useState<string | null>(null);
 
-  /** Зарежда документите от базата. */
+  /** Зарежда документите + signing_requests (за multi-signer state) от базата. */
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const docs = await fetchUserDocuments();
+      const [docs, requests] = await Promise.all([
+        fetchUserDocuments(),
+        multiSignerActions.listSigningRequests(),
+      ]);
       setDocuments(docs);
+      setSigningRequests(requests);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Грешка при зареждане.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [multiSignerActions]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Най-новата (по created_at) signing_request на документ — определя State
+   * B/C/D. Документите без нито една заявка са State A. `signingRequests` е
+   * вече сортиран created_at DESC от listSigningRequests(), затова първото
+   * съвпадение по document_id е най-новото.
+   */
+  const latestRequestByDoc = useMemo(() => {
+    const map = new Map<string, SigningRequestWithRecipients>();
+    for (const r of signingRequests) {
+      if (!map.has(r.request.document_id)) map.set(r.request.document_id, r);
+    }
+    return map;
+  }, [signingRequests]);
 
   /** Показва toast за 3 секунди. */
   const showToast = (msg: string) => {
@@ -126,6 +158,32 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
     } finally {
       setSignPreflightId(null);
     }
+  };
+
+  /**
+   * Pre-flight преди отваряне на InviteRecipientsModal — същата ECDSA
+   * key проверка като handleSignClick (owner подписва пръв, идентични изисквания).
+   */
+  const handleInviteClick = async (doc: DocumentRow) => {
+    setSignPreflightId(doc.id);
+    setSignPreflight(null);
+    try {
+      const ecdsaKeyId = await fetchBestKeyId('ecdsa-p256');
+      if (!ecdsaKeyId) {
+        setSignPreflight('Първо генерирайте ECDSA P-256 ключ в „Ключове".');
+        return;
+      }
+      setInvitingDoc(doc);
+    } catch {
+      setSignPreflight('Грешка при проверка на ключовете.');
+    } finally {
+      setSignPreflightId(null);
+    }
+  };
+
+  /** Отказва активна multi-signer заявка + презарежда списъка. */
+  const handleCancelRequest = async (requestId: string) => {
+    await multiSignerActions.cancel(requestId);
   };
 
   /** Сваля подписания PDF за вече подписан документ. */
@@ -269,7 +327,15 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
         </div>
       ) : (
         <div className="glass-panel divide-y divide-neutral-100/70 rounded-2xl">
-          {filteredDocuments.map((doc) => (
+          {filteredDocuments.map((doc) => {
+            // ── State A/B/C/D (виж Ден 5 план) ─────────────────────────────
+            const latestRequest = latestRequestByDoc.get(doc.id);
+            const requestStatus = latestRequest?.request.status;
+            const isActiveRequest = requestStatus ? ACTIVE_REQUEST_STATUSES.has(requestStatus) : false; // State B
+            const isCancelledRequest = requestStatus === 'cancelled'; // State D (само hint, doc остава 'uploaded')
+            const totalSigners = latestRequest ? 1 + latestRequest.recipients.length : 1;
+
+            return (
             <div key={doc.id} className="flex gap-3 px-4 py-3 transition-colors hover:bg-white/40">
               {/* Икона */}
               <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
@@ -290,6 +356,11 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <span className="text-xs text-neutral-400">{formatDate(doc.created_at)}</span>
                   <StatusBadge status={doc.status} />
+                  {isCancelledRequest && doc.status !== 'signed' && (
+                    <span className="flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-500">
+                      <Ban size={10} aria-hidden="true" /> Отменено
+                    </span>
+                  )}
 
                   {/* Бутон Преглед */}
                   <button
@@ -304,34 +375,52 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                     Преглед
                   </button>
 
-                  {/* Бутон Подпиши (само за неподписани) */}
-                  {doc.status !== 'signed' && (
-                    <button
-                      onClick={() => handleSignClick(doc)}
-                      disabled={signPreflightId === doc.id}
-                      className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2.5 py-1 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50"
-                    >
-                      {signPreflightId === doc.id
-                        ? <RefreshCw size={11} className="animate-spin" />
-                        : <PenLine size={11} />
-                      }
-                      Подпиши
-                    </button>
+                  {/* State A/D: Подпиши + Изпрати за подписване (не докато чака recipients) */}
+                  {doc.status !== 'signed' && !isActiveRequest && (
+                    <>
+                      <button
+                        onClick={() => handleSignClick(doc)}
+                        disabled={signPreflightId === doc.id}
+                        className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2.5 py-1 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        {signPreflightId === doc.id
+                          ? <RefreshCw size={11} className="animate-spin" />
+                          : <PenLine size={11} />
+                        }
+                        Подпиши
+                      </button>
+                      <button
+                        onClick={() => handleInviteClick(doc)}
+                        disabled={signPreflightId === doc.id}
+                        className="flex items-center gap-1 rounded-lg border border-violet-200 px-2.5 py-1 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 disabled:opacity-50"
+                      >
+                        {signPreflightId === doc.id
+                          ? <RefreshCw size={11} className="animate-spin" />
+                          : <Users size={11} />
+                        }
+                        Изпрати за подписване
+                      </button>
+                    </>
                   )}
 
-                  {/* Бутон Свали подписан (само за подписани) */}
+                  {/* State C: Свали подписан + hint при multi-signer */}
                   {doc.status === 'signed' && doc.signed_storage_path && (
-                    <button
-                      onClick={() => handleDownloadSigned(doc)}
-                      disabled={downloadingSignedId === doc.id}
-                      className="flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-50 disabled:opacity-50"
-                    >
-                      {downloadingSignedId === doc.id
-                        ? <RefreshCw size={11} className="animate-spin" />
-                        : <Download size={11} />
-                      }
-                      Свали подписан
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleDownloadSigned(doc)}
+                        disabled={downloadingSignedId === doc.id}
+                        className="flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-50 disabled:opacity-50"
+                      >
+                        {downloadingSignedId === doc.id
+                          ? <RefreshCw size={11} className="animate-spin" />
+                          : <Download size={11} />
+                        }
+                        Свали подписан
+                      </button>
+                      {totalSigners > 1 && (
+                        <span className="text-xs text-neutral-400">Подписан от {totalSigners} лица</span>
+                      )}
+                    </>
                   )}
 
                   {/* Бутон изтриване */}
@@ -363,8 +452,23 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                   )}
                 </div>
 
+                {/* State B: SigningRequestStatus + CancelSigningRequestButton */}
+                {isActiveRequest && latestRequest && (
+                  <SigningRequestStatus
+                    data={latestRequest}
+                    ownerName={displayName}
+                    actions={
+                      <CancelSigningRequestButton
+                        filename={doc.original_filename}
+                        onCancel={() => handleCancelRequest(latestRequest.request.id)}
+                        onCancelled={() => { load(); showToast('Заявката за подписване е отменена.'); }}
+                      />
+                    }
+                  />
+                )}
+
                 {/* Inline preflight error под бутоните */}
-                {signPreflightId !== doc.id && signPreflight && signingDoc === null && (
+                {signPreflightId !== doc.id && signPreflight && signingDoc === null && invitingDoc === null && (
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
                     {signPreflight}
                     {onNavigateKeys && (
@@ -376,7 +480,8 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -403,6 +508,23 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
             showToast('Документът е подписан успешно.');
           }}
           onClose={() => setSigningDoc(null)}
+        />
+      )}
+
+      {/* Invite Recipients Modal (multi-signer) */}
+      {invitingDoc && (
+        <InviteRecipientsModal
+          documentId={invitingDoc.id}
+          storagePath={invitingDoc.storage_path}
+          filename={invitingDoc.original_filename}
+          userId={userId}
+          ownerEmail={ownerEmail}
+          onDone={(recipientCount) => {
+            setInvitingDoc(null);
+            load();
+            showToast(`Документът е подписан. Изпратени са ${recipientCount} ${recipientCount === 1 ? 'покана' : 'покани'}.`);
+          }}
+          onClose={() => setInvitingDoc(null)}
         />
       )}
 

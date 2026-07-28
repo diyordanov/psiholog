@@ -8,7 +8,79 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅ COMPLETE
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ⏳ (код готов, чака live UI потвърждение)
+
+### Ден 5: Owner UI — InviteRecipientsModal + SigningRequestStatus + CancelSigningRequestButton — код готов (2026-07-28)
+
+5 нови/обновени компонента за owner-ската страна на multi-signer flow-а.
+Recipient UI (Ден 6) и реални email-и (Ден 7) остават извън scope тук.
+
+**Нови файлове:**
+- `src/components/documents/InviteRecipientsModal.tsx` — 3-стъпков модал
+  (`recipients → positions → confirm → signing → success|error`):
+  - Стъпка 1: email input, валидация (format, duplicate, own-email, max 2
+    recipients за MVP), list с "Премахни".
+  - Стъпка 2: PDF thumbnail (преизползва `usePdfThumbnail`/`clickToMarkerPos`
+    от `SignDocumentModal.tsx`, вече export-нати), цветни participant badges
+    (indigo=owner, emerald/amber=recipients), click-to-select participant →
+    click-on-PDF поставя неговия маркер; "Напред" disabled докато не всички
+    имат позиция.
+  - Стъпка 3: преглед + „Подпиши като собственик" — PRF ceremony ПРЕДИ
+    мрежовите извиквания (същия iOS-safe pattern като `SignDocumentModal`),
+    вика `signAsOwner(..., recipients: NewRecipientInput[], ...)`. Success:
+    „Документът е подписан. Изпратени са N покани." (само UI текст — реални
+    email-и са Ден 7), auto-close след 2 сек.
+- `src/components/documents/SigningRequestStatus.tsx` — status ред
+  ("Routing (X/Y)") + expand с owner + всеки recipient (✅/⏳ + дата).
+- `src/components/documents/CancelSigningRequestButton.tsx` — inline
+  confirmation dialog (не native `confirm()`, по модел на soft-delete
+  patterns другаде в проекта) → `signing_requests.status='cancelled'` +
+  audit log `signing_request_cancelled`.
+- `src/lib/signingRequestService.ts` (нов) — `listSigningRequests()`
+  (owner-ските заявки + join-нати recipients, за DocumentList state),
+  `getSigningRequestDetails()`, `cancelSigningRequest()`.
+- `src/hooks/useMultiSignerActions.ts` (нов) — тънък hook около горното;
+  връща `useMemo`-нат обект (не plain literal всеки render — иначе
+  callers, ползващи го като `useCallback`/`useEffect` dependency, влизат в
+  infinite loop, тъй като нов object reference на всеки render винаги
+  "се променя").
+
+**Обновени файлове:**
+- `src/components/documents/DocumentList.tsx` — 4 състояния на документ:
+  - **State A** (`uploaded`, без активна заявка) — „Подпиши" (single-signer,
+    непроменено) + нов „Изпрати за подписване" бутон.
+  - **State B** (`awaiting_recipients`) — action бутоните се крият,
+    `SigningRequestStatus` + `CancelSigningRequestButton` вместо тях.
+  - **State C** (`signed`) — непроменено „Свали подписан"; добавен hint
+    „Подписан от N лица" ако `1 + recipients.length > 1`.
+  - **State D** (`cancelled`, документът остава `uploaded`) — badge
+    „Отменено" ДОПЪЛНИТЕЛНО към нормалните State A бутони (позволява
+    повторен опит — `signAsOwner()`-овият active-request guard проверява
+    само `draft`/`owner_signing`/`awaiting_recipients`, не `cancelled`).
+  - Latest signing_request per документ се определя client-side
+    (`listSigningRequests()` вече е сортиран `created_at DESC`, взима се
+    първото съвпадение по `document_id`).
+- `src/components/documents/SignDocumentModal.tsx` — `usePdfThumbnail`,
+  `ModalHeader`, `ModalFooter`, `InfoRow` вече `export`-нати (бяха
+  file-private) — преизползвани от `InviteRecipientsModal.tsx` вместо
+  дублиране.
+- `src/lib/auditLog.ts` — нов `AuditAction`: `'signing_request_cancelled'`.
+
+**Дизайн решения:**
+- Owner-ски recipients лимит (MAX 2) е enforced само в UI-я
+  (`InviteRecipientsModal`) — backend (`signAsOwner()`) технически поддържа
+  N recipients (Ден 2-4 доказаха N-signer pipeline-а), продуктовото
+  ограничение е съзнателно UI-only за защита пред комисията.
+- Reuse вместо duplication: `usePdfThumbnail`/`clickToMarkerPos`/
+  `ModalHeader`/`ModalFooter`/`InfoRow` от `SignDocumentModal.tsx` — не
+  копие-паст на PDF thumbnail логиката за втори път.
+- `useMultiSignerActions` connection towards `useMemo` (не голо връщане на
+  literal обект) — предотвратява subtle infinite-loop бъг, забелязан преди
+  runtime тестване (не при реален run — code review discipline).
+
+**Статус на тестовете:** `tsc --noEmit` чист, **185/185 unit теста**
+(непроменени — Ден 5 е чисто UI, без нови unit тестове поискани в плана).
+Ръчен UI тест (7 сценария screenshots) — виж по-долу.
 
 ### Ден 4: signingService.ts refactor — signAsOwner() / signAsRecipient() — ЗАВЪРШЕНА ✅ (2026-07-27)
 
@@ -140,6 +212,57 @@ documents.status = signed ✅
 → `/verify` (1 лице, валиден). Потвърждава, че новата `signAsOwner()`-базирана
 `signDocument()` реализация (нов signing_requests ред + нов storage path
 формат за ВСЯКО подписване) не чупи съществуващия production flow.
+
+### Ден 4 — RLS regression safety net (допълнение, 2026-07-27)
+
+По искане: липсваше automated safety net за RLS policies (само ръчен E2E run
+преди). Добавено:
+
+**`scripts/rls-test-0012-0014.sql`** — по модела на `rls-test-0010.sql`, 7
+номерирани теста (SETUP + role simulation през `set local request.jwt.claims`):
+recipient SELECT/UPDATE на своя signing_request (Gap 1/2/3 fix-овете) +
+negative guardrails (чужда заявка, нелинкнат recipient, anon default-deny).
+
+**`scripts/generate-rls-test-0012-0014-data.ts`** (нов helper) — създава
+реалните test записи (2 документа на owner + 2 recipient акаунта) през
+service role и генерира ПОПЪЛНЕН SQL файл (плейсхолдърите заменени с реални
+UUID/email) в `scripts/output/`, готов за paste в SQL Editor — избягва ръчно
+търсене на UUID-и от потребителя.
+
+**Резултат от реалния SQL run — 6/7 директно потвърдени, 1 first-look "провал"
+разрешен:**
+- Тестове 2 (чужда заявка → блокиран), 3 (собствена version UPDATE → успешен,
+  потвърдено директно в DB: `version` реално стана 2), 4 (нелинкнат recipient
+  → 0 реда), 5/6 (documents UPDATE+SELECT → `status='signed'` потвърдено) —
+  верифицирани точно, включително чрез директна admin-client проверка на
+  реалните DB стойности (не само SQL Editor текстов изход).
+- Тест 1 първоначално показа `should_be_1: 0` — **изглеждаше като провал на
+  Gap 1 fix-а**, но директна проверка (`select name, path_tokens,
+  storage.foldername(name) from storage.objects`) разкри истинската причина:
+  SETUP блокът в SQL скрипта никога реално не вкара двата симулирани
+  `storage.objects` реда (raw `insert into storage.objects (bucket_id, name)`
+  очевидно не се е изпълнил като очаквано/не е persist-нал) — **пропуск в
+  моя test setup, не бъг в migration 0012**. Пренаписан verification подход:
+  качени РЕАЛНИ dummy файлове през `admin.storage.upload()` + опит за
+  `download()` като signed-in recipient през истинския Storage API (същия
+  механизъм, който `signAsRecipient()` реално ползва) — резултат: recipient
+  X сваля собствения си файл ✅, чужд файл ❌ (блокиран), recipient Y
+  (нелинкнат) ❌, anon ❌. Всичките 4 сценария коректни.
+- **Обща поука:** SQL Editor role-simulation тестовете са ценни, но директна
+  admin-client проверка на реалните DB/Storage стойности е по-надеждният
+  източник на истина — copy-paste-нати текстови резултати от SQL Editor могат
+  да се объркат в реда/labeling при ръчно compile-ване в чат съобщение.
+
+**`scripts/test-multi-signer-e2e.ts` разширен** — нов `runSingleSignerScenario()`
+(отделен от `runMultiSignerScenario()`, извикват се последователно от `main()`,
+всеки с независим try/finally cleanup): `signAsOwner()` с `recipients: []`,
+проверява `status='completed'` ВЕДНАГА, `documents.status='signed'`, точно 1
+`signatures` ред (id съвпада с `result.signatureId`), 0 `signing_request_
+recipients` редове. И двата сценария (`multi-signer` + `single-signer`)
+изпълнени успешно на реален run.
+
+Всички test акаунти + storage artifacts от днешната сесия почистени (service
+role `deleteUser` + `storage.remove()`).
 
 **Следваща стъпка (Ден 5-6):** UI wiring — Owner flow (InviteRecipientsModal,
 покана на до 2 recipients за MVP), Recipient flow (InvitationLandingPage,

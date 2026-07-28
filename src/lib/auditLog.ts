@@ -22,7 +22,8 @@ export type AuditAction =
   | 'signing_key_generated'
   | 'signing_key_deleted'
   | 'certificate_issued'
-  | 'signature_verified';
+  | 'signature_verified'
+  | 'signing_request_cancelled';
 
 /**
  * Записва едно действие в audit_log.

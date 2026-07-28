@@ -66,7 +66,7 @@ const thumbCache = new Map<string, string>(); // `${docId}:${page}` → JPEG dat
 
 // ─── Hook: зарежда PDF + рендира thumbnail за текущата страница ───────────────
 
-interface ThumbnailState {
+export interface ThumbnailState {
   dataUrl: string | null;
   widthPt: number;
   heightPt: number;
@@ -80,7 +80,7 @@ interface ThumbnailState {
  * страница при нужда. Резултатите се кешират в module-level thumbCache по "docId:page",
  * за да не се рендира наново при връщане на вече видяна страница в рамките на сесията.
  */
-function usePdfThumbnail(signedUrl: string | null, docId: string, page: number): ThumbnailState {
+export function usePdfThumbnail(signedUrl: string | null, docId: string, page: number): ThumbnailState {
   const [state, setState] = useState<ThumbnailState>({
     dataUrl: null, widthPt: 595, heightPt: 842, numPages: 1, loading: true, error: null,
   });
@@ -821,7 +821,7 @@ export default function SignDocumentModal({
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
-function ModalHeader({ step, title, onClose }: { step?: number; title: string; onClose?: () => void }) {
+export function ModalHeader({ step, title, onClose }: { step?: number; title: string; onClose?: () => void }) {
   return (
     <div className="flex items-center justify-between border-b border-neutral-100/70 px-6 py-4">
       <div>
@@ -837,7 +837,7 @@ function ModalHeader({ step, title, onClose }: { step?: number; title: string; o
   );
 }
 
-interface ModalFooterProps {
+export interface ModalFooterProps {
   onBack: () => void;
   backLabel: string;
   onNext: () => void;
@@ -846,7 +846,7 @@ interface ModalFooterProps {
   nextClassName?: string;
 }
 
-function ModalFooter({ onBack, backLabel, onNext, nextLabel, nextDisabled, nextClassName }: ModalFooterProps) {
+export function ModalFooter({ onBack, backLabel, onNext, nextLabel, nextDisabled, nextClassName }: ModalFooterProps) {
   return (
     <div className="flex gap-3 border-t border-neutral-100/70 px-6 py-4">
       <button
@@ -868,7 +868,7 @@ function ModalFooter({ onBack, backLabel, onNext, nextLabel, nextDisabled, nextC
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+export function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2 text-sm">
       <span className="w-28 shrink-0 text-neutral-500">{label}:</span>
