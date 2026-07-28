@@ -6,6 +6,14 @@ import Logo from '../common/Logo';
 
 interface RegisterPasskeyStepProps {
   isNewUser: boolean;
+  /**
+   * true само за нов потребител, дошъл през /invite/ magic link (Ден 7)
+   * — за разлика от нормалната регистрация (SignUpForm), той никога не е
+   * въвеждал име преди signInWithOtp(), затова profiles.display_name пада
+   * на handle_new_user() fallback-а (email адреса). Тук му даваме шанс да
+   * си избере истинско име, преди да продължи.
+   */
+  needsDisplayName?: boolean;
   onDone: () => void;
 }
 
@@ -16,9 +24,11 @@ interface RegisterPasskeyStepProps {
  * регистрацията. Ползва се и от recovery flow-а (isNewUser=false), където
  * потребителят вече е логнат, но старите му passkey-и са изтрити.
  */
-export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPasskeyStepProps) {
+export default function RegisterPasskeyStep({ isNewUser, needsDisplayName, onDone }: RegisterPasskeyStepProps) {
   const [status, setStatus] = useState<'idle' | 'registering' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState('');
+  const showNameField = isNewUser && needsDisplayName;
 
   /**
    * Стартира WebAuthn "create credential" ceremony през Supabase.
@@ -48,6 +58,25 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
     // за да логнем audit събитията с коректен user id.
     const { data } = await supabase.auth.getSession();
     if (data.session) {
+      if (showNameField && displayName.trim()) {
+        const trimmedName = displayName.trim();
+        // Две отделни места пазят display name — трябва да обновим и двете:
+        //   1. auth user_metadata (user.user_metadata.display_name) — UserMenu.tsx
+        //      го чете оттук; при нормален signup (SignUpForm) се сетва АВТОМАТИЧНО
+        //      през signInWithOtp({ data: { display_name } }), но recipient-ският
+        //      account вече съществува (създаден от sendInvitationEmail() БЕЗ име) —
+        //      затова тук е нужен явен updateUser() extra call.
+        //   2. public.profiles.display_name — четено от signingService/
+        //      signingRequestService (signerName в подписа, ownerName в поканите);
+        //      handle_new_user() trigger-ът (migration 0002) вече го е записал с
+        //      fallback стойност (email-а) при създаване на акаунта — презаписваме тук.
+        const [{ error: authErr }, { error: profileErr }] = await Promise.all([
+          supabase.auth.updateUser({ data: { display_name: trimmedName } }),
+          supabase.from('profiles').update({ display_name: trimmedName }).eq('id', data.session.user.id),
+        ]);
+        if (authErr) console.error('Грешка при запис на име (auth):', authErr.message);
+        if (profileErr) console.error('Грешка при запис на име (profiles):', profileErr.message);
+      }
       if (isNewUser) await logAuditEvent(data.session.user.id, 'signup');
       await logAuditEvent(data.session.user.id, 'new_passkey_registered');
     }
@@ -71,6 +100,24 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
           парола следващия път.
         </p>
 
+        {showNameField && status !== 'registering' && (
+          <div className="mt-5 text-left">
+            <label htmlFor="display-name" className="block text-sm font-medium text-neutral-700">
+              Как да те наричаме?
+            </label>
+            <input
+              id="display-name"
+              type="text"
+              required
+              maxLength={50}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white/80 px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              placeholder="напр. Иван"
+            />
+          </div>
+        )}
+
         {status === 'registering' && (
           <p role="status" className="mt-4 text-sm text-neutral-600">
             Потвърди с биометрия или PIN на устройството си в прозореца, който се появи.
@@ -81,7 +128,7 @@ export default function RegisterPasskeyStep({ isNewUser, onDone }: RegisterPassk
 
         <button
           onClick={handleRegister}
-          disabled={status === 'registering'}
+          disabled={status === 'registering' || (showNameField && !displayName.trim())}
           className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-sm font-medium text-white shadow-[0_4px_14px_-2px_rgba(79,70,229,0.4)] transition-all hover:shadow-[0_6px_20px_-2px_rgba(79,70,229,0.5)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {status === 'registering' ? (

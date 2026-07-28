@@ -155,7 +155,13 @@ function AppContent() {
   // Потребителят е логнат, но няма passkey → трябва да регистрира един.
   // Това се случва при: нова регистрация или след успешен recovery flow.
   if (session && !session.user.is_anonymous && needsPasskeySetup) {
-    return <RegisterPasskeyStep isNewUser={isNewUser} onDone={() => setNeedsPasskeySetup(false)} />;
+    return (
+      <RegisterPasskeyStep
+        isNewUser={isNewUser}
+        needsDisplayName={!!inviteMatch}
+        onDone={() => setNeedsPasskeySetup(false)}
+      />
+    );
   }
 
   // /invite/:recipientId — след passkey gate-а: ако е нов recipient, вече е
