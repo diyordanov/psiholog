@@ -77,11 +77,13 @@ function AppContent() {
     return <VerifyPage standalone />;
   }
 
-  // /invite/:recipientId — публичен route (сам управлява собствения си auth state machine)
+  // /invite/:recipientId — за разлика от /verify, НЕ е early return преди
+  // passkey gate-а по-долу: нов recipient (кликнал email покана-линка, виж
+  // sendInvitationEmail в signingRequestService.ts — праща истинска Supabase
+  // OTP сесия, `shouldCreateUser: true`) трябва първо да мине през
+  // RegisterPasskeyStep, преди изобщо да може да подпише нещо. Затова
+  // проверката е разположена СЛЕД needsPasskeySetup gate-а по-долу.
   const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
-  if (inviteMatch) {
-    return <InvitationLandingPage recipientId={inviteMatch[1]} />;
-  }
 
   // Инициализираме на true веднага ако ?recovery=1 е в URL-а.
   // Ако го инициализираме на false и после го сетваме в useEffect,
@@ -154,6 +156,13 @@ function AppContent() {
   // Това се случва при: нова регистрация или след успешен recovery flow.
   if (session && !session.user.is_anonymous && needsPasskeySetup) {
     return <RegisterPasskeyStep isNewUser={isNewUser} onDone={() => setNeedsPasskeySetup(false)} />;
+  }
+
+  // /invite/:recipientId — след passkey gate-а: ако е нов recipient, вече е
+  // регистрирал passkey (клон по-горе); ако не е логнат изобщо,
+  // InvitationLandingPage сам показва not_logged_in + вграден AuthScreen.
+  if (inviteMatch) {
+    return <InvitationLandingPage recipientId={inviteMatch[1]} />;
   }
 
   // Не е логнат → показваме auth екрана (login / signup / recovery избор).

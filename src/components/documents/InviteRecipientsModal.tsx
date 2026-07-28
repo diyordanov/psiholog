@@ -9,14 +9,16 @@
  *
  * State machine: recipients → positions → confirm → signing → success | error
  *
- * НЕ изпраща реални email покани — Ден 7. Тук само UI feedback
- * ("Изпратени са N покани") след успешен signAsOwner().
+ * След успешен signAsOwner() праща реални email покани (Ден 7, best-effort —
+ * виж sendAllInvitationEmails) до всеки recipient чрез send-invitation-email
+ * Edge Function (Resend).
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Mail, Trash2, Fingerprint, AlertTriangle, CheckCircle, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { signAsOwner, resolveSigningKeys, type ResolvedKeys, type SigningRequestResult } from '../../lib/signingService';
 import { usePrfCeremony, type PrfCeremonyResult } from '../../hooks/usePrfCeremony';
+import { getSigningRequestDetails, sendAllInvitationEmails } from '../../lib/signingRequestService';
 import type { NewRecipientInput } from '../../lib/types';
 import {
   clickToMarkerPos, usePdfThumbnail, ModalHeader, ModalFooter, InfoRow, DEFAULT_MARKER,
@@ -341,27 +343,37 @@ interface StepConfirmSignProps {
   onClose: () => void;
   success: SigningRequestResult | null;
   recipientCount: number;
+  emailsSentCount: number | null;
 }
 
 function StepConfirmSign({
   filename, participants, markers, preflightKeys, preflightError,
   onBack, onSign, signing, progress, progressLabel, signError, onRetry, onClose,
-  success, recipientCount,
+  success, recipientCount, emailsSentCount,
 }: StepConfirmSignProps) {
   const hasNoCert = preflightKeys !== null && preflightKeys.ecdsaData.certificateDer == null;
   const blocked = !!preflightError || hasNoCert;
 
   if (success) {
+    const emailStatus = recipientCount === 0
+      ? null
+      : emailsSentCount === null
+        ? 'Изпращаме покани по email…'
+        : emailsSentCount === recipientCount
+          ? `Изпратени са ${emailsSentCount} ${emailsSentCount === 1 ? 'покана' : 'покани'} по email.`
+          : `Изпратени ${emailsSentCount} от ${recipientCount} покани по email — останалите получатели може да получат линка ръчно.`;
+
     return (
       <div>
         <ModalHeader step={3} title="Документът е подписан" />
-        <div className="px-6 py-5">
+        <div className="px-6 py-5 space-y-2">
           <div role="status" className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5">
             <CheckCircle size={15} className="shrink-0 text-emerald-500" aria-hidden="true" />
-            <p className="text-xs font-medium text-emerald-700">
-              Документът е подписан. Изпратени са {recipientCount} {recipientCount === 1 ? 'покана' : 'покани'}.
-            </p>
+            <p className="text-xs font-medium text-emerald-700">Документът е подписан успешно.</p>
           </div>
+          {emailStatus && (
+            <p className="px-1 text-xs text-neutral-500">{emailStatus}</p>
+          )}
         </div>
       </div>
     );
@@ -512,6 +524,7 @@ export default function InviteRecipientsModal({
   const [progressLabel, setProgressLabel] = useState('');
   const [signError, setSignError] = useState<string | null>(null);
   const [signResult, setSignResult] = useState<SigningRequestResult | null>(null);
+  const [emailsSentCount, setEmailsSentCount] = useState<number | null>(null);
 
   useEffect(() => {
     supabase.storage.from('documents').createSignedUrl(storagePath, 300)
@@ -609,7 +622,23 @@ export default function InviteRecipientsModal({
       setProgress(100);
       setProgressLabel('Завършено');
       setSignResult(result);
-      // Auto-close след 2 сек — реалните email покани са Ден 7 (тук само UI feedback).
+
+      // Изпращаме email покани best-effort (Ден 7) — не блокира success екрана,
+      // не отменя вече създадената заявка при неуспех (recipient-ите могат
+      // все пак да получат линка ръчно, виж PendingInvitationsPage).
+      if (recipientEmails.length > 0) {
+        getSigningRequestDetails(result.signingRequestId)
+          .then(({ recipients }) => sendAllInvitationEmails(
+            recipients.map(r => ({ id: r.id, invited_email: r.invited_email })),
+          ))
+          .then(setEmailsSentCount)
+          .catch(err => {
+            console.error('Изпращане на email покани неуспешно:', err);
+            setEmailsSentCount(0);
+          });
+      }
+
+      // Auto-close след 2 сек.
       setTimeout(() => onDone(recipientEmails.length), 2000);
     } catch (err) {
       setSignError(err instanceof Error ? err.message : String(err));
@@ -669,6 +698,7 @@ export default function InviteRecipientsModal({
             onClose={onClose}
             success={signResult}
             recipientCount={recipientEmails.length}
+            emailsSentCount={emailsSentCount}
           />
         )}
       </div>

@@ -188,3 +188,50 @@ export async function listMyInvitations(email: string): Promise<InvitationDetail
 export function isInvitationPending(details: InvitationDetails): boolean {
   return details.recipient.status !== 'signed' && details.request.status === 'awaiting_recipients';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ден 7: Email покани — по същия механизъм като регистрация/recovery
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Праща покана по email до ЕДИН recipient — по абсолютно същия път като
+ * signup/recovery имейлите (Фаза 1): `supabase.auth.signInWithOtp()`.
+ * Съзнателно НЕ ползваме отделен Resend Edge Function/API key — reuse-ваме
+ * вече работещата (и в production потвърдена) Supabase SMTP конфигурация,
+ * която праща до произволен адрес (не e ограничена до един sandbox акаунт).
+ *
+ * `emailRedirectTo` сочи към /invite/:recipientId вместо стандартния следсигн-ъп
+ * път — при клик, recipient-ът получава РЕАЛНА сесия (нов user, ако имейлът
+ * не е регистриран — `shouldCreateUser: true`, идентично на нормалния signup)
+ * И директно каца на InvitationLandingPage. Ако е нов потребител без passkey,
+ * App.tsx routing-ът (виж bugfix там) първо го прекарва през
+ * RegisterPasskeyStep, преди да покаже поканата.
+ *
+ * Best-effort: неуспех тук НЕ отменя вече създадената покана в базата
+ * (recipient-ът може все пак да получи линка ръчно) — само хвърля за UI-я
+ * да покаже предупреждение.
+ */
+export async function sendInvitationEmail(recipientId: string, invitedEmail: string): Promise<void> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email: invitedEmail,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: `${window.location.origin}/invite/${recipientId}`,
+    },
+  });
+  if (error) throw new Error(`Грешка при изпращане на покана: ${error.message}`);
+}
+
+/**
+ * Праща покани до всички recipients на заявка (след успешен signAsOwner()).
+ * Partial failure е ОК (Promise.allSettled) — връща брой успешно изпратени,
+ * за UI feedback ("Изпратени са N от M покани по email").
+ */
+export async function sendAllInvitationEmails(
+  recipients: { id: string; invited_email: string }[],
+): Promise<number> {
+  const results = await Promise.allSettled(
+    recipients.map(r => sendInvitationEmail(r.id, r.invited_email)),
+  );
+  return results.filter(r => r.status === 'fulfilled').length;
+}

@@ -8,7 +8,60 @@
 
 ---
 
-## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ✅, Ден 6 ⏳ (код готов, чака live UI потвърждение + screenshots)
+## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ✅, Ден 6 ⏳ (код готов, чака live UI потвърждение + screenshots), Ден 7 (email покани) ✅ реализирано по-рано от плана
+
+### Ден 7 (изтеглен по-рано, преди финалните Ден 6 screenshots): реални email покани (2026-07-28)
+
+Причина да се изтегли напред: тестването на Ден 6 (recipient флоу) изискваше
+покана до НЕрегистриран email адрес (`fanimefrenzyy@gmail.com`) — без реален
+email доставяне единственият начин да се тества е ръчно копиране на
+`/invite/:id` линка, което е недостатъчно за пълен E2E цикъл.
+
+**Първи опит (отхвърлен от потребителя):** отделен `send-invitation-email`
+Edge Function, викащ директно Resend HTTP API с нов, самостоятелен
+`RESEND_API_KEY` secret. Проблем: Resend sandbox режим (без верифициран
+домейн) изпраща само до собствения email на Resend акаунта — не до
+произволни адреси, точно каквото трябваше да се тества. Deploy-нат и после
+изтрит (`supabase functions delete send-invitation-email`) след обратна
+връзка от потребителя.
+
+**Финален подход:** reuse на СЪЩИЯ механизъм, който вече праща signup/recovery
+имейлите (Фаза 1) — `supabase.auth.signInWithOtp()`. Няма нов Edge Function,
+няма нов Resend API key, няма sandbox ограничение (доказано работи с
+произволни адреси в production още от Фаза 1 тестването).
+- `src/lib/signingRequestService.ts` — `sendInvitationEmail(recipientId, invitedEmail)`
+  вика `signInWithOtp({ email: invitedEmail, options: { shouldCreateUser: true,
+  emailRedirectTo: '<origin>/invite/<recipientId>' } })`. `shouldCreateUser: true`
+  — идентично на нормалния signup за нерегистриран email; за вече регистриран
+  recipient просто го логва през magic link. `sendAllInvitationEmails()` —
+  Promise.allSettled batch wrapper, връща брой успешно изпратени за UI feedback.
+- `src/components/documents/InviteRecipientsModal.tsx` — след успешен
+  `signAsOwner()`, fetch-ва новосъздадените recipient редове
+  (`getSigningRequestDetails`) и праща покани best-effort (неуспех не отменя
+  вече създадената заявка). Success екранът показва "Изпратени X от Y покани
+  по email" (или "останалите получатели може да получат линка ръчно" при
+  partial failure).
+- **`src/App.tsx` критичен routing fix:** `/invite/:recipientId` вече НЕ е
+  early-return преди passkey gate-а (за разлика от `/verify`) — преместен е
+  СЛЕД `needsPasskeySetup` проверката. Причина: нов recipient, кликнал
+  magic link имейла, получава РЕАЛНА сесия директно (не anonymous) — ако
+  `/invite/` route-ът бе early-return преди passkey проверката, нов recipient
+  без passkey би кацнал направо на `InvitationLandingPage` без възможност да
+  регистрира passkey, и всеки опит за подпис би fail-нал с "Няма активен
+  ECDSA P-256 ключ" без изход. Сега: нов recipient → `RegisterPasskeyStep`
+  първо → чак после `InvitationLandingPage`. Вече регистриран recipient
+  (има passkey) минава директно.
+
+**Known limitation (документирано, не блокира):** email темплейтът е
+Supabase-related default "magic link" (на английски — виж Фаза 1 known issue
+#2), не custom-brand-иран "X ви покани да подпишете Y" — reuse-ването на
+`signInWithOtp` жертва custom съдържание за сигурна, вече доказана доставка.
+Custom Bulgarian template за тази конкретна операция е future work (изисква
+custom SMTP template в Supabase Dashboard, не код).
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **189/189 unit
+теста** (без нови — чисто integration промяна, разчита на съществуващото
+`signInWithOtp` покритие от Фаза 1).
 
 ### Ден 6 hotfix: критичен RLS bug (преждевременно "completed") + латиница в recipient маркерите (2026-07-28)
 
