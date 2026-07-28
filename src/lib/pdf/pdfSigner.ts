@@ -89,6 +89,35 @@ function formatDisplayDate(d: Date): string {
   return `${p(d.getUTCDate())}.${p(d.getUTCMonth()+1)}.${d.getUTCFullYear()} г.`;
 }
 
+/** Кирилица → латиница (официална българска транслитерация), + strip на всичко извън printable ASCII. */
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  а:'a', б:'b', в:'v', г:'g', д:'d', е:'e', ж:'zh', з:'z', и:'i', й:'y',
+  к:'k', л:'l', м:'m', н:'n', о:'o', п:'p', р:'r', с:'s', т:'t', у:'u',
+  ф:'f', х:'h', ц:'ts', ч:'ch', ш:'sh', щ:'sht', ъ:'a', ь:'y', ю:'yu', я:'ya',
+};
+
+/**
+ * Транслитерира кирилица → латиница за WinAnsi-safe текст в recipient
+ * маркерите (виж бележката в prepareIncrementalSignature: incremental
+ * update-ът е ръчна PDF byte manipulation, без CID font embedding — само
+ * base-14 Helvetica/WinAnsiEncoding, затова кирилица не може да се рисува).
+ * Всичко извън printable ASCII (0x20–0x7E) след транслитерацията се маха.
+ */
+export function transliterateToLatin(text: string): string {
+  const transliterated = text.replace(/./gu, (ch) => {
+    const lower = ch.toLowerCase();
+    const mapped = CYRILLIC_TO_LATIN[lower];
+    if (mapped === undefined) return ch;
+    return ch === lower ? mapped : mapped[0].toUpperCase() + mapped.slice(1);
+  });
+  return transliterated.replace(/[^\x20-\x7E]/g, '');
+}
+
+/** Escape-ва \, ( и ) за PDF literal string литерали (напр. в content streams). */
+function escapePdfLiteral(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
 function toBase64url(bytes: Uint8Array): string {
   let s = '';
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
@@ -637,18 +666,33 @@ export async function prepareIncrementalSignature(
     `/P ${pageNum} 0 R\n/T (${fieldName})\n/F 4\n/AP << /N ${formObjNum} 0 R >>\n>>\nendobj\n`,
   );
 
-  // Appearance stream: само рамка/фон (без текст — избягва CID font encoding
-  // за кирилица в raw incremental update; виж бележка в началото на Стъпка 5).
+  // Appearance stream: рамка/фон + текст с base-14 Helvetica/WinAnsiEncoding
+  // (БЕЗ embedded Unicode font — CID font embedding в raw incremental update
+  // е значително по-сложно (FontFile2/CIDToGIDMap/ToUnicode graft) и рисково
+  // за вече крехкия append-only PDF pipeline; виж бележка в началото на
+  // Стъпка 5). Затова signerName се транслитерира кирилица→латиница
+  // (transliterateToLatin) — маркерът е на латиница, за разлика от
+  // owner-ския (preparePdfForSigning), който има пълна кирилица.
   // Координати спрямо собствения /BBox на формата (0,0)-(MARKER_W,MARKER_H),
   // Widget-ният /Rect позиционира формата на страницата.
   const formOffset = offset + 1;
+  const latinSignerName = escapePdfLiteral(transliterateToLatin(signerName)) || 'Signer';
+  const displayDate = `${String(signingDate.getUTCDate()).padStart(2, '0')}.${String(signingDate.getUTCMonth() + 1).padStart(2, '0')}.${signingDate.getUTCFullYear()}`;
   const apStreamContent =
     'q\n0.94 0.94 0.98 rg\n0.25 0.25 0.70 RG\n0.5 w\n' +
-    `0.25 0.25 ${MARKER_W - 0.5} ${MARKER_H - 0.5} re\nB\nQ\n`;
+    `0.25 0.25 ${MARKER_W - 0.5} ${MARKER_H - 0.5} re\nB\nQ\n` +
+    'BT\n' +
+    `/F1 8 Tf 0.15 0.15 0.60 rg 5 37 Td (Digitally signed) Tj\n` +
+    `0 -12 Td /F1 8 Tf 0 0 0 rg (${latinSignerName}) Tj\n` +
+    `0 -12 Td /F1 7 Tf 0.3 0.3 0.3 rg (${displayDate}) Tj\n` +
+    `0 -10 Td /F1 6 Tf 0.5 0.5 0.5 rg (ECDSA P-256) Tj\n` +
+    'ET\n';
   const apStreamBytes = enc.encode(apStreamContent);
   push(
     `\n${formObjNum} 0 obj\n<<\n/Type /XObject\n/Subtype /Form\n` +
-    `/BBox [0 0 ${MARKER_W} ${MARKER_H}]\n/Resources << >>\n/Length ${apStreamBytes.length}\n>>\n` +
+    `/BBox [0 0 ${MARKER_W} ${MARKER_H}]\n` +
+    `/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> >> >>\n` +
+    `/Length ${apStreamBytes.length}\n>>\n` +
     `stream\n${apStreamContent}endstream\nendobj\n`,
   );
 

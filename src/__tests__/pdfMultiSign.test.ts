@@ -16,7 +16,7 @@ import * as x509 from '@peculiar/x509';
 import {
   preparePdfForSigning, computeByteRanges, patchByteRangeInPlace, hashByteRanges,
   injectSignatureAndPQ, prepareIncrementalSignature, injectIncrementalSignature,
-  findPattern,
+  findPattern, transliterateToLatin,
 } from '../lib/pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from '../lib/pdf/cmsBuilder';
 import { initTestKeys, MINIMAL_PDF, type TestKeys } from './helpers/signingFixtures';
@@ -216,6 +216,34 @@ describe('prepareIncrementalSignature / injectIncrementalSignature', () => {
         markerX: 30, markerY: 30, pageIndex: 5, fieldName: 'Signature2',
       }),
     ).rejects.toThrow(/страница/);
+  });
+
+  it('appearance stream-ът съдържа транслитерираното (латиница) име на recipient-a', async () => {
+    const sig1 = await signAsOwner();
+    const prepared = await prepareIncrementalSignature(
+      sig1.bytes, 'Иван Петров', SIGNING_DATE,
+      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2' },
+    );
+    const text = new TextDecoder('latin1').decode(prepared.bytes);
+    expect(text).toContain('(Ivan Petrov) Tj');
+    expect(text).toContain('/BaseFont /Helvetica');
+    expect(text).not.toMatch(/[Ѐ-ӿ]/); // без кирилица в новите байтове
+  });
+});
+
+describe('transliterateToLatin', () => {
+  it('транслитерира кирилица към латиница по българската официална транслитерация', () => {
+    expect(transliterateToLatin('Иван Петров')).toBe('Ivan Petrov');
+    expect(transliterateToLatin('Дъщеря')).toBe('Dashterya');
+    expect(transliterateToLatin('Щастие')).toBe('Shtastie');
+  });
+
+  it('оставя ASCII текст непроменен', () => {
+    expect(transliterateToLatin('John Smith 123')).toBe('John Smith 123');
+  });
+
+  it('маха всичко извън printable ASCII след транслитерация (safety net)', () => {
+    expect(transliterateToLatin('Café')).toBe('Caf');
   });
 });
 

@@ -10,6 +10,62 @@
 
 ## Фаза 8: Multi-signer workflow (DocuSign-style) — Ден 1 ✅, Ден 2 Стъпка 1 ✅, Ден 2 Стъпка 2 ✅, Ден 3 ✅, Ден 4 ✅, Ден 5 ✅, Ден 6 ⏳ (код готов, чака live UI потвърждение + screenshots)
 
+### Ден 6 hotfix: критичен RLS bug (преждевременно "completed") + латиница в recipient маркерите (2026-07-28)
+
+Открито при първия реален live E2E тест (2 recipients: 1 регистриран, 1 не):
+след като подписа само ЕДИНИЯТ recipient, заявката премина в `completed` и
+документът в `signed`, въпреки че вторият recipient изобщо не беше подписал
+(нито дори claim-нал поканата).
+
+**Root cause:** `attemptRecipientSign()` (`signingService.ts`) проверява дали
+ВСИЧКИ recipients са подписали чрез SELECT към `signing_request_recipients`,
+изпълнен от СЕСИЯТА НА RECIPIENT-А (не owner). Съществуващите RLS policies
+(migration 0010) позволяват на recipient да вижда само СОБСТВЕНИЯ си ред —
+никаква policy не позволяваше да види redовете на другите recipients на
+същата заявка. Заявката тихо връщаше 1 ред (своя, `signed`) →
+`.every(r => r.status === 'signed')` на единичен елемент → тривиално `true`
+→ преждевременно завършване. Класически RLS "тих филтър вместо грешка" бъг,
+от същото семейство като migrations 0013/0014.
+
+**Fix:**
+- `supabase/migrations/0016_recipient_select_sibling_recipients.sql` — нов
+  SELECT policy `recipients_select_siblings`, ползващ съществуващия
+  `is_signing_request_recipient()` helper (migration 0011) — claim-нат
+  recipient вижда ВСИЧКИ redове на заявката, на която е участник (не само
+  своя). Мигрецията включва и data-repair UPDATE за вече повредени тестови
+  заявки (връща `completed`→`awaiting_recipients`, `signed`→`uploaded`,
+  запазвайки реалния файл/version непроменени — само DB статус полетата
+  бяха грешни).
+
+Отделно, тестването разкри че recipient-ските визуални маркери (за разлика
+от owner-ския) са напълно празни (само рамка, без текст) — това е
+съзнателно Ден 2 архитектурно решение (append-only incremental update,
+ръчна PDF byte manipulation, без CID Unicode font embedding), но изглежда
+недовършено визуално. Решено (по избор на потребителя, cost/risk trade-off):
+- `src/lib/pdf/pdfSigner.ts` — `prepareIncrementalSignature()` вече рисува
+  текст в appearance stream-а чрез base-14 Helvetica/WinAnsiEncoding (БЕЗ
+  font embedding — Helvetica е винаги наличен, не изисква FontFile2/
+  CIDToGIDMap/ToUnicode graft). `signerName` минава през нов
+  `transliterateToLatin()` helper (официална българска транслитерация,
+  кирилица→латиница, + strip на всичко извън printable ASCII като safety
+  net) — recipient маркерите са на латиница ("Digitally signed" / транслит.
+  име / дата / "ECDSA P-256"), за разлика от owner-ския маркер (пълна
+  кирилица, през нормален pdf-lib `embedFont`). Пълно кирилица CID font
+  embedding в raw incremental update е документирано като future work
+  (значително по-скъп/рисков подход — нов helper модул + graft на font
+  object graph с renumbering в крехкия append-only pipeline).
+- 4 нови unit теста в `pdfMultiSign.test.ts`: `transliterateToLatin()`
+  (транслитерация, ASCII passthrough, non-ASCII strip) + appearance stream
+  съдържа транслитерираното име и `/BaseFont /Helvetica`, без кирилица в
+  новите байтове.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **189/189 unit
+теста** (185 + 4 нови).
+
+**ВАЖНО: migration 0016 трябва да се приложи ръчно в Supabase SQL Editor**
+преди следващия E2E тест — иначе бъгът с преждевременното завършване ще се
+повтори.
+
 ### Ден 6: Recipient UI — InvitationLandingPage + PendingInvitationsPage + RecipientSigningModal — код готов (2026-07-28)
 
 Recipient-ската страна на multi-signer flow-а — огледален на Ден 5 (owner UI), но
