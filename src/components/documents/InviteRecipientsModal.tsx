@@ -13,7 +13,7 @@
  * ("Изпратени са N покани") след успешен signAsOwner().
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Mail, Trash2, Fingerprint, AlertTriangle, CheckCircle, Users } from 'lucide-react';
+import { Mail, Trash2, Fingerprint, AlertTriangle, CheckCircle, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { signAsOwner, resolveSigningKeys, type ResolvedKeys, type SigningRequestResult } from '../../lib/signingService';
 import { browserPrfExtractor, browserDualPrfExtractor } from '../../lib/crypto/keyProtection';
@@ -121,7 +121,7 @@ function StepRecipients({ recipientEmails, error, onAdd, onRemove, onNext, onClo
             <input
               type="email"
               value={input}
-              onChange={(e) => { setInput(e.target.value); setError(null); }}
+              onChange={(e) => setInput(e.target.value)}
               placeholder="email@example.com"
               className="w-full rounded-xl border border-neutral-200 bg-white/80 py-2 pl-9 pr-3 text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-100"
             />

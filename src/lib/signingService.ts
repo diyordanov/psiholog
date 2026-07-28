@@ -568,13 +568,16 @@ async function fetchSigningRequestForSigning(signingRequestId: string): Promise<
  * loop. Хвърля ConcurrentSignError при optimistic-concurrency конфликт
  * (друг recipient е подписал междувременно); всички други грешки (validation,
  * PRF cancel, липсващи ключове) излизат директно, без retry.
+ *
+ * Забележка: няма fontBytes параметър — за разлика от signAsOwner(),
+ * prepareIncrementalSignature() (Ден 2) НЕ рисува текст в recipient-ския
+ * маркер (само фон+рамка), затова шрифт не е нужен тук.
  */
 async function attemptRecipientSign(
   recipientId: string,
   userId: string,
   signerName: string,
   rpId: string,
-  fontBytes: Uint8Array | undefined,
   extractPrf: PrfExtractor | undefined,
   extractDualPrf: DualPrfExtractor | undefined,
   onProgress: ((pct: number, label: string) => void) | undefined,
@@ -783,7 +786,6 @@ export async function signAsRecipient(
   userId: string,
   signerName: string,
   rpId: string,
-  fontBytes?: Uint8Array,
   extractPrf?: PrfExtractor,
   extractDualPrf?: DualPrfExtractor,
   onProgress?: (pct: number, label: string) => void,
@@ -791,7 +793,7 @@ export async function signAsRecipient(
   for (let attempt = 1; attempt <= MAX_RECIPIENT_SIGN_RETRIES; attempt++) {
     try {
       return await attemptRecipientSign(
-        recipientId, userId, signerName, rpId, fontBytes, extractPrf, extractDualPrf, onProgress,
+        recipientId, userId, signerName, rpId, extractPrf, extractDualPrf, onProgress,
       );
     } catch (e) {
       if (!(e instanceof ConcurrentSignError)) throw e;

@@ -82,6 +82,38 @@ Recipient UI (Ден 6) и реални email-и (Ден 7) остават из�
 (непроменени — Ден 5 е чисто UI, без нови unit тестове поискани в плана).
 Ръчен UI тест (7 сценария screenshots) — виж по-долу.
 
+**Критичен methodology gap, открит от Cloudflare build failure (2026-07-28):**
+Първият push (`f9c1ef3`) провали Cloudflare build-а с 4 грешки, които
+локалният `npx tsc --noEmit` НЕ хвана нито веднъж през цялата Фаза 8 сесия.
+Причина: `tsconfig.json` в проекта има `"files": []` + `"references"` (към
+`tsconfig.app.json`/`tsconfig.node.json`) — стандартен TS project-references
+setup. Plain `tsc --noEmit` (без `-b`) **не следва references** — с
+`files: []` и без `include`, той type-check-ва **нула файла** и връща exit
+0 мълчаливо (`--listFiles` потвърди: празен output). Всяко „tsc чист" твърдение
+в тази сесия (Ден 3, 4, 5) е било невярно увереност — командата никога не е
+проверявала нищо. `npm run build` (реалната команда, която Cloudflare вика)
+използва `tsc -b`, което ПРАВИЛНО следва references и type-check-ва всичко.
+
+**Поправка занапред:** от тук нататък type-check се прави с `npx tsc -b`
+(или директно `npm run build`), НЕ с bare `npx tsc --noEmit`.
+
+**4-те реални грешки, останали скрити:**
+1. `InviteRecipientsModal.tsx` — неизползван `X` import от lucide-react.
+2. `InviteRecipientsModal.tsx` — reference към несъществуващ `setError` (leftover
+   от рефакторинг, който премести error state-а в родителския компонент).
+3. `signingService.ts` — неизползван `fontBytes` параметър в
+   `attemptRecipientSign()`/`signAsRecipient()` (recipient маркерите никога
+   не са рисували текст — Ден 2 архитектурно решение — параметърът просто
+   не е бил нужен; премахнат изцяло от сигнатурата, вместо `void` hack).
+4. `supabase.ts` — директна `process.env` референция (добавена вчера за
+   Node script съвместимост) чупи browser build-а, защото
+   `tsconfig.app.json` няма `@types/node`. Fix: достъп през `globalThis`
+   с inline type cast, вместо bare `process` идентификатор — работи и в
+   браузъра (undefined → fallback към `import.meta.env`), и в Node.
+
+Всички 4 поправени, `npx tsc -b --force` и `npm run build` (пълния
+Cloudflare build) потвърдени чисти локално преди повторен push.
+
 ### Ден 4: signingService.ts refactor — signAsOwner() / signAsRecipient() — ЗАВЪРШЕНА ✅ (2026-07-27)
 
 Backend logic за multi-signer signing flow, преди UI (Ден 5-6) и email (Ден 7).

@@ -8,10 +8,14 @@
 import { createClient } from '@supabase/supabase-js';
 
 // import.meta.env е Vite-специфично — недостъпно при `tsx` Node скриптове
-// (виж scripts/test-multi-signer-e2e.ts). process.env fallback е само за
-// тази ситуация; в браузъра import.meta.env винаги е налично и има приоритет.
-const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+// (виж scripts/test-multi-signer-e2e.ts). Node env fallback е само за тази
+// ситуация; в браузъра import.meta.env винаги е налично и има приоритет.
+// Достъпваме process ЧРЕЗ globalThis (не директно) — browser tsconfig-ът
+// (tsconfig.app.json) няма @types/node, директна `process` референция чупи
+// production build-а (tsc -b), макар да минава под plain `tsc --noEmit`.
+const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL ?? nodeEnv?.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY ?? nodeEnv?.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(

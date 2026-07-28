@@ -277,7 +277,7 @@ async function runMultiSignerScenario(
 
     console.log('\n✍️  Recipient: signAsRecipient()...');
     const recipientResult = await signAsRecipient(
-      recipientRowId, recipient.userId, 'E2E Recipient', 'localhost', fontBytes, recipient.extractPrf,
+      recipientRowId, recipient.userId, 'E2E Recipient', 'localhost', recipient.extractPrf,
     );
     console.log(`   ✓ version = ${recipientResult.version}, allSigned = ${recipientResult.allSigned}, status = ${recipientResult.status}`);
     if (!recipientResult.allSigned || recipientResult.status !== 'completed') {
