@@ -1,14 +1,18 @@
 /**
  * useNotifications.ts
  * In-app нотификации (Ден 6 hotfix v4) — списък + unread брой за bell iconа
- * в главната навигация. Explicit refetch (не realtime subscription — виж
- * usePendingInvitationsCount.ts за същото design решение и обосновка).
+ * в главната навигация. Explicit refetch pattern (не realtime subscription —
+ * няма realtime инфраструктура другаде в проекта) — вместо това периодично
+ * polling + refresh при връщане към таба/фокус на прозореца, за да не се
+ * налага презареждане на страницата, докато нова нотификация пристигне.
  */
 import { useState, useCallback, useEffect } from 'react';
 import {
   listNotifications, getUnreadNotificationCount, markNotificationRead, markAllNotificationsRead,
 } from '../lib/notificationService';
 import type { NotificationRow } from '../lib/types';
+
+const POLL_INTERVAL_MS = 30_000;
 
 export function useNotifications(enabled: boolean) {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
@@ -26,6 +30,20 @@ export function useNotifications(enabled: boolean) {
   }, [enabled]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const interval = setInterval(refresh, POLL_INTERVAL_MS);
+    const onFocus = () => refresh();
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [enabled, refresh]);
 
   const markRead = useCallback(async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read_at: n.read_at ?? new Date().toISOString() } : n));
