@@ -63,6 +63,51 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v5: ML-DSA-65 хибридни подписи и за recipients (2026-07-29)
+
+Потребителят забеляза verify резултат "authentic_with_warnings" при 3-подписан
+документ и попита директно — по заданието (`PROJECT_BRIEF.md`, "Ключово
+изискване") потребителят трябва да има И двата типа ключове преди да може да
+подписва. Recipient (incremental) flow-ът никога не е ползвал ML-DSA-65,
+дори когато recipient-ът реално има такъв ключ — архитектурно решение от
+Ден 2, документирано като "следваща задача, не част от този scope", която
+така и не се случи. Реално разминаване със заданието, не само козметично
+предупреждение — коригирано в тази стъпка.
+
+**Ключово откритие, което намали обхвата значително:** verify/read pipeline-ът
+(`pdfVerifier.ts extractAllPqStreams()`, Ден 3) вече беше построен forward-compatible
+за точно този сценарий — коментар в кода: "recipients в incremental flow-а
+нямат PQ, но бъдещ N-PQ сценарий трябва да работи без промяна тук". Нужна
+беше промяна САМО в write пътя:
+
+- `pdfSigner.ts` — `injectIncrementalSignature()` вече приема опционален
+  `pqData` параметър и append-ва `/PostQuantumSignature` incremental block
+  чрез вече съществуващата `buildPqIncrementalUpdate()` (напълно генерична,
+  независима дали PDF-ът идва от owner или recipient пътя — reuse без промяна).
+- `signingService.ts` `attemptRecipientSign()` — премахнат старият `void
+  mlDsaSecretKey` discard; ако recipient-ът има ML-DSA ключ, подписва
+  message digest-а и с него (`signWithMlDsa`), строи `pqData` със
+  `signerIndex = newVersion - 1` (0-based файлов ред, съвпада с
+  `/Sig` обектите), записва `ml_dsa_key_id` в `signatures` реда (преди
+  хардкоднато `null`). PRF ceremony machinery-то (`decryptSigningSecretKeys`,
+  вече общо между owner/recipient пътищата) не се нуждаеше от промяна —
+  вече декриптираше двата ключа генерично, само резултатът се e пилееше.
+- `RecipientSigningModal.tsx` — UI паритет с owner-ския SignDocumentModal:
+  показва "ECDSA P-256 + ML-DSA-65 (хибриден)" вместо "не се ползва за
+  incremental", amber warning + "Генерирай ML-DSA-65 ключ →" линк при
+  липсващ ключ (soft-warn, не hard-block — съзнателно съответства на
+  съществуващото owner UX поведение, не въвежда нова асиметрия), нова
+  progress стъпка (55 ECDSA → 70 ML-DSA → 85 качване, вместо старото 55→75).
+- 3 нови integration теста в `verifyService.test.ts` (нов describe "N=2
+  подписа, recipient С ML-DSA") — потвърждават през РЕАЛНИЯ
+  `verifyDocument()` pipeline: и двата подписа имат валиден ML-DSA,
+  `overall` вече е `authentic` (не `authentic_with_warnings` — "смесената"
+  защита вече не съществува, когато и двамата имат PQ), signerIndex-ите на
+  PQ streams-овете съвпадат с ECDSA signerIndex.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **197/197 unit
+теста** (194 + 3 нови).
+
 ### Ден 6 hotfix v4: overflow fix (auto-layout маркери) + пълна кирилица + in-app нотификации (2026-07-29)
 
 Live тестване разкри 4 отделни проблема след hotfix v1-v3: (1) дълги имена

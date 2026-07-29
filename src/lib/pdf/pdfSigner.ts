@@ -773,18 +773,29 @@ export async function prepareIncrementalSignature(
 }
 
 /**
- * Инжектира CMS DER в /Contents placeholder-а на incremental подпис (Стъпка
- * 5) — БЕЗ /PostQuantumSignature append (виж бележка в началото на Стъпка 5:
- * Ден 2 Стъпка 1 тества чист ECDSA/CMS incremental primitive; PQ per-signer
- * интеграция е следваща задача, не част от този scope).
+ * Инжектира CMS DER в /Contents placeholder-а на incremental подпис (Стъпка 5)
+ * + опционален /PostQuantumSignature incremental block (ML-DSA-65 за
+ * recipient-и — Ден 6 hotfix v5, per заданието "потребителят трябва да има
+ * И двата типа ключове преди да може да подписва"). Reuse-ва
+ * buildPqIncrementalUpdate() — вече генерична функция, независима от това
+ * дали PDF-ът идва от preparePdfForSigning (owner) или тук (recipient); виж
+ * extractAllPqStreams() в pdfVerifier.ts, вече проектирана да чете N streams.
  */
 export function injectIncrementalSignature(
   prepared: PreparedIncrementalSignature,
   cmsDer: Uint8Array,
+  pqData?: PqSignatureData | null,
 ): Uint8Array {
   const result = new Uint8Array(prepared.bytes);
   fillContentsPlaceholder(result, prepared.contentsOffset, cmsDer);
-  return result;
+  if (!pqData) return result;
+
+  const pqJsonBytes = new TextEncoder().encode(JSON.stringify(pqData));
+  const pqUpdate = buildPqIncrementalUpdate(result, pqJsonBytes);
+  const finalPdf = new Uint8Array(result.length + pqUpdate.length);
+  finalPdf.set(result, 0);
+  finalPdf.set(pqUpdate, result.length);
+  return finalPdf;
 }
 
 // ─── Публично помощно API ─────────────────────────────────────────────────────

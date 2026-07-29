@@ -324,9 +324,15 @@ async function signAsOwner(withPq: boolean) {
   return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
 }
 
-/** Recipient: prepareIncrementalSignature + injectIncrementalSignature (без PQ — incremental flow не го поддържа). */
+/**
+ * Recipient: prepareIncrementalSignature + injectIncrementalSignature.
+ * `withPq` (Ден 6 hotfix v5) — вгражда ML-DSA-65 /PostQuantumSignature block
+ * със signerIndex = позицията на recipient-а във файла (същия pattern като
+ * signAsOwner(withPq) по-горе, само с explicit index вместо винаги 0).
+ */
 async function signAsRecipient(
-  prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array, fieldName: string, markerX: number,
+  prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array,
+  fieldName: string, markerX: number, signerIndex: number, withPq = false,
 ) {
   const prepared = await prepareIncrementalSignature(
     prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes },
@@ -342,7 +348,21 @@ async function signAsRecipient(
     ),
   );
   const cmsDer = buildCmsDetached(messageDigest, sigP1363, certDer, keys.rootCaCertDer);
-  return injectIncrementalSignature(prepared, cmsDer);
+
+  let pqData = null;
+  if (withPq) {
+    const mlSig = ml_dsa65.sign(messageDigest, keys.mlDsaSecretKey);
+    pqData = {
+      algorithm: 'ml-dsa-65',
+      signedHash: encodeBase64url(messageDigest),
+      signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
+      attestation: { hasCert: false },
+      byteRange: [...byteRange],
+      signerIndex,
+    };
+  }
+  return injectIncrementalSignature(prepared, cmsDer, pqData);
 }
 
 describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', () => {
@@ -361,7 +381,7 @@ describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', (
     recipientCertDer = new Uint8Array(cert.rawData);
 
     const ownerSigned = await signAsOwner(true); // owner ИМА PQ
-    dualSigned = await signAsRecipient(ownerSigned, 'Recipient N2', recipientKeys.privateKey, recipientCertDer, 'Signature2', 260);
+    dualSigned = await signAsRecipient(ownerSigned, 'Recipient N2', recipientKeys.privateKey, recipientCertDer, 'Signature2', 260, 1);
   }, 60_000);
 
   it('totalSigners е 2', async () => {
@@ -403,6 +423,47 @@ describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', (
   });
 });
 
+describe('N=2 подписа, recipient С ML-DSA (Ден 6 hotfix v5 — hybrid incremental)', () => {
+  let recipientKeys: CryptoKeyPair;
+  let recipientCertDer: Uint8Array;
+  let hybridDualSigned: Uint8Array;
+
+  beforeAll(async () => {
+    recipientKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const cert = await x509.X509CertificateGenerator.create({
+      serialNumber: '31', subject: 'CN=Recipient Hybrid', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipientKeys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    recipientCertDer = new Uint8Array(cert.rawData);
+
+    const ownerSigned = await signAsOwner(true); // owner ИМА PQ
+    // recipient СЪЩО ИМА PQ (withPq=true, signerIndex=1) — тества
+    // extractAllPqStreams() с ВТОРИ /PostQuantumSignature incremental block.
+    hybridDualSigned = await signAsRecipient(
+      ownerSigned, 'Recipient Hybrid', recipientKeys.privateKey, recipientCertDer, 'Signature2', 260, 1, true,
+    );
+  }, 60_000);
+
+  it('и двата подписа имат валиден ML-DSA (не само owner-ският)', async () => {
+    const r = await verify(hybridDualSigned);
+    expect(r.signers[0].mlDsa?.status).toBe('valid');
+    expect(r.signers[1].mlDsa?.status).toBe('valid');
+  });
+
+  it('overall е authentic (НЕ with_warnings — и двамата имат PQ, няма "смесена" защита)', async () => {
+    const r = await verify(hybridDualSigned);
+    expect(r.overall).toBe('authentic');
+  });
+
+  it('signerIndex-ите на PQ streams-ите съвпадат с ECDSA signerIndex (0 и 1)', async () => {
+    const r = await verify(hybridDualSigned);
+    expect(r.signers[0].signerIndex).toBe(0);
+    expect(r.signers[1].signerIndex).toBe(1);
+  });
+});
+
 describe('N=3 подписа (owner + 2 recipients, от multi-sign-3 fixtures)', () => {
   let recipient1Keys: CryptoKeyPair, recipient2Keys: CryptoKeyPair;
   let recipient1CertDer: Uint8Array, recipient2CertDer: Uint8Array;
@@ -427,8 +488,8 @@ describe('N=3 подписа (owner + 2 recipients, от multi-sign-3 fixtures)'
     recipient2CertDer = new Uint8Array(cert2.rawData);
 
     const ownerSigned = await signAsOwner(false); // без PQ — тества "всички без PQ" пътя (не warning)
-    const dual = await signAsRecipient(ownerSigned, 'Recipient N3 A', recipient1Keys.privateKey, recipient1CertDer, 'Signature2', 260);
-    tripleSigned = await signAsRecipient(dual, 'Recipient N3 B', recipient2Keys.privateKey, recipient2CertDer, 'Signature3', 30);
+    const dual = await signAsRecipient(ownerSigned, 'Recipient N3 A', recipient1Keys.privateKey, recipient1CertDer, 'Signature2', 260, 1);
+    tripleSigned = await signAsRecipient(dual, 'Recipient N3 B', recipient2Keys.privateKey, recipient2CertDer, 'Signature3', 30, 2);
   }, 60_000);
 
   it('totalSigners е 3', async () => {

@@ -38,7 +38,8 @@ const RECIPIENT_SIGNING_STEPS: [number, string][] = [
   [15, 'Намиране на ключове'],
   [35, 'Биометрична верификация'],
   [55, 'Подписване ECDSA P-256'],
-  [75, 'Качване на документа'],
+  [70, 'Подписване ML-DSA-65'],
+  [85, 'Качване на документа'],
   [100,'Завършено'],
 ];
 
@@ -207,8 +208,25 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
               {preflightKeys && (
                 <InfoRow
                   label="Алгоритми"
-                  value={hasMlDsa ? 'ECDSA P-256 (+ ML-DSA-65 налично, не се ползва за incremental)' : 'ECDSA P-256'}
+                  value={hasMlDsa ? 'ECDSA P-256 + ML-DSA-65 (хибриден)' : 'ECDSA P-256 (само класически)'}
                 />
+              )}
+              {preflightKeys && !hasMlDsa && (
+                <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2.5">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
+                  <div className="text-xs text-amber-700">
+                    <p>
+                      Квантовата защита не е активна — нямате ML-DSA-65 ключ.
+                      Подписът ще съдържа само ECDSA P-256.
+                    </p>
+                    <button
+                      onClick={() => { requestOpenTab('keys'); window.location.assign('/'); }}
+                      className="mt-1 inline-block font-medium underline hover:text-amber-800"
+                    >
+                      Генерирай ML-DSA-65 ключ →
+                    </button>
+                  </div>
+                </div>
               )}
 
               {preflightError && (
@@ -350,6 +368,7 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
                     <CheckCircle size={15} className="shrink-0 text-emerald-500" aria-hidden="true" />
                     <p className="text-xs text-emerald-700 font-medium">
                       Документът е подписан успешно.
+                      {signingResult.pqSkipped && ' (само ECDSA P-256 — без ML-DSA-65)'}
                       {signingResult.allSigned && ' Всички участници вече са подписали.'}
                     </p>
                   </div>

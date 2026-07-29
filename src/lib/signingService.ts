@@ -80,6 +80,7 @@ export interface RecipientSignResult {
   version: number;
   allSigned: boolean;
   status: SigningRequestStatus; // 'completed' (allSigned) | 'awaiting_recipients'
+  pqSkipped: boolean; // true ако recipient-ът няма ML-DSA-65 ключ (само ECDSA подпис)
 }
 
 /** Данни за един ключ, нужни за PRF ceremony + AES decrypt. */
@@ -638,7 +639,6 @@ async function attemptRecipientSign(
   try {
     ({ ecdsaSecretKey, mlDsaSecretKey } =
       await decryptSigningSecretKeys(keys, rpId, extractPrf, extractDualPrf));
-    void mlDsaSecretKey; // incremental flow не поддържа PQ per-recipient (виж pdfSigner.ts Стъпка 5)
 
     // ── 4. Download текущата подписана версия ──────────────────────────────
     const { data: pdfBlob, error: dlErr } = await supabase.storage
@@ -665,10 +665,33 @@ async function attemptRecipientSign(
     const signedAttrs   = buildSignedAttrs(messageDigest);
     const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
     const cmsDer = buildCmsDetached(messageDigest, ecdsaSigP1363, keys.ecdsaData.certificateDer, ROOT_CA_CERT_DER);
-    const finalPdf = injectIncrementalSignature(prepared, cmsDer);
+
+    // ── 5б. ML-DSA-65 PQ подпис (ако recipient-ът има ключ — задание изисква
+    // хибриден подпис навсякъде, не само за owner-а; виж PROJECT_BRIEF.md
+    // "Ключово изискване"). signerIndex = файловия ред на този подпис
+    // (newVersion-1, 0-based, owner е винаги 0) — extractAllPqStreams() в
+    // pdfVerifier.ts вече е построена да чете N такива streams по signerIndex.
+    let pqData: PqSignatureData | null = null;
+    let mlDsaKeyIdUsed: string | null = null;
+    if (mlDsaSecretKey && keys.mlDsaData) {
+      onProgress?.(70, 'Подписване ML-DSA-65...');
+      const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, messageDigest);
+      pqData = {
+        algorithm: 'ml-dsa-65',
+        signedHash: encodeBase64url(messageDigest),
+        signatureB64url: encodeBase64url(mlDsaSig),
+        publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
+        attestation: keys.mlDsaData.certificateDer ? { hasCert: true } : { hasCert: false },
+        byteRange: [...byteRange],
+        signerIndex: newVersion - 1,
+      };
+      mlDsaKeyIdUsed = keys.mlDsaKeyId;
+    }
+
+    const finalPdf = injectIncrementalSignature(prepared, cmsDer, pqData);
 
     // ── 6. Upload новата версия ─────────────────────────────────────────────
-    onProgress?.(75, 'Качване на документа...');
+    onProgress?.(85, 'Качване на документа...');
     const newPath = versionedPath(signingRequest.id, newVersion);
     const { error: ulErr } = await supabase.storage
       .from('signed-documents')
@@ -705,7 +728,7 @@ async function attemptRecipientSign(
         user_id:              userId,
         signing_key_id:       keys.ecdsaKeyId,
         ecdsa_key_id:         keys.ecdsaKeyId,
-        ml_dsa_key_id:        null, // incremental flow — PQ не се поддържа per-recipient
+        ml_dsa_key_id:        mlDsaKeyIdUsed,
         algorithm:            'ecdsa-p256',
         signature_bytes:      cmsToByteaHex(cmsDer),
         signed_at:            now,
@@ -790,6 +813,7 @@ async function attemptRecipientSign(
       version: newVersion,
       allSigned,
       status: allSigned ? 'completed' : 'awaiting_recipients',
+      pqSkipped: mlDsaKeyIdUsed === null,
     };
 
   } finally {
