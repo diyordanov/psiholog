@@ -28,8 +28,7 @@ import HowItWorksPage from './components/howItWorks/HowItWorksPage';
 import InvitationLandingPage from './components/invitations/InvitationLandingPage';
 import PendingInvitationsPage from './components/invitations/PendingInvitationsPage';
 import { usePendingInvitationsCount } from './hooks/usePendingInvitationsCount';
-
-type ActiveTab = 'documents' | 'keys' | 'invitations' | 'verify' | 'how-it-works';
+import { type ActiveTab, initialTabFromRequest } from './lib/tabNavigation';
 
 /**
  * Проверява дали текущият URL съдържа ?recovery=1.
@@ -180,33 +179,12 @@ function AppContent() {
   return <MainApp userId={session.user.id} />;
 }
 
-const VALID_TABS: ActiveTab[] = ['documents', 'keys', 'invitations', 'verify', 'how-it-works'];
-
-/**
- * Чете ?tab=keys от URL-а (напр. от "Генерирай ключ →" линка в
- * RecipientSigningModal, когато recipient без ключове дойде от /invite/
- * директно — там няма таб навигация, затова навигацията минава през пълен
- * page reload с този query param). Функция (не inline) за useState initializer.
- */
-function initialTabFromQuery(): ActiveTab {
-  const tab = new URLSearchParams(window.location.search).get('tab');
-  return (VALID_TABS as string[]).includes(tab ?? '') ? (tab as ActiveTab) : 'documents';
-}
-
 /** Главното приложение с таб навигация: Документи | Ключове | Покани | Провери | Как работи. */
 function MainApp({ userId }: { userId: string }) {
   const { session } = useAuth();
-  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTabFromQuery);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTabFromRequest);
   const userEmail = session?.user.email ?? null;
   const { count: pendingCount, refresh: refreshPendingCount } = usePendingInvitationsCount(userEmail);
-
-  // Изчистваме ?tab=... от URL-а след прочитане — иначе презареждане (F5)
-  // винаги би връщал на същия таб, независимо от последващата навигация.
-  useEffect(() => {
-    if (window.location.search.includes('tab=')) {
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
 
   const tabs: [ActiveTab, string][] = [
     ['documents', 'Документи'],

@@ -140,23 +140,25 @@ export default function InvitationLandingPage({ recipientId }: InvitationLanding
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-xl bg-neutral-50 px-4 py-3">
             <User size={18} className="shrink-0 text-neutral-400" />
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-xs text-neutral-500">Поканени сте от</p>
-              <p className="text-sm font-medium text-neutral-800">{details.ownerName}</p>
+              <p className="truncate text-sm font-medium text-neutral-800">{details.ownerName}</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 rounded-xl bg-neutral-50 px-4 py-3">
             <FileText size={18} className="shrink-0 text-neutral-400" />
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-xs text-neutral-500">Документ</p>
-              <p className="truncate text-sm font-medium text-neutral-800">{details.documentFilename}</p>
+              <p className="truncate text-sm font-medium text-neutral-800" title={details.documentFilename}>
+                {details.documentFilename}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 rounded-xl bg-neutral-50 px-4 py-3">
             <CheckCircle2 size={18} className="shrink-0 text-neutral-400" />
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-xs text-neutral-500">Позиция на подписа</p>
               <p className="text-sm font-medium text-neutral-800">
                 Страница {details.recipient.marker_page + 1}

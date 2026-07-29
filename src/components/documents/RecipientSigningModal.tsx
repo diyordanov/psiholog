@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Fingerprint, AlertTriangle, CheckCircle, Download, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { requestOpenTab } from '../../lib/tabNavigation';
 import {
   resolveSigningKeys, signAsRecipient, getSignedDownloadUrl,
   type ResolvedKeys, type RecipientSignResult,
@@ -195,12 +196,16 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
                   <div className="text-xs text-red-700">
                     <p>{preflightError}</p>
                     {/* /invite/ е standalone route без таб навигация — recipient без
-                        ключове няма как да стигне до "Ключове" сам, затова директен
-                        линк с ?tab=keys (App.tsx MainApp го чете при mount). */}
+                        ключове няма как да стигне до "Ключове" сам, затова
+                        requestOpenTab() + пълен reload към "/" (App.tsx MainApp
+                        чете заявката от sessionStorage при следващото зареждане). */}
                     {preflightError.includes('ECDSA P-256 ключ') && (
-                      <a href="/?tab=keys" className="mt-1 inline-block font-medium underline hover:text-red-800">
+                      <button
+                        onClick={() => { requestOpenTab('keys'); window.location.assign('/'); }}
+                        className="mt-1 inline-block font-medium underline hover:text-red-800"
+                      >
                         Генерирай ключ →
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -211,9 +216,12 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
                   <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" />
                   <div className="text-xs text-red-700">
                     <p>ECDSA ключът няма сертификат. Отидете в „Ключове" → „Издай сертификат".</p>
-                    <a href="/?tab=keys" className="mt-1 inline-block font-medium underline hover:text-red-800">
+                    <button
+                      onClick={() => { requestOpenTab('keys'); window.location.assign('/'); }}
+                      className="mt-1 inline-block font-medium underline hover:text-red-800"
+                    >
                       Отиди в „Ключове" →
-                    </a>
+                    </button>
                   </div>
                 </div>
               )}
