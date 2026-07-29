@@ -512,6 +512,17 @@ export interface IncrementalSignOptions {
   markerWidth?: number;
   /** Височина на маркера в PDF points (default: 50). */
   markerHeight?: number;
+  /**
+   * Текст на алгоритъм реда в маркера (default: 'ECDSA P-256'). BUGFIX
+   * (2026-07-29): преди беше hardcoded константа в тялото на функцията,
+   * НЕЗАВИСИМО дали recipient-ът реално подписва и с ML-DSA-65 — маркерът
+   * винаги показваше само "ECDSA P-256", дори когато PQ подписът е валидно
+   * вграден (объркващо потребителя — четеше маркера като "доказателство",
+   * че PQ липсва, докато реално verify показваше валиден ML-DSA). Извикващият
+   * (attemptRecipientSign) знае предварително дали ще опита ML-DSA (по
+   * keys.mlDsaData) и подава съответния етикет тук.
+   */
+  algoLabel?: string;
 }
 
 export interface PreparedIncrementalSignature {
@@ -605,11 +616,14 @@ export async function prepareIncrementalSignature(
   signingDate: Date,
   options: IncrementalSignOptions,
 ): Promise<PreparedIncrementalSignature> {
-  const { markerX, markerY, pageIndex, fieldName, fontBytes, markerWidth: MARKER_W = 200, markerHeight: MARKER_H = 50 } = options;
+  const {
+    markerX, markerY, pageIndex, fieldName, fontBytes,
+    markerWidth: MARKER_W = 200, markerHeight: MARKER_H = 50,
+    algoLabel: algoText = 'ECDSA P-256',
+  } = options;
 
   // ── 0. CID font subset (кирилица за маркера) — виж cidFont.ts ──────────
   const titleText = 'Подписан цифрово';
-  const algoText  = 'ECDSA P-256';
   const dateText  = formatDisplayDate(signingDate);
   const cidFont   = await buildCidFontSubset(fontBytes, `${titleText}${signerName}${dateText}${algoText}`);
 

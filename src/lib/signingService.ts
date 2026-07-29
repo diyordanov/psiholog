@@ -652,10 +652,15 @@ async function attemptRecipientSign(
 
     // ── 5. Incremental подпис (append-only, върху последната версия) ───────
     const newVersion = signingRequest.version + 1;
+    // Маркерният текст трябва да отразява дали РЕАЛНО ще опитаме ML-DSA (по
+    // keys.mlDsaData, известно вече от resolveSigningKeys() по-горе) — виж
+    // bugfix бележката в pdfSigner.ts/IncrementalSignOptions.algoLabel.
+    const algoLabel = keys.mlDsaData ? 'ECDSA P-256 + ML-DSA-65 (хибриден)' : 'ECDSA P-256';
     const prepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, {
       markerX: recipient.marker_x, markerY: recipient.marker_y,
       pageIndex: recipient.marker_page, fieldName: `Signature${newVersion}`,
       fontBytes, markerWidth: recipient.marker_width, markerHeight: recipient.marker_height,
+      algoLabel,
     });
     const byteRange = computeByteRanges(prepared);
     patchByteRangeInPlace(prepared, byteRange);

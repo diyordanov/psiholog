@@ -63,6 +63,31 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v7: recipient маркерът показваше hardcoded "ECDSA P-256" независимо от реалния ML-DSA статус (2026-07-29)
+
+След hotfix v6 потребителят потвърди: verify + Adobe вече показват валидно
+за owner+recipient (критичният бъг реално решен). Но продължи да съобщава
+"получателят няма ML-DSA-65" — при positive директна проверка на `хаха`
+акаунта (има ML-DSA ключ) и при positive preflight текст в модала
+("ECDSA P-256 + ML-DSA-65 (хибриден)" се показваше преди подпис).
+
+**Root cause:** `prepareIncrementalSignature()` имаше `const algoText =
+'ECDSA P-256';` — HARDCODED константа в тялото на функцията, НЕЗАВИСИМО
+дали recipient-ът реално подписва и с ML-DSA. Маркерът винаги показваше
+само "ECDSA P-256" за ВСЕКИ recipient, дори когато PQ подписът е успешно
+генериран и валидно вграден (потвърдено с директен `verifyDocument()` тест
+върху реален свален файл — `хаха: mlDsaStatus: "valid"`, но маркерът пак
+показваше само ECDSA). Потребителят разчиташе на маркерния текст като
+индикатор — но той просто никога не се обновяваше.
+
+**Fix:** нов `IncrementalSignOptions.algoLabel` параметър —
+`attemptRecipientSign()` подава `'ECDSA P-256 + ML-DSA-65 (хибриден)'` или
+`'ECDSA P-256'` според `keys.mlDsaData` (известно предварително от
+`resolveSigningKeys()`), вместо hardcoded константа в pdfSigner.ts.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **203/203 unit
+теста**.
+
 ### Ден 6 hotfix v6: КРИТИЧЕН bug — preparePdfForSigning намираше ЧУЖД /Contents/ByteRange placeholder (2026-07-29)
 
 Живо тестване показа "невалиден подпис" + фантомен "трети подписващ" при
