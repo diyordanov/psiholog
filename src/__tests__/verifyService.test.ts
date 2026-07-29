@@ -446,10 +446,22 @@ describe('N=2 подписа, recipient С ML-DSA (Ден 6 hotfix v5 — hybrid
     );
   }, 60_000);
 
+  it('totalSigners е ТОЧНО 2 (не 3 — PQ block-ът не създава фантомен трети signer)', async () => {
+    const r = await verify(hybridDualSigned);
+    expect(r.totalSigners).toBe(2);
+    expect(r.signers).toHaveLength(2);
+  });
+
   it('и двата подписа имат валиден ML-DSA (не само owner-ският)', async () => {
     const r = await verify(hybridDualSigned);
     expect(r.signers[0].mlDsa?.status).toBe('valid');
     expect(r.signers[1].mlDsa?.status).toBe('valid');
+  });
+
+  it('и двата ECDSA подписа са valid, byteRange е намерен за двата', async () => {
+    const r = await verify(hybridDualSigned);
+    expect(r.signers[0].ecdsa.status).toBe('valid');
+    expect(r.signers[1].ecdsa.status).toBe('valid');
   });
 
   it('overall е authentic (НЕ with_warnings — и двамата имат PQ, няма "смесена" защита)', async () => {

@@ -128,6 +128,18 @@ export default function InvitationLandingPage({ recipientId }: InvitationLanding
   // state === 'details'
   if (!details) return null;
 
+  // Recipient-ът вече е подписал (или зареждаме detail-и веднага след подпис,
+  // виж onDone по-долу) — вместо да остане на "Подпиши" екрана отново.
+  if (details.recipient.status === 'signed') {
+    return (
+      <CenteredMessage
+        icon={<CheckCircle2 className="text-emerald-500" size={40} />}
+        title="Вече сте подписали"
+        message={`Успешно подписахте „${details.documentFilename}". Може да затворите тази страница.`}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="animate-scaleIn glass-panel w-full max-w-md rounded-2xl p-6 shadow-glassLg">
