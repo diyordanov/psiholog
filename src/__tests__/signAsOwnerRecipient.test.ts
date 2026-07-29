@@ -209,7 +209,7 @@ describe('signAsOwner', () => {
 
     const result = await signAsOwner(
       DOC_ID, OWNER_ID, 'Owner Test', defaultPos,
-      [{ email: 'Recipient1@Example.com', position: { page: 0, x: 260, y: 30 } }],
+      [{ email: 'Recipient1@Example.com', position: { page: 0, x: 260, y: 30, width: 200, height: 50 } }],
       'localhost',
     );
 
@@ -233,8 +233,8 @@ describe('signAsOwner', () => {
     const result = await signAsOwner(
       DOC_ID, OWNER_ID, 'Owner Test', defaultPos,
       [
-        { email: 'r1@example.com', position: { page: 0, x: 260, y: 30 } },
-        { email: 'r2@example.com', position: { page: 0, x: 30, y: 90 } },
+        { email: 'r1@example.com', position: { page: 0, x: 260, y: 30, width: 200, height: 50 } },
+        { email: 'r2@example.com', position: { page: 0, x: 30, y: 90, width: 200, height: 50 } },
       ],
       'localhost',
     );

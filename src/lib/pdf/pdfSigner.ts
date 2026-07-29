@@ -42,6 +42,10 @@ export interface SignOptions {
   pageIndex?: number;
   /** TTF байтове на NotoSans (или друг Unicode шрифт) за Кирилица; ако липсват — маркер без текст. */
   fontBytes?: Uint8Array;
+  /** Ширина на маркера в PDF points (default: 200) — виж markerLayout.ts за auto-layout изчисление при N подписващи. */
+  markerWidth?: number;
+  /** Височина на маркера в PDF points (default: 50) — текстът е закотвен към горния край, ако е по-висока от 50pt остава празно място отдолу. */
+  markerHeight?: number;
 }
 
 export interface PreparedPdf {
@@ -141,6 +145,8 @@ export async function preparePdfForSigning(
     markerY = 30,
     pageIndex = 0,
     fontBytes,
+    markerWidth: MARKER_W = 200,
+    markerHeight: MARKER_H = 50,
   } = options;
 
   const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
@@ -149,8 +155,6 @@ export async function preparePdfForSigning(
   const pageIdx = Math.min(pageIndex, pages.length - 1);
   const page   = pages[pageIdx];
   const ctx    = pdfDoc.context;
-
-  const MARKER_W = 200, MARKER_H = 50;
 
   // ── Визуален маркер (рисуван върху страницата, включен в подписаните байтове) ──
   if (fontBytes) {
@@ -482,6 +486,10 @@ export interface IncrementalSignOptions {
    * recipient маркерите вече показват кирилица, идентично на owner-ския.
    */
   fontBytes: Uint8Array;
+  /** Ширина на маркера в PDF points (default: 200) — виж markerLayout.ts. */
+  markerWidth?: number;
+  /** Височина на маркера в PDF points (default: 50). */
+  markerHeight?: number;
 }
 
 export interface PreparedIncrementalSignature {
@@ -575,8 +583,7 @@ export async function prepareIncrementalSignature(
   signingDate: Date,
   options: IncrementalSignOptions,
 ): Promise<PreparedIncrementalSignature> {
-  const { markerX, markerY, pageIndex, fieldName, fontBytes } = options;
-  const MARKER_W = 200, MARKER_H = 50;
+  const { markerX, markerY, pageIndex, fieldName, fontBytes, markerWidth: MARKER_W = 200, markerHeight: MARKER_H = 50 } = options;
 
   // ── 0. CID font subset (кирилица за маркера) — виж cidFont.ts ──────────
   const titleText = 'Подписан цифрово';
@@ -697,12 +704,15 @@ export async function prepareIncrementalSignature(
   // кирилица, идентично на owner-ския маркер в preparePdfForSigning).
   // Координати спрямо собствения /BBox на формата (0,0)-(MARKER_W,MARKER_H),
   // Widget-ният /Rect позиционира формата на страницата.
+  // Текстовите редове са закотвени към ГОРНИЯ край на маркера (не долния) —
+  // ако MARKER_H > 50 (auto-layout с по-голяма зона), остава празно място
+  // ОТДОЛУ, не се разтяга/чупи layout-ът на 4-те реда.
   const formOffset = offset + 1;
   const apStreamContent =
     'q\n0.94 0.94 0.98 rg\n0.25 0.25 0.70 RG\n0.5 w\n' +
     `0.25 0.25 ${MARKER_W - 0.5} ${MARKER_H - 0.5} re\nB\nQ\n` +
     'BT\n' +
-    `/F1 8 Tf 0.15 0.15 0.60 rg 5 37 Td ${encodeCidHexString(titleText, cidFont.glyphs)} Tj\n` +
+    `/F1 8 Tf 0.15 0.15 0.60 rg 5 ${MARKER_H - 13} Td ${encodeCidHexString(titleText, cidFont.glyphs)} Tj\n` +
     `0 -12 Td /F1 8 Tf 0 0 0 rg ${encodeCidHexString(signerName, cidFont.glyphs)} Tj\n` +
     `0 -12 Td /F1 7 Tf 0.3 0.3 0.3 rg ${encodeCidHexString(dateText, cidFont.glyphs)} Tj\n` +
     `0 -10 Td /F1 6 Tf 0.5 0.5 0.5 rg ${encodeCidHexString(algoText, cidFont.glyphs)} Tj\n` +

@@ -13,7 +13,7 @@ import type {
 const SIGNING_REQUEST_COLUMNS =
   'id, document_id, owner_user_id, status, message, current_signed_storage_path, version, owner_signed_at, completed_at, cancelled_at, created_at, deleted_at';
 const RECIPIENT_COLUMNS =
-  'id, signing_request_id, invited_email, user_id, status, marker_page, marker_x, marker_y, signed_at, signature_id, invited_at';
+  'id, signing_request_id, invited_email, user_id, status, marker_page, marker_x, marker_y, marker_width, marker_height, signed_at, signature_id, invited_at';
 
 /**
  * Зарежда всички (не soft-изтрити) signing_requests на текущия owner, всяка

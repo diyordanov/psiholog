@@ -19,10 +19,10 @@ import { supabase } from '../../lib/supabase';
 import { signAsOwner, resolveSigningKeys, type ResolvedKeys, type SigningRequestResult } from '../../lib/signingService';
 import { usePrfCeremony, type PrfCeremonyResult } from '../../hooks/usePrfCeremony';
 import { getSigningRequestDetails, sendAllInvitationEmails } from '../../lib/signingRequestService';
+import { computeAutoLayoutSlots, validateMarkerZone, type MarkerZone, type MarkerSlot } from '../../lib/pdf/markerLayout';
 import type { NewRecipientInput } from '../../lib/types';
 import {
-  clickToMarkerPos, usePdfThumbnail, ModalHeader, ModalFooter, InfoRow, DEFAULT_MARKER,
-  type MarkerPos,
+  clickToMarkerPos, usePdfThumbnail, ModalHeader, ModalFooter, InfoRow,
 } from './SignDocumentModal';
 
 // ─── Типове ──────────────────────────────────────────────────────────────────
@@ -176,67 +176,93 @@ function StepRecipients({ recipientEmails, error, onAdd, onRemove, onNext, onClo
 }
 
 // ─── StepPositions (Стъпка 2) ──────────────────────────────────────────────────
+//
+// Owner очертава ЕДНА обща зона (drag правоъгълник) върху документа вместо
+// да кликва отделна позиция за всеки участник — системата автоматично
+// разделя зоната на N равни хоризонтални слота (computeAutoLayoutSlots),
+// по един за всеки участник (owner пръв, после recipients по ред). Слотовете
+// по дефиниция не могат да излязат извън зоната → не могат да излязат извън
+// страницата (виж markerLayout.ts).
 
 interface StepPositionsProps {
   signedUrl: string | null;
   docId: string;
   participants: Participant[];
-  markers: Record<string, MarkerPos>;
-  onMarkerChange: (key: string, marker: MarkerPos) => void;
+  onSlotsChosen: (slots: Record<string, MarkerSlot>) => void;
   onBack: () => void;
   onNext: () => void;
   onClose: () => void;
 }
 
 function StepPositions({
-  signedUrl, docId, participants, markers, onMarkerChange, onBack, onNext, onClose,
+  signedUrl, docId, participants, onSlotsChosen, onBack, onNext, onClose,
 }: StepPositionsProps) {
-  const [activeKey, setActiveKey] = useState(participants[0]?.key ?? '');
   const [currentPage, setCurrentPage] = useState(0);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const [dragStartPx, setDragStartPx] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrentPx, setDragCurrentPx] = useState<{ x: number; y: number } | null>(null);
+  const [zone, setZone] = useState<MarkerZone | null>(null);
 
   const { dataUrl, widthPt, heightPt, numPages, loading, error } = usePdfThumbnail(signedUrl, docId, currentPage);
 
-  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pos = clickToMarkerPos(
-      e.clientX - rect.left, e.clientY - rect.top,
-      rect.width, rect.height,
-      widthPt, heightPt,
-    );
-    onMarkerChange(activeKey, { page: currentPage, ...pos });
+  const getRelPos = (e: React.MouseEvent) => {
+    const rect = overlayRef.current!.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const allPositioned = participants.every(p => markers[p.key]);
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const p = getRelPos(e);
+    setDragStartPx(p);
+    setDragCurrentPx(p);
+    setZone(null);
+  };
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!dragStartPx) return;
+    setDragCurrentPx(getRelPos(e));
+  };
+  const finishDrag = () => {
+    if (!dragStartPx || !dragCurrentPx || !overlayRef.current) { setDragStartPx(null); setDragCurrentPx(null); return; }
+    const rect = overlayRef.current.getBoundingClientRect();
+    const p1 = clickToMarkerPos(dragStartPx.x, dragStartPx.y, rect.width, rect.height, widthPt, heightPt);
+    const p2 = clickToMarkerPos(dragCurrentPx.x, dragCurrentPx.y, rect.width, rect.height, widthPt, heightPt);
+    setZone({ page: currentPage, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+    setDragStartPx(null);
+    setDragCurrentPx(null);
+  };
+
+  const count = participants.length;
+  const zoneError = zone ? validateMarkerZone(zone, count) : null;
+  const slots = zone && !zoneError ? computeAutoLayoutSlots(zone, count) : null;
   const pageButtons = Math.min(numPages, 3);
+
+  const handleNext = () => {
+    if (!slots) return;
+    const mapping: Record<string, MarkerSlot> = {};
+    participants.forEach((p, i) => { mapping[p.key] = slots[i]; });
+    onSlotsChosen(mapping);
+    onNext();
+  };
 
   return (
     <div>
-      <ModalHeader step={2} title="Позиция на подписа за всеки участник" onClose={onClose} />
+      <ModalHeader step={2} title="Зона за подписите" onClose={onClose} />
 
       <div className="px-6 py-4 space-y-4">
-        {/* Участници — списък + избор на активен за поставяне */}
+        {/* Участници — легенда (не се избират поотделно вече) */}
         <div className="flex flex-wrap gap-2">
           {participants.map(p => {
             const cls = COLOR_CLASSES[p.color];
-            const isActive = p.key === activeKey;
-            const hasMarker = !!markers[p.key];
             return (
-              <button
-                key={p.key}
-                onClick={() => setActiveKey(p.key)}
-                className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                  isActive ? cls.badgeActive : cls.badgeIdle
-                }`}
-              >
+              <span key={p.key} className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium ${cls.badgeIdle}`}>
                 <span className={`h-2 w-2 shrink-0 rounded-full ${cls.dot}`} aria-hidden="true" />
                 {p.label}
-                {hasMarker && <CheckCircle size={12} className="shrink-0 text-emerald-500" aria-hidden="true" />}
-              </button>
+              </span>
             );
           })}
         </div>
         <p className="text-xs text-neutral-500">
-          Изберете участник по-горе, после кликнете върху документа за да поставите неговия подпис.
+          Начертайте (влачете с мишката) зона върху документа — системата ще раздели зоната
+          автоматично на {count} {count === 1 ? 'място' : 'равни места'} за подписите.
         </p>
 
         {/* Page selector */}
@@ -246,7 +272,7 @@ function StepPositions({
             {Array.from({ length: pageButtons }, (_, i) => (
               <button
                 key={i}
-                onClick={() => setCurrentPage(i)}
+                onClick={() => { setCurrentPage(i); setZone(null); }}
                 className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
                   currentPage === i
                     ? 'bg-indigo-600 text-white'
@@ -259,8 +285,8 @@ function StepPositions({
           </div>
         )}
 
-        {/* Thumbnail + overlay */}
-        <div className="relative mx-auto overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50" style={{ width: 300 }}>
+        {/* Thumbnail + drag overlay */}
+        <div className="relative mx-auto overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 select-none" style={{ width: 300 }}>
           {loading && (
             <div className="flex h-48 items-center justify-center text-neutral-400">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -272,44 +298,64 @@ function StepPositions({
           {dataUrl && !loading && (
             <>
               <img src={dataUrl} alt={`Страница ${currentPage + 1}`} className="block w-full" draggable={false} />
-              <div className="absolute inset-0 cursor-crosshair" onClick={handleClick} />
-              {participants.map(p => {
-                const m = markers[p.key];
-                if (!m || m.page !== currentPage) return null;
+              <div
+                ref={overlayRef}
+                className="absolute inset-0 cursor-crosshair"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={finishDrag}
+                onMouseLeave={finishDrag}
+              />
+              {/* Drag-in-progress правоъгълник (сурови пиксели, без нужда от PDF-point конверсия) */}
+              {dragStartPx && dragCurrentPx && (
+                <div
+                  className="pointer-events-none absolute border-2 border-dashed border-indigo-500 bg-indigo-500/10"
+                  style={{
+                    left: Math.min(dragStartPx.x, dragCurrentPx.x),
+                    top: Math.min(dragStartPx.y, dragCurrentPx.y),
+                    width: Math.abs(dragCurrentPx.x - dragStartPx.x),
+                    height: Math.abs(dragCurrentPx.y - dragStartPx.y),
+                  }}
+                />
+              )}
+              {/* Финализирани слотове (auto-layout резултат) */}
+              {slots && zone && zone.page === currentPage && participants.map((p, i) => {
+                const s = slots[i];
                 const cls = COLOR_CLASSES[p.color];
                 return (
                   <div
                     key={p.key}
-                    className={`absolute h-4 w-4 rounded-full border-2 border-white shadow-md pointer-events-none ${cls.dot}`}
+                    className={`pointer-events-none absolute flex items-center justify-center rounded border-2 border-white shadow-md ${cls.dot} bg-opacity-80`}
                     style={{
-                      left: `${(m.x / widthPt) * 100}%`,
-                      top: `${(1 - m.y / heightPt) * 100}%`,
-                      transform: 'translate(-50%, -50%)',
+                      left: `${(s.x / widthPt) * 100}%`,
+                      top: `${(1 - (s.y + s.height) / heightPt) * 100}%`,
+                      width: `${(s.width / widthPt) * 100}%`,
+                      height: `${(s.height / heightPt) * 100}%`,
                     }}
                     title={p.label}
-                  />
+                  >
+                    <span className="truncate px-1 text-[9px] font-medium text-white">{i + 1}</span>
+                  </div>
                 );
               })}
             </>
           )}
         </div>
 
-        {/* Статус на текущия активен участник */}
-        {markers[activeKey] ? (
-          <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
-            {participants.find(p => p.key === activeKey)?.label}: страница {markers[activeKey].page + 1},
-            {' '}X={markers[activeKey].x} pt, Y={markers[activeKey].y} pt
-          </p>
-        ) : (
-          <p className="rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
-            Кликнете върху документа, за да поставите подписа на избрания участник.
-          </p>
-        )}
-
-        {!allPositioned && (
+        {zoneError && (
           <p className="flex items-center gap-1.5 text-xs text-amber-600">
             <AlertTriangle size={12} aria-hidden="true" />
-            Всеки участник трябва да има позиция преди да продължите.
+            {zoneError}
+          </p>
+        )}
+        {!zone && !zoneError && (
+          <p className="rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+            Влачете с мишката върху документа, за да очертаете зоната за подписите.
+          </p>
+        )}
+        {slots && (
+          <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
+            {count} {count === 1 ? 'място' : 'места'} по ~{slots[0]?.width}×{slots[0]?.height}pt, страница {currentPage + 1}.
           </p>
         )}
       </div>
@@ -317,9 +363,9 @@ function StepPositions({
       <ModalFooter
         onBack={onBack}
         backLabel="← Назад"
-        onNext={onNext}
+        onNext={handleNext}
         nextLabel="Напред →"
-        nextDisabled={!allPositioned}
+        nextDisabled={!slots}
       />
     </div>
   );
@@ -330,7 +376,7 @@ function StepPositions({
 interface StepConfirmSignProps {
   filename: string;
   participants: Participant[];
-  markers: Record<string, MarkerPos>;
+  slots: Record<string, MarkerSlot>;
   preflightKeys: ResolvedKeys | null;
   preflightError: string | null;
   onBack: () => void;
@@ -347,7 +393,7 @@ interface StepConfirmSignProps {
 }
 
 function StepConfirmSign({
-  filename, participants, markers, preflightKeys, preflightError,
+  filename, participants, slots, preflightKeys, preflightError,
   onBack, onSign, signing, progress, progressLabel, signError, onRetry, onClose,
   success, recipientCount, emailsSentCount,
 }: StepConfirmSignProps) {
@@ -451,13 +497,13 @@ function StepConfirmSign({
 
         <div className="space-y-2">
           {participants.map(p => {
-            const m = markers[p.key];
+            const s = slots[p.key];
             const cls = COLOR_CLASSES[p.color];
             return (
               <div key={p.key} className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 text-xs">
                 <span className={`h-2 w-2 shrink-0 rounded-full ${cls.dot}`} aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-neutral-700">{p.label}</span>
-                {m && <span className="shrink-0 text-neutral-400">стр. {m.page + 1}, X={m.x}, Y={m.y}</span>}
+                {s && <span className="shrink-0 text-neutral-400">стр. {s.page + 1}, {s.width}×{s.height}pt</span>}
               </div>
             );
           })}
@@ -513,7 +559,7 @@ export default function InviteRecipientsModal({
   const [stage, setStage] = useState<Stage>('recipients');
   const [recipientEmails, setRecipientEmails] = useState<string[]>([]);
   const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [markers, setMarkers] = useState<Record<string, MarkerPos>>({});
+  const [slots, setSlots] = useState<Record<string, MarkerSlot>>({});
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
 
   const [preflightKeys, setPreflightKeys] = useState<ResolvedKeys | null>(null);
@@ -562,23 +608,17 @@ export default function InviteRecipientsModal({
     if (err) { setRecipientError(err); return; }
     setRecipientError(null);
     setRecipientEmails(prev => [...prev, raw.trim().toLowerCase()]);
+    setSlots({}); // зоната зависи от броя участници — нулираме при промяна на списъка
   };
   const handleRemoveRecipient = (email: string) => {
     setRecipientEmails(prev => prev.filter(e => e !== email));
-    setMarkers(prev => {
-      const next = { ...prev };
-      delete next[email];
-      return next;
-    });
-  };
-
-  const handleMarkerChange = (key: string, marker: MarkerPos) => {
-    setMarkers(prev => ({ ...prev, [key]: marker }));
+    setSlots({}); // зоната зависи от броя участници — нулираме при промяна на списъка
   };
 
   const handleSign = useCallback(async () => {
     if (!preflightKeys) return;
-    const ownerMarker = markers['owner'] ?? DEFAULT_MARKER;
+    const ownerSlot = slots['owner'];
+    if (!ownerSlot) return;
     setStage('signing');
     setSignError(null);
     setSignResult(null);
@@ -605,15 +645,18 @@ export default function InviteRecipientsModal({
       }
     }
 
-    const recipients: NewRecipientInput[] = recipientEmails.map(email => ({
-      email,
-      position: markers[email] ?? DEFAULT_MARKER,
-    }));
+    const recipients: NewRecipientInput[] = recipientEmails.map(email => {
+      const s = slots[email];
+      return {
+        email,
+        position: { page: s.page, x: s.x, y: s.y, width: s.width, height: s.height },
+      };
+    });
 
     try {
       const result = await signAsOwner(
         documentId, userId, signerName,
-        { page: ownerMarker.page, x: ownerMarker.x, y: ownerMarker.y },
+        { page: ownerSlot.page, x: ownerSlot.x, y: ownerSlot.y, width: ownerSlot.width, height: ownerSlot.height },
         recipients, rpId, fontBytes,
         ceremony.extractPrf,
         ceremony.extractDualPrf,
@@ -643,7 +686,7 @@ export default function InviteRecipientsModal({
     } catch (err) {
       setSignError(err instanceof Error ? err.message : String(err));
     }
-  }, [preflightKeys, markers, documentId, userId, signerName, recipientEmails, onDone, performCeremony]);
+  }, [preflightKeys, slots, documentId, userId, signerName, recipientEmails, onDone, performCeremony]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 px-4 backdrop-blur-sm">
@@ -673,8 +716,7 @@ export default function InviteRecipientsModal({
             signedUrl={signedUrl}
             docId={documentId}
             participants={participants}
-            markers={markers}
-            onMarkerChange={handleMarkerChange}
+            onSlotsChosen={setSlots}
             onBack={() => setStage('recipients')}
             onNext={() => setStage('confirm')}
             onClose={onClose}
@@ -685,7 +727,7 @@ export default function InviteRecipientsModal({
           <StepConfirmSign
             filename={filename}
             participants={participants}
-            markers={markers}
+            slots={slots}
             preflightKeys={preflightKeys}
             preflightError={preflightError}
             onBack={() => setStage('positions')}

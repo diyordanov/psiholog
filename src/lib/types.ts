@@ -51,6 +51,9 @@ export interface SigningRequestRecipientRow {
   marker_page: number;
   marker_x: number;
   marker_y: number;
+  /** Размер на маркера в PDF points (auto-layout, виж markerLayout.ts; migration 0017). */
+  marker_width: number;
+  marker_height: number;
   signed_at: string | null;
   signature_id: string | null;
   invited_at: string;
@@ -91,6 +94,9 @@ export interface RecipientMarkerPosition {
   page: number;
   x: number;
   y: number;
+  /** Размер на маркера в PDF points (auto-layout, виж markerLayout.ts). */
+  width: number;
+  height: number;
 }
 
 /** Вход за InviteRecipientsModal при създаване на нова заявка. */

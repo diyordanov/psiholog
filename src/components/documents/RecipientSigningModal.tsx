@@ -191,11 +191,12 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
                     <>
                       <img src={dataUrl} alt={`Страница ${recipient.marker_page + 1}`} className="block w-full" draggable={false} />
                       <div
-                        className="absolute h-4 w-4 rounded-full border-2 border-white bg-emerald-600 shadow-md pointer-events-none"
+                        className="absolute rounded border-2 border-white bg-emerald-600/80 shadow-md pointer-events-none"
                         style={{
                           left: `${(recipient.marker_x / widthPt) * 100}%`,
-                          top: `${(1 - recipient.marker_y / heightPt) * 100}%`,
-                          transform: 'translate(-50%, -50%)',
+                          top: `${(1 - (recipient.marker_y + recipient.marker_height) / heightPt) * 100}%`,
+                          width: `${(recipient.marker_width / widthPt) * 100}%`,
+                          height: `${(recipient.marker_height / heightPt) * 100}%`,
                         }}
                       />
                     </>

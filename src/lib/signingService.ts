@@ -50,6 +50,9 @@ export interface SigningPosition {
   page: number;  // 0-indexed
   x: number;     // PDF points
   y: number;     // PDF points
+  /** Размер на маркера в PDF points (auto-layout при multi-signer, виж markerLayout.ts). Default 200×50 (single-signer, backward compat). */
+  width?: number;
+  height?: number;
 }
 
 export interface SignDocumentResult {
@@ -336,6 +339,8 @@ export async function signAsOwner(
       marker_page:         r.position.page,
       marker_x:            r.position.x,
       marker_y:            r.position.y,
+      marker_width:        r.position.width,
+      marker_height:       r.position.height,
     }));
     const { error: recErr } = await supabase.from('signing_request_recipients').insert(rows);
     if (recErr) {
@@ -369,6 +374,7 @@ export async function signAsOwner(
     // ── 8. Подготовка на PDF с визуален маркер (owner е ВИНАГИ signer #1) ──
     const signOptions: SignOptions = {
       markerX: position.x, markerY: position.y, pageIndex: position.page, fontBytes,
+      markerWidth: position.width, markerHeight: position.height,
     };
     const prepared = await preparePdfForSigning(originalPdfBytes, signerName, signingDate, signOptions);
 
@@ -526,6 +532,8 @@ interface RecipientRowForSigning {
   marker_page: number;
   marker_x: number;
   marker_y: number;
+  marker_width: number;
+  marker_height: number;
 }
 
 /** Ред от signing_requests, нужен за подписване (не пълния SigningRequestRow). */
@@ -540,7 +548,7 @@ interface SigningRequestRowForSigning {
 async function fetchRecipientForSigning(recipientId: string): Promise<RecipientRowForSigning> {
   const { data, error } = await supabase
     .from('signing_request_recipients')
-    .select('id, signing_request_id, user_id, status, marker_page, marker_x, marker_y')
+    .select('id, signing_request_id, user_id, status, marker_page, marker_x, marker_y, marker_width, marker_height')
     .eq('id', recipientId)
     .single();
   if (error || !data) {
@@ -637,7 +645,7 @@ async function attemptRecipientSign(
     const prepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, {
       markerX: recipient.marker_x, markerY: recipient.marker_y,
       pageIndex: recipient.marker_page, fieldName: `Signature${newVersion}`,
-      fontBytes,
+      fontBytes, markerWidth: recipient.marker_width, markerHeight: recipient.marker_height,
     });
     const byteRange = computeByteRanges(prepared);
     patchByteRangeInPlace(prepared, byteRange);
