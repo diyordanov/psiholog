@@ -254,19 +254,41 @@ export async function preparePdfForSigning(
   const saved = await pdfDoc.save({ useObjectStreams: false });
   const bytes = new Uint8Array(saved);
 
-  // ── Намираме /Contents < ──
+  // ── Намираме НАШИЯ sig обект по object number (sigDictRef), НЕ първото
+  // срещане на /Contents</ByteRange в целия файл ──
+  //
+  // BUGFIX (открит при live тест, 2026-07-29): ако ИЗТОЧНИКЪТ на документа
+  // вече съдържа СВОЙ собствен /Contents/<...>/ или /ByteRange [...] (напр.
+  // потребителят е качил PDF, който преди това е бил отворен/частично
+  // подписан в Adobe Acrobat Reader и има leftover placeholder signature
+  // field) — findPattern(bytes, '/Contents <') от начало на файла намира
+  // ЧУЖДИЯ placeholder ПЪРВИ, вместо нашия. patchByteRangeInPlace() после
+  // пише в грешно място — нашият SIGNATURE ОБЕКТ остава завинаги
+  // непопълнен (/ByteRange все още 999999999, /Contents все още нули),
+  // докато чуждият обект бива тихо презаписан. Резултат: "invalid" подпис,
+  // фантомен допълнителен "подписващ" при verify (виж bug report).
+  //
+  // Fix: първо намираме нашия sig обект по '\nN 0 obj' (N = sigDictRef.objectNumber,
+  // pdf-lib-овата конвенция за object numbering), после търсим /Contents и
+  // /ByteRange САМО в байтовете СЛЕД тази позиция.
+  const sigObjMarker = new TextEncoder().encode(`\n${sigDictRef.objectNumber} 0 obj`);
+  const sigObjPos = findPattern(bytes, sigObjMarker);
+  if (sigObjPos === -1) {
+    throw new Error('PDF подготовка: sig обектът не е намерен след serialize');
+  }
+
+  // ── Намираме /Contents < (в рамките на sig обекта) ──
   const contentsMarker = new TextEncoder().encode('/Contents <');
-  const contentsMarkerPos = findPattern(bytes, contentsMarker);
+  const contentsMarkerPos = findPattern(bytes, contentsMarker, sigObjPos);
   if (contentsMarkerPos === -1) {
     throw new Error('PDF подготовка: /Contents placeholder не е намерен след serialize');
   }
   // '<' е последният символ в маркера
   const contentsOffset = contentsMarkerPos + contentsMarker.length - 1;
 
-  // ── Намираме /ByteRange [ ... ] placeholder ──
-  // Търсим конкретния placeholder: `0 999999999 999999999 999999999`
+  // ── Намираме /ByteRange [ ... ] placeholder (в рамките на sig обекта) ──
   const brMarker = new TextEncoder().encode('/ByteRange [');
-  const brMarkerPos = findPattern(bytes, brMarker);
+  const brMarkerPos = findPattern(bytes, brMarker, sigObjPos);
   if (brMarkerPos === -1) {
     throw new Error('PDF подготовка: /ByteRange placeholder не е намерен след serialize');
   }

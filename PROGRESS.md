@@ -63,6 +63,51 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v6: КРИТИЧЕН bug — preparePdfForSigning намираше ЧУЖД /Contents/ByteRange placeholder (2026-07-29)
+
+Живо тестване показа "невалиден подпис" + фантомен "трети подписващ" при
+самостоятелен owner+1 recipient тест. Потребителят сподели действителния
+свален PDF файл — директен byte-level анализ (grep-нах суровите байтове за
+`/Type /Sig`, намерени 3 occurrences вместо 2 очаквани) разкри истинската
+причина:
+
+**Root cause:** Тестовият документ вече съдържаше `leftover` непопълнено
+signature field от Adobe Acrobat Reader (дата "Jun 8 2026" — от НЕсвързана
+по-ранна сесия, различна от днешния тест) — `/Filter /Adobe.PPKLite
+/SubFilter /adbe.pkcs7.detached /Type /Sig` с `/ByteRange [0 999999999
+999999999 999999999]` и `/Contents <0000...>`, физически ПРЕДИ мястото,
+където pdf-lib сериализира НАШИЯ нов sig обект при `.save()`.
+`preparePdfForSigning()` намираше offset-ите на `/Contents <`/`/ByteRange [`
+чрез `findPattern(bytes, marker)` от НАЧАЛОТО на файла — намираше ЧУЖДИЯ
+placeholder ПЪРВИ. `patchByteRangeInPlace()`/`fillContentsPlaceholder()`
+после пишеха в грешния (чужд) обект — нашият РЕАЛЕН owner подпис оставаше
+ЗАВИНАГИ непопълнен (`/ByteRange` си стоеше 999999999, `/Contents` — нули),
+докато чуждият обект биваше тихо частично презаписан. Verify виждаше и
+трите `/Type /Sig` обекта: чуждия (невалиден/непарсируем), нашия owner
+(невалиден — байтовете никога не са патчнати), и recipient-ския (валиден,
+несвързан с проблема).
+
+Този бъг е **предшестващ днешната сесия** (Ден 3/4 код, несвързан с
+CID font/auto-layout/PQ промените) — просто никога не се беше проявил
+преди, защото никой предишен тестов документ не съдържаше pre-existing
+signature field structure.
+
+**Fix:** `preparePdfForSigning()` вече намира СОБСТВЕНИЯ си sig обект по
+`sigDictRef.objectNumber` (pdf-lib-овата `\nN 0 obj` конвенция) ПЪРВО, после
+търси `/Contents`/`/ByteRange` само В РАМКИТЕ на байтовете СЛЕД тази
+позиция — имунизирано срещу произволен чужд `/Type /Sig`-подобен обект
+другаде във файла.
+
+Нов integration тест (`verifyService.test.ts`) — синтетичен "отровен" PDF с
+чужд `/Type /Sig` placeholder преди нашия; потвърждава реалният подпис
+верифицира valid. (Забележка в теста: точната pdf-lib serialize подредба не
+гарантира repro на точния byte-order бъг синтетично — истинската
+верификация е директният forensic анализ на реалния файл от потребителя.)
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **203/203 unit
+теста** (една позната flaky, потвърдена при повторен run — виж established
+pattern в PROGRESS.md).
+
 ### Ден 6 hotfix v5: ML-DSA-65 хибридни подписи и за recipients (2026-07-29)
 
 Потребителят забеляза verify резултат "authentic_with_warnings" при 3-подписан

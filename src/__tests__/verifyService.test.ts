@@ -24,6 +24,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as x509 from '@peculiar/x509';
+import { PDFDocument, PDFName, PDFHexString } from 'pdf-lib';
 import { verifyDocument } from '../lib/verify/verifyService';
 import {
   preparePdfForSigning, computeByteRanges, patchByteRangeInPlace, hashByteRanges,
@@ -423,6 +424,83 @@ describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', (
   });
 });
 
+describe('N=2 подписа, auto-layout размери (owner С PQ, recipient БЕЗ PQ, широки маркери)', () => {
+  let recipientKeys: CryptoKeyPair;
+  let recipientCertDer: Uint8Array;
+  let signed: Uint8Array;
+
+  beforeAll(async () => {
+    recipientKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const cert = await x509.X509CertificateGenerator.create({
+      serialNumber: '32', subject: 'CN=Recipient AutoLayout', issuer: 'CN=Test Root CA, O=SignShield Test',
+      notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01'),
+      signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+      publicKey: recipientKeys.publicKey, signingKey: keys.rootCaKeys.privateKey,
+    });
+    recipientCertDer = new Uint8Array(cert.rawData);
+
+    // Owner: auto-layout зона (широк маркер, НЕ default 200×50) + fontBytes
+    // (реалният app flow ВИНАГИ подава fontBytes/markerWidth/markerHeight
+    // за owner-а — за разлика от по-стария test helper по-долу, който не ги
+    // подава изобщо, крие точно тази комбинация).
+    const preparedOwner = await preparePdfForSigning(
+      new Uint8Array(MINIMAL_PDF), 'Owner AutoLayout', SIGNING_DATE,
+      { markerX: 30, markerY: 30, pageIndex: 0, fontBytes, markerWidth: 270, markerHeight: 60 },
+    );
+    const ownerByteRange = computeByteRanges(preparedOwner);
+    patchByteRangeInPlace(preparedOwner, ownerByteRange);
+    const ownerDigest = hashByteRanges(preparedOwner.bytes, ownerByteRange);
+    const ownerSignedAttrs = buildSignedAttrs(ownerDigest);
+    const ownerSig = new Uint8Array(
+      await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, ownerSignedAttrs as unknown as Uint8Array<ArrayBuffer>),
+    );
+    const ownerCms = buildCmsDetached(ownerDigest, ownerSig, keys.leafCertDer, keys.rootCaCertDer);
+    const mlSig = ml_dsa65.sign(ownerDigest, keys.mlDsaSecretKey);
+    const ownerPq = {
+      algorithm: 'ml-dsa-65', signedHash: encodeBase64url(ownerDigest), signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey), attestation: { hasCert: false },
+      byteRange: [...ownerByteRange], signerIndex: 0,
+    };
+    const ownerSigned = injectSignatureAndPQ(preparedOwner, ownerByteRange, ownerCms, ownerPq);
+
+    // Recipient: auto-layout зона, БЕЗ PQ (не всеки recipient има ML-DSA ключ) —
+    // точната комбинация от live репродукцията на потребителя.
+    const preparedRecipient = await prepareIncrementalSignature(
+      ownerSigned, 'Recipient AutoLayout', SIGNING_DATE,
+      { markerX: 320, markerY: 30, pageIndex: 0, fieldName: 'Signature2', fontBytes, markerWidth: 270, markerHeight: 60 },
+    );
+    const recByteRange = computeByteRanges(preparedRecipient);
+    patchByteRangeInPlace(preparedRecipient, recByteRange);
+    const recDigest = hashByteRanges(preparedRecipient.bytes, recByteRange);
+    const recSignedAttrs = buildSignedAttrs(recDigest);
+    const recSig = new Uint8Array(
+      await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, recipientKeys.privateKey, recSignedAttrs as unknown as Uint8Array<ArrayBuffer>),
+    );
+    const recCms = buildCmsDetached(recDigest, recSig, recipientCertDer, keys.rootCaCertDer);
+    signed = injectIncrementalSignature(preparedRecipient, recCms, null);
+  }, 60_000);
+
+  it('totalSigners е ТОЧНО 2', async () => {
+    const r = await verify(signed);
+    expect(r.totalSigners).toBe(2);
+    expect(r.signers).toHaveLength(2);
+  });
+
+  it('и двата ECDSA подписа са valid, имената са коректни', async () => {
+    const r = await verify(signed);
+    expect(r.signers[0].signerName).toBe('Test Signer'); // CN на keys.leafCertDer
+    expect(r.signers[0].ecdsa.status).toBe('valid');
+    expect(r.signers[1].signerName).toBe('Recipient AutoLayout');
+    expect(r.signers[1].ecdsa.status).toBe('valid');
+  });
+
+  it('owner ML-DSA valid, recipient mlDsa е null (няма PQ)', async () => {
+    const r = await verify(signed);
+    expect(r.signers[0].mlDsa?.status).toBe('valid');
+    expect(r.signers[1].mlDsa).toBeNull();
+  });
+});
+
 describe('N=2 подписа, recipient С ML-DSA (Ден 6 hotfix v5 — hybrid incremental)', () => {
   let recipientKeys: CryptoKeyPair;
   let recipientCertDer: Uint8Array;
@@ -577,5 +655,81 @@ describe('Corrupt one signature от N — само тя се показва inv
     expect(r.signers[0].ecdsa.status).toBe('valid');   // owner непроменен
     expect(r.signers[1].ecdsa.status).toBe('invalid'); // recipient корумпиран
     expect(r.overall).toBe('invalid');
+  });
+});
+
+// ─── Regression: pre-existing чужд /Contents /ByteRange в изходния PDF ───────
+//
+// Открито при live тест (2026-07-29): потребител качи PDF, в който вече
+// имаше leftover placeholder signature field (напр. от предишно частично
+// подписване в Adobe Acrobat Reader — среща се и при PDF шаблони, генерирани
+// с вграден празен signature field). preparePdfForSigning() ползваше
+// findPattern(bytes, '/Contents <') от НАЧАЛОТО на serialize-натия файл —
+// ако чуждият placeholder идва ПРЕДИ нашия нов sig обект в байтовия поток,
+// patchByteRangeInPlace()/fillContentsPlaceholder() пишат в ГРЕШНИЯ обект.
+// Резултат: нашият РЕАЛЕН подпис остава завинаги непопълнен (/ByteRange си
+// стои 999999999, /Contents — нули) → verify показва "invalid" + фантомен
+// допълнителен "подписващ" (самия чужд, вече презаписан частично placeholder).
+//
+// Fix: preparePdfForSigning() вече намира sig обекта по собствения си
+// object number (sigDictRef) ПЪРВО, после търси /Contents//ByteRange само
+// В РАМКИТЕ на него — имунизирано срещу произволен чужд placeholder другаде
+// във файла.
+describe('preparePdfForSigning с pre-existing чужд /Contents /ByteRange placeholder', () => {
+  /** Симулира "отровен" източник — PDF с чужд/непопълнен signature field ПРЕДИ нашия. */
+  async function makePoisonedPdf(): Promise<Uint8Array> {
+    const doc = await PDFDocument.create();
+    doc.addPage([595, 842]);
+    const ctx = doc.context;
+    const fakeSigRef = ctx.nextRef();
+    const fakeSig = ctx.obj({
+      Type: PDFName.of('Sig'),
+      Filter: PDFName.of('Adobe.PPKLite'),
+      SubFilter: PDFName.of('adbe.pkcs7.detached'),
+      ByteRange: ctx.obj([0, 999999999, 999999999, 999999999]),
+      Contents: PDFHexString.of('0'.repeat(200)),
+    });
+    ctx.assign(fakeSigRef, fakeSig);
+    const bytes = await doc.save({ useObjectStreams: false });
+    return new Uint8Array(bytes);
+  }
+
+  // Забележка: тази конкретна синтетична конструкция (отделен pdf-lib
+  // документ, presave-нат и после reload-нат) НЕ винаги слага чуждия
+  // placeholder ПРЕДИ нашия в serialize-натия byte stream (зависи от
+  // вътрешния object-ordering на pdf-lib при .save()) — затова тестът може
+  // да мине дори със старата (бъгава) find-first логика. Реалният бъг е
+  // потвърден чрез директен byte-level анализ на действителния PDF от
+  // потребителя (Adobe Acrobat Reader leftover signature field, обект с
+  // по-нисък номер от нашия, физически ПРЕДИ него във файла) — тестът тук
+  // остава като допълнително покритие на "работи коректно в присъствие на
+  // чужд /Type /Sig обект", не като гарантиран repro на точния byte-order бъг.
+  it('намира и попълва СОБСТВЕНИЯ си placeholder, не чуждия — резултатът е валиден подпис', async () => {
+    const poisoned = await makePoisonedPdf();
+
+    const prepared = await preparePdfForSigning(
+      poisoned, 'Poisoned Test Signer', SIGNING_DATE, { markerX: 30, markerY: 30, pageIndex: 0 },
+    );
+    const byteRange = computeByteRanges(prepared);
+    patchByteRangeInPlace(prepared, byteRange);
+    const digest = hashByteRanges(prepared.bytes, byteRange);
+    const signedAttrs = buildSignedAttrs(digest);
+    const sig = new Uint8Array(
+      await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey,
+        signedAttrs as unknown as Uint8Array<ArrayBuffer>,
+      ),
+    );
+    const cmsDer = buildCmsDetached(digest, sig, keys.leafCertDer, keys.rootCaCertDer);
+    const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer, null);
+
+    const r = await verify(finalPdf);
+    // Чуждият placeholder ОСТАВА като отделен (невалиден/непопълнен) /Type /Sig
+    // обект — verify го вижда, но НАШИЯТ реален подпис трябва да е valid.
+    // signerName идва от X.509 cert CN (keys.leafCertDer → "Test Signer"), не
+    // от PDF /Name полето ("Poisoned Test Signer" подадено в preparePdfForSigning).
+    const realSigner = r.signers.find(s => s.signerName === 'Test Signer');
+    expect(realSigner).toBeDefined();
+    expect(realSigner!.ecdsa.status).toBe('valid');
   });
 });
