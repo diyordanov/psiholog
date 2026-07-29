@@ -76,6 +76,8 @@ const CRED      = new Uint8Array(16).fill(1);
 const SALT      = new Uint8Array(32).fill(2);
 const FAKE_CERT = new Uint8Array([0x30, 0x82, 0x01, 0x00, ...new Uint8Array(252).fill(0x00)]);
 const FAKE_KEY  = new Uint8Array(138).fill(0x30);
+// prepareIncrementalSignature е mock-нат по-горе — стойността е без значение тук.
+const TEST_FONT_BYTES = new Uint8Array(0);
 
 const defaultPos = { page: 0, x: 30, y: 30 };
 
@@ -346,7 +348,7 @@ describe('signAsRecipient', () => {
       throw new Error(`unexpected table: ${table}`);
     });
 
-    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost');
+    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES);
 
     expect(result.version).toBe(2);
     expect(result.signedStoragePath).toBe(`${SR_ID}/v2.pdf`);
@@ -369,7 +371,7 @@ describe('signAsRecipient', () => {
       throw new Error(`unexpected table: ${table}`);
     });
 
-    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost');
+    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES);
 
     expect(result.allSigned).toBe(true);
     expect(result.status).toBe('completed');
@@ -385,7 +387,7 @@ describe('signAsRecipient', () => {
     });
 
     await expect(
-      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost'),
+      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES),
     ).rejects.toThrow('Нямате достъп');
     expect(vi.mocked(fetchBestKeyId)).not.toHaveBeenCalled();
   });
@@ -400,7 +402,7 @@ describe('signAsRecipient', () => {
     });
 
     await expect(
-      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost'),
+      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES),
     ).rejects.toThrow('Вече сте подписали');
     expect(vi.mocked(fetchBestKeyId)).not.toHaveBeenCalled();
   });
@@ -428,7 +430,7 @@ describe('signAsRecipient', () => {
       throw new Error(`unexpected table: ${table}`);
     });
 
-    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost');
+    const result = await signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES);
 
     // Успя на втория опит — резултатът е валиден (не хвърля).
     expect(result.signatureId).toBe('recipient-sig-id-retry');
@@ -453,7 +455,7 @@ describe('signAsRecipient', () => {
     });
 
     await expect(
-      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost'),
+      signAsRecipient(RECIP_ID, OWNER_ID, 'Recipient Test', 'localhost', TEST_FONT_BYTES),
     ).rejects.toThrow('презаредете страницата');
   });
 });

@@ -15,6 +15,7 @@ import {
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { buildCidFontSubset, encodeCidHexString, buildWidthsArray } from './cidFont';
 
 // ─── Константи ────────────────────────────────────────────────────────────────
 
@@ -87,35 +88,6 @@ export function formatPdfDate(d: Date): string {
 function formatDisplayDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(d.getUTCDate())}.${p(d.getUTCMonth()+1)}.${d.getUTCFullYear()} г.`;
-}
-
-/** Кирилица → латиница (официална българска транслитерация), + strip на всичко извън printable ASCII. */
-const CYRILLIC_TO_LATIN: Record<string, string> = {
-  а:'a', б:'b', в:'v', г:'g', д:'d', е:'e', ж:'zh', з:'z', и:'i', й:'y',
-  к:'k', л:'l', м:'m', н:'n', о:'o', п:'p', р:'r', с:'s', т:'t', у:'u',
-  ф:'f', х:'h', ц:'ts', ч:'ch', ш:'sh', щ:'sht', ъ:'a', ь:'y', ю:'yu', я:'ya',
-};
-
-/**
- * Транслитерира кирилица → латиница за WinAnsi-safe текст в recipient
- * маркерите (виж бележката в prepareIncrementalSignature: incremental
- * update-ът е ръчна PDF byte manipulation, без CID font embedding — само
- * base-14 Helvetica/WinAnsiEncoding, затова кирилица не може да се рисува).
- * Всичко извън printable ASCII (0x20–0x7E) след транслитерацията се маха.
- */
-export function transliterateToLatin(text: string): string {
-  const transliterated = text.replace(/./gu, (ch) => {
-    const lower = ch.toLowerCase();
-    const mapped = CYRILLIC_TO_LATIN[lower];
-    if (mapped === undefined) return ch;
-    return ch === lower ? mapped : mapped[0].toUpperCase() + mapped.slice(1);
-  });
-  return transliterated.replace(/[^\x20-\x7E]/g, '');
-}
-
-/** Escape-ва \, ( и ) за PDF literal string литерали (напр. в content streams). */
-function escapePdfLiteral(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
 function toBase64url(bytes: Uint8Array): string {
@@ -503,6 +475,13 @@ export interface IncrementalSignOptions {
   pageIndex: number;
   /** Уникално /T поле, напр. 'Signature2', 'Signature3'. */
   fieldName: string;
+  /**
+   * TTF байтове на Unicode шрифт (NotoSans) за пълна кирилица в recipient
+   * маркера — вгражда се като subset Type0/CIDFontType2 (виж cidFont.ts).
+   * Задължителен (за разлика от по-стария Helvetica/латиница подход) —
+   * recipient маркерите вече показват кирилица, идентично на owner-ския.
+   */
+  fontBytes: Uint8Array;
 }
 
 export interface PreparedIncrementalSignature {
@@ -596,8 +575,14 @@ export async function prepareIncrementalSignature(
   signingDate: Date,
   options: IncrementalSignOptions,
 ): Promise<PreparedIncrementalSignature> {
-  const { markerX, markerY, pageIndex, fieldName } = options;
+  const { markerX, markerY, pageIndex, fieldName, fontBytes } = options;
   const MARKER_W = 200, MARKER_H = 50;
+
+  // ── 0. CID font subset (кирилица за маркера) — виж cidFont.ts ──────────
+  const titleText = 'Подписан цифрово';
+  const algoText  = 'ECDSA P-256';
+  const dateText  = formatDisplayDate(signingDate);
+  const cidFont   = await buildCidFontSubset(fontBytes, `${titleText}${signerName}${dateText}${algoText}`);
 
   // ── 1. Catalog → AcroForm + Pages → целева страница ────────────────────
   const catalogNum  = findCatalogObjectNumber(pdfBytes);
@@ -619,9 +604,13 @@ export async function prepareIncrementalSignature(
 
   // ── 2. Нови object номера (следват последния наличен) ──────────────────
   const nextObjNum   = findHighestObjectNumber(pdfBytes) + 1;
-  const sigObjNum     = nextObjNum;
-  const widgetObjNum  = nextObjNum + 1;
-  const formObjNum    = nextObjNum + 2; // /AP appearance stream (рамка, без текст — виж бележка)
+  const sigObjNum      = nextObjNum;
+  const widgetObjNum   = nextObjNum + 1;
+  const formObjNum     = nextObjNum + 2; // /AP appearance stream (рамка + кирилица текст)
+  const fontFileObjNum = nextObjNum + 3; // FontFile2 (subset TTF бинарни данни)
+  const fontDescObjNum = nextObjNum + 4; // FontDescriptor
+  const cidFontObjNum  = nextObjNum + 5; // CIDFontType2 (descendant font)
+  const type0FontObjNum = nextObjNum + 6; // Type0 (composite font, /Encoding /Identity-H)
 
   // ── 3. Redefine AcroForm: добавяме widgetObjNum във /Fields ─────────────
   const fieldsMatch = acroFormDict.text.match(/\/Fields\s*\[([^\]]*)\]/);
@@ -652,6 +641,9 @@ export async function prepareIncrementalSignature(
   const parts: Uint8Array[] = [];
   let offset = pdfBytes.length;
   const push = (s: string) => { const b = enc.encode(s); parts.push(b); offset += b.length; };
+  // Raw байтове (FontFile2 stream съдържание) — НЕ през TextEncoder (UTF-8 би
+  // счупил байтове >0x7F в бинарните TTF данни).
+  const pushBytes = (b: Uint8Array) => { parts.push(b); offset += b.length; };
 
   const acroFormOffset = offset + 1; // +1 прескача водещото '\n'
   push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
@@ -666,32 +658,60 @@ export async function prepareIncrementalSignature(
     `/P ${pageNum} 0 R\n/T (${fieldName})\n/F 4\n/AP << /N ${formObjNum} 0 R >>\n>>\nendobj\n`,
   );
 
-  // Appearance stream: рамка/фон + текст с base-14 Helvetica/WinAnsiEncoding
-  // (БЕЗ embedded Unicode font — CID font embedding в raw incremental update
-  // е значително по-сложно (FontFile2/CIDToGIDMap/ToUnicode graft) и рисково
-  // за вече крехкия append-only PDF pipeline; виж бележка в началото на
-  // Стъпка 5). Затова signerName се транслитерира кирилица→латиница
-  // (transliterateToLatin) — маркерът е на латиница, за разлика от
-  // owner-ския (preparePdfForSigning), който има пълна кирилица.
+  // ── 6б. CID font обекти (FontFile2 → FontDescriptor → CIDFont → Type0) ──
+  // Ред: FontFile2 (RAW бинарни данни — pushBytes, не push!) → FontDescriptor
+  // → CIDFontType2 (descendant) → Type0 (composite, /Encoding /Identity-H).
+  // /CIDToGIDMap /Identity е валидно ТУК именно защото subset.includeGlyph()
+  // връща новите (compact) glyph ID-та на subset шрифта — CID-ът, който
+  // пишем в текстовите низове (encodeCidHexString), директно СЪВПАДА с GID-а
+  // в subset FontFile2 данните.
+  const fontFileOffset = offset + 1;
+  push(`\n${fontFileObjNum} 0 obj\n<<\n/Length ${cidFont.fontFileBytes.length}\n/Length1 ${cidFont.fontFileBytes.length}\n>>\nstream\n`);
+  pushBytes(cidFont.fontFileBytes);
+  push('\nendstream\nendobj\n');
+
+  const fontDescOffset = offset + 1;
+  const [bx0, by0, bx1, by1] = cidFont.bbox;
+  push(
+    `\n${fontDescObjNum} 0 obj\n<<\n/Type /FontDescriptor\n/FontName /${cidFont.subsetTag}+${cidFont.postscriptName}\n` +
+    `/Flags 4\n/FontBBox [${bx0} ${by0} ${bx1} ${by1}]\n/ItalicAngle ${cidFont.italicAngle}\n` +
+    `/Ascent ${cidFont.ascent}\n/Descent ${cidFont.descent}\n/CapHeight ${cidFont.capHeight}\n/StemV 80\n` +
+    `/FontFile2 ${fontFileObjNum} 0 R\n>>\nendobj\n`,
+  );
+
+  const cidFontOffset = offset + 1;
+  push(
+    `\n${cidFontObjNum} 0 obj\n<<\n/Type /Font\n/Subtype /CIDFontType2\n/BaseFont /${cidFont.subsetTag}+${cidFont.postscriptName}\n` +
+    `/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>\n` +
+    `/FontDescriptor ${fontDescObjNum} 0 R\n/DW 0\n/W [ ${buildWidthsArray(cidFont.glyphs)} ]\n` +
+    `/CIDToGIDMap /Identity\n>>\nendobj\n`,
+  );
+
+  const type0FontOffset = offset + 1;
+  push(
+    `\n${type0FontObjNum} 0 obj\n<<\n/Type /Font\n/Subtype /Type0\n/BaseFont /${cidFont.subsetTag}+${cidFont.postscriptName}\n` +
+    `/Encoding /Identity-H\n/DescendantFonts [${cidFontObjNum} 0 R]\n>>\nendobj\n`,
+  );
+
+  // Appearance stream: рамка/фон + текст с вградения CID шрифт (пълна
+  // кирилица, идентично на owner-ския маркер в preparePdfForSigning).
   // Координати спрямо собствения /BBox на формата (0,0)-(MARKER_W,MARKER_H),
   // Widget-ният /Rect позиционира формата на страницата.
   const formOffset = offset + 1;
-  const latinSignerName = escapePdfLiteral(transliterateToLatin(signerName)) || 'Signer';
-  const displayDate = `${String(signingDate.getUTCDate()).padStart(2, '0')}.${String(signingDate.getUTCMonth() + 1).padStart(2, '0')}.${signingDate.getUTCFullYear()}`;
   const apStreamContent =
     'q\n0.94 0.94 0.98 rg\n0.25 0.25 0.70 RG\n0.5 w\n' +
     `0.25 0.25 ${MARKER_W - 0.5} ${MARKER_H - 0.5} re\nB\nQ\n` +
     'BT\n' +
-    `/F1 8 Tf 0.15 0.15 0.60 rg 5 37 Td (Digitally signed) Tj\n` +
-    `0 -12 Td /F1 8 Tf 0 0 0 rg (${latinSignerName}) Tj\n` +
-    `0 -12 Td /F1 7 Tf 0.3 0.3 0.3 rg (${displayDate}) Tj\n` +
-    `0 -10 Td /F1 6 Tf 0.5 0.5 0.5 rg (ECDSA P-256) Tj\n` +
+    `/F1 8 Tf 0.15 0.15 0.60 rg 5 37 Td ${encodeCidHexString(titleText, cidFont.glyphs)} Tj\n` +
+    `0 -12 Td /F1 8 Tf 0 0 0 rg ${encodeCidHexString(signerName, cidFont.glyphs)} Tj\n` +
+    `0 -12 Td /F1 7 Tf 0.3 0.3 0.3 rg ${encodeCidHexString(dateText, cidFont.glyphs)} Tj\n` +
+    `0 -10 Td /F1 6 Tf 0.5 0.5 0.5 rg ${encodeCidHexString(algoText, cidFont.glyphs)} Tj\n` +
     'ET\n';
   const apStreamBytes = enc.encode(apStreamContent);
   push(
     `\n${formObjNum} 0 obj\n<<\n/Type /XObject\n/Subtype /Form\n` +
     `/BBox [0 0 ${MARKER_W} ${MARKER_H}]\n` +
-    `/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> >> >>\n` +
+    `/Resources << /Font << /F1 ${type0FontObjNum} 0 R >> >>\n` +
     `/Length ${apStreamBytes.length}\n>>\n` +
     `stream\n${apStreamContent}endstream\nendobj\n`,
   );
@@ -709,11 +729,15 @@ export async function prepareIncrementalSignature(
 
   // ── 7. xref block: по едно subsection на пипнат/нов обект (сортирано) ───
   const xrefEntries = [
-    { num: acroFormNum,  off: acroFormOffset },
-    { num: pageNum,      off: pageOffset },
-    { num: widgetObjNum, off: widgetOffset },
-    { num: formObjNum,   off: formOffset },
-    { num: sigObjNum,    off: sigOffset },
+    { num: acroFormNum,    off: acroFormOffset },
+    { num: pageNum,        off: pageOffset },
+    { num: widgetObjNum,   off: widgetOffset },
+    { num: fontFileObjNum, off: fontFileOffset },
+    { num: fontDescObjNum, off: fontDescOffset },
+    { num: cidFontObjNum,  off: cidFontOffset },
+    { num: type0FontObjNum,off: type0FontOffset },
+    { num: formObjNum,     off: formOffset },
+    { num: sigObjNum,      off: sigOffset },
   ].sort((a, b) => a.num - b.num);
 
   const xrefBlockStart = offset;
@@ -725,7 +749,7 @@ export async function prepareIncrementalSignature(
   push(xref);
 
   const prevXref = findStartXref(pdfBytes);
-  const newSize  = formObjNum + 1; // Size = (най-високият object number в тази ревизия) + 1
+  const newSize  = type0FontObjNum + 1; // Size = (най-високият object number в тази ревизия) + 1
   push(`trailer\n<< /Size ${newSize} /Root ${findCatalogRef(pdfBytes)} /Prev ${prevXref} >>\nstartxref\n${xrefKeyword}\n%%EOF\n`);
 
   // ── 8. Сглобяваме финалните bytes ────────────────────────────────────────

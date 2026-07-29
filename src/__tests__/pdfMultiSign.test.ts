@@ -16,10 +16,10 @@ import * as x509 from '@peculiar/x509';
 import {
   preparePdfForSigning, computeByteRanges, patchByteRangeInPlace, hashByteRanges,
   injectSignatureAndPQ, prepareIncrementalSignature, injectIncrementalSignature,
-  findPattern, transliterateToLatin,
+  findPattern,
 } from '../lib/pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from '../lib/pdf/cmsBuilder';
-import { initTestKeys, MINIMAL_PDF, type TestKeys } from './helpers/signingFixtures';
+import { initTestKeys, MINIMAL_PDF, loadTestFontBytes, type TestKeys } from './helpers/signingFixtures';
 
 const enc = new TextEncoder();
 const SIGNING_DATE = new Date('2026-07-19T10:00:00Z');
@@ -29,9 +29,11 @@ let recipientKeys: CryptoKeyPair;
 let recipientCertDer: Uint8Array;
 let recipient2Keys: CryptoKeyPair;
 let recipient2CertDer: Uint8Array;
+let fontBytes: Uint8Array;
 
 beforeAll(async () => {
   keys = await initTestKeys();
+  fontBytes = loadTestFontBytes();
 
   // Втори leaf cert (различен от 'owner'-а) за "recipient" — подписан от
   // същия test Root CA, само с различна идентичност.
@@ -92,7 +94,7 @@ async function signAsOwner() {
 async function signAsRecipient(ownerSignedBytes: Uint8Array) {
   const prepared = await prepareIncrementalSignature(
     ownerSignedBytes, 'Recipient Test', SIGNING_DATE,
-    { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2' },
+    { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2', fontBytes },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -113,7 +115,7 @@ async function signAsRecipient(ownerSignedBytes: Uint8Array) {
 async function signAsRecipient2(twiceSignedBytes: Uint8Array) {
   const prepared = await prepareIncrementalSignature(
     twiceSignedBytes, 'Recipient Two Test', SIGNING_DATE,
-    { markerX: 30, markerY: 90, pageIndex: 0, fieldName: 'Signature3' },
+    { markerX: 30, markerY: 90, pageIndex: 0, fieldName: 'Signature3', fontBytes },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -213,37 +215,26 @@ describe('prepareIncrementalSignature / injectIncrementalSignature', () => {
     const sig1 = await signAsOwner();
     await expect(
       prepareIncrementalSignature(sig1.bytes, 'X', SIGNING_DATE, {
-        markerX: 30, markerY: 30, pageIndex: 5, fieldName: 'Signature2',
+        markerX: 30, markerY: 30, pageIndex: 5, fieldName: 'Signature2', fontBytes,
       }),
     ).rejects.toThrow(/страница/);
   });
 
-  it('appearance stream-ът съдържа транслитерираното (латиница) име на recipient-a', async () => {
+  it('вгражда subset CID font (Type0/CIDFontType2) за пълна кирилица в recipient маркера', async () => {
     const sig1 = await signAsOwner();
     const prepared = await prepareIncrementalSignature(
       sig1.bytes, 'Иван Петров', SIGNING_DATE,
-      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2' },
+      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2', fontBytes },
     );
     const text = new TextDecoder('latin1').decode(prepared.bytes);
-    expect(text).toContain('(Ivan Petrov) Tj');
-    expect(text).toContain('/BaseFont /Helvetica');
-    expect(text).not.toMatch(/[Ѐ-ӿ]/); // без кирилица в новите байтове
-  });
-});
-
-describe('transliterateToLatin', () => {
-  it('транслитерира кирилица към латиница по българската официална транслитерация', () => {
-    expect(transliterateToLatin('Иван Петров')).toBe('Ivan Petrov');
-    expect(transliterateToLatin('Дъщеря')).toBe('Dashterya');
-    expect(transliterateToLatin('Щастие')).toBe('Shtastie');
-  });
-
-  it('оставя ASCII текст непроменен', () => {
-    expect(transliterateToLatin('John Smith 123')).toBe('John Smith 123');
-  });
-
-  it('маха всичко извън printable ASCII след транслитерация (safety net)', () => {
-    expect(transliterateToLatin('Café')).toBe('Caf');
+    expect(text).toContain('/Subtype /Type0');
+    expect(text).toContain('/Encoding /Identity-H');
+    expect(text).toContain('/Subtype /CIDFontType2');
+    expect(text).toContain('/CIDToGIDMap /Identity');
+    expect(text).toContain('/FontFile2');
+    expect(text).not.toContain('/BaseFont /Helvetica'); // старият латиница fallback е премахнат
+    // Появяват се поне 4 hex-string литерала (title/name/date/algo Tj низове)
+    expect([...text.matchAll(/<[0-9A-Fa-f]+> Tj/g)].length).toBeGreaterThanOrEqual(4);
   });
 });
 

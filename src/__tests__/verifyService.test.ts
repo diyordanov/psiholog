@@ -33,7 +33,7 @@ import {
 import { buildSignedAttrs, buildCmsDetached } from '../lib/pdf/cmsBuilder';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import {
-  initTestKeys, type TestKeys, MINIMAL_PDF,
+  initTestKeys, type TestKeys, MINIMAL_PDF, loadTestFontBytes,
   makeValidHybridPdf, makeValidEcdsaOnlyPdf,
   makeModifiedBodyPdf, makeModifiedSignaturePdf,
   makeExpiredCertPdf, makeUntrustedCaPdf,
@@ -42,6 +42,7 @@ import {
 } from './helpers/signingFixtures';
 
 let keys: TestKeys;
+let fontBytes: Uint8Array;
 // Всички fixtures — генерирани веднъж за всички тестове
 let validHybrid:       Uint8Array;
 let validEcdsaOnly:    Uint8Array;
@@ -56,6 +57,7 @@ let mlDsaInvalid:      Uint8Array;
 
 beforeAll(async () => {
   keys = await initTestKeys();
+  fontBytes = loadTestFontBytes();
   [
     validHybrid, validEcdsaOnly, modifiedBody, modifiedSig,
     expiredCert, untrustedCa, oldFormat, mlDsaInvalid,
@@ -327,7 +329,7 @@ async function signAsRecipient(
   prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array, fieldName: string, markerX: number,
 ) {
   const prepared = await prepareIncrementalSignature(
-    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName },
+    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -478,7 +480,7 @@ describe('Corrupt one signature от N — само тя се показва inv
     // байт, който не участва в криптографската проверка).
     const prepared = await prepareIncrementalSignature(
       ownerSigned, 'Recipient Corrupt', SIGNING_DATE,
-      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2' },
+      { markerX: 260, markerY: 30, pageIndex: 0, fieldName: 'Signature2', fontBytes },
     );
     const byteRange = computeByteRanges(prepared);
     patchByteRangeInPlace(prepared, byteRange);

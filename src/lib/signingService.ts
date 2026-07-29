@@ -569,15 +569,18 @@ async function fetchSigningRequestForSigning(signingRequestId: string): Promise<
  * (друг recipient е подписал междувременно); всички други грешки (validation,
  * PRF cancel, липсващи ключове) излизат директно, без retry.
  *
- * Забележка: няма fontBytes параметър — за разлика от signAsOwner(),
- * prepareIncrementalSignature() (Ден 2) НЕ рисува текст в recipient-ския
- * маркер (само фон+рамка), затова шрифт не е нужен тук.
+ * @param fontBytes  TTF байтове на Unicode шрифт (NotoSans) — вграждат се
+ *                   като subset CID font в incremental update-а, за пълна
+ *                   кирилица в recipient маркера (Ден 6 hotfix v2; виж
+ *                   cidFont.ts). За разлика от Ден 2 бележката (по-долу вече
+ *                   невярна), recipient маркерът вече РИСУВА текст.
  */
 async function attemptRecipientSign(
   recipientId: string,
   userId: string,
   signerName: string,
   rpId: string,
+  fontBytes: Uint8Array,
   extractPrf: PrfExtractor | undefined,
   extractDualPrf: DualPrfExtractor | undefined,
   onProgress: ((pct: number, label: string) => void) | undefined,
@@ -634,6 +637,7 @@ async function attemptRecipientSign(
     const prepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, {
       markerX: recipient.marker_x, markerY: recipient.marker_y,
       pageIndex: recipient.marker_page, fieldName: `Signature${newVersion}`,
+      fontBytes,
     });
     const byteRange = computeByteRanges(prepared);
     patchByteRangeInPlace(prepared, byteRange);
@@ -786,6 +790,7 @@ export async function signAsRecipient(
   userId: string,
   signerName: string,
   rpId: string,
+  fontBytes: Uint8Array,
   extractPrf?: PrfExtractor,
   extractDualPrf?: DualPrfExtractor,
   onProgress?: (pct: number, label: string) => void,
@@ -793,7 +798,7 @@ export async function signAsRecipient(
   for (let attempt = 1; attempt <= MAX_RECIPIENT_SIGN_RETRIES; attempt++) {
     try {
       return await attemptRecipientSign(
-        recipientId, userId, signerName, rpId, extractPrf, extractDualPrf, onProgress,
+        recipientId, userId, signerName, rpId, fontBytes, extractPrf, extractDualPrf, onProgress,
       );
     } catch (e) {
       if (!(e instanceof ConcurrentSignError)) throw e;

@@ -13,7 +13,7 @@
  *     decryptSigningSecretKeys() ползва default-ите си (browserPrfExtractor/
  *     browserDualPrfExtractor), които са "живи" при всяко извикване.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Fingerprint, AlertTriangle, CheckCircle, Download, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { requestOpenTab } from '../../lib/tabNavigation';
@@ -75,6 +75,16 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
       .then(({ data }) => setSignerName(data?.display_name ?? ''));
   }, [userId]);
 
+  // Pre-fetch NotoSans при mount — нужен за кирилица в recipient маркера
+  // (виж cidFont.ts); зареден предварително, за да е готов преди PRF ceremony-то.
+  const fontBytesRef = useRef<Uint8Array | undefined>(undefined);
+  useEffect(() => {
+    fetch('/fonts/NotoSans-Regular.ttf')
+      .then(r => r.arrayBuffer())
+      .then(buf => { fontBytesRef.current = new Uint8Array(buf); })
+      .catch(() => {});
+  }, []);
+
   const { dataUrl, widthPt, heightPt, loading: thumbLoading, error: thumbError } =
     usePdfThumbnail(signedUrl, request.id, recipient.marker_page);
 
@@ -88,13 +98,23 @@ export default function RecipientSigningModal({ details, userId, onDone, onClose
 
     const rpId = window.location.hostname;
 
+    let fontBytes: Uint8Array | undefined = fontBytesRef.current;
+    if (!fontBytes) {
+      try {
+        fontBytes = new Uint8Array(await (await fetch('/fonts/NotoSans-Regular.ttf')).arrayBuffer());
+      } catch {
+        setSigningError('Грешка при зареждане на шрифта. Опитайте отново.');
+        return;
+      }
+    }
+
     try {
       // Нарочно БЕЗ explicit extractPrf/extractDualPrf — signingService използва
       // browserPrfExtractor/browserDualPrfExtractor по подразбиране, които правят
       // НОВ WebAuthn prompt при всяко извикване (нужно за retry loop-а вътре в
       // signAsRecipient()).
       const result = await signAsRecipient(
-        recipient.id, userId, signerName, rpId,
+        recipient.id, userId, signerName, rpId, fontBytes,
         undefined, undefined,
         (pct, label) => { setProgress(pct); setProgressLabel(label); },
       );

@@ -21,6 +21,8 @@
  *  10. ml-dsa-invalid      ECDSA ✅, ML-DSA signature corrupted
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import * as x509 from '@peculiar/x509';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import {
@@ -28,6 +30,17 @@ import {
   hashByteRanges, injectSignatureAndPQ, encodeBase64url,
 } from '../../lib/pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from '../../lib/pdf/cmsBuilder';
+
+/**
+ * Реални TTF байтове на NotoSans (Node fs, не fetch — тестовете тичат в Node
+ * environment, виж vitest.config.ts). Нужни за CID font embedding теста на
+ * incremental (recipient) подписи (виж cidFont.ts) — subsetting-ът трябва
+ * реален шрифт, не placeholder bytes.
+ */
+export function loadTestFontBytes(): Uint8Array {
+  const path = fileURLToPath(new URL('../../../public/fonts/NotoSans-Regular.ttf', import.meta.url));
+  return new Uint8Array(readFileSync(path));
+}
 
 // ─── Константи ────────────────────────────────────────────────────────────────
 
