@@ -20,6 +20,7 @@ import { logAuditEvent } from './lib/auditLog';
 import AuthScreen from './components/auth/AuthScreen';
 import RegisterPasskeyStep from './components/auth/RegisterPasskeyStep';
 import UserMenu from './components/UserMenu';
+import NotificationBell from './components/NotificationBell';
 import Logo from './components/common/Logo';
 import DocumentList from './components/documents/DocumentList';
 import KeyManagement from './components/keys/KeyManagement';
@@ -200,7 +201,10 @@ function MainApp({ userId }: { userId: string }) {
       <header className="glass-panel sticky top-0 z-30 rounded-none border-x-0 border-t-0">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
           <Logo size="md" />
-          <UserMenu />
+          <div className="flex items-center gap-1">
+            <NotificationBell enabled={!!userId} />
+            <UserMenu />
+          </div>
         </div>
 
         <nav className="mx-auto max-w-4xl px-4 pb-3 sm:px-6">

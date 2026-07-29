@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─── Module-level mocks (същите като signingService.test.ts) ────────────────
 
 vi.mock('../lib/supabase', () => ({
-  supabase: { from: vi.fn(), storage: { from: vi.fn() } },
+  supabase: { from: vi.fn(), storage: { from: vi.fn() }, rpc: vi.fn().mockResolvedValue({ data: null, error: null }) },
 }));
 vi.mock('../lib/auditLog', () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),

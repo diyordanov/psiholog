@@ -78,6 +78,21 @@ export interface EmailNotificationRow {
   created_at: string;
 }
 
+// ─── notifications ──────────────────────────────────────────────────────────
+
+export type NotificationType = 'recipient_signed' | 'owner_signed' | 'request_completed';
+
+/** Един ред от таблицата `notifications` (migration 0018). */
+export interface NotificationRow {
+  id: string;
+  user_id: string;
+  signing_request_id: string | null;
+  type: NotificationType;
+  message: string;
+  read_at: string | null;
+  created_at: string;
+}
+
 // ─── UI-composed изгледи ────────────────────────────────────────────────────
 
 /**

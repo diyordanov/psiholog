@@ -63,6 +63,76 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v4: overflow fix (auto-layout маркери) + пълна кирилица + in-app нотификации (2026-07-29)
+
+Live тестване разкри 4 отделни проблема след hotfix v1-v3: (1) дълги имена
+на файлове преливат извън контейнера в InvitationLandingPage, (2) recipient
+маркерите ("hotfix v2", виж по-долу) са четими, но твърде малки — с 3
+подписа третият излизаше извън страницата, (3) искане текстът в тях да е
+пълна кирилица (не латиница транслитерация), (4) искане за in-app
+нотификации при всеки подпис.
+
+**#1 fix:** `InvitationLandingPage.tsx` — липсваше `min-w-0 flex-1` на
+flex-child div-овете, `truncate` не можеше да ограничи ширината им (класически
+Tailwind flex-overflow капан).
+
+**#2/#3 (заедно, по-голяма промяна) — пълна кирилица + auto-layout:**
+- `src/lib/pdf/cidFont.ts` (нов) — subset Unicode (Type0/CIDFontType2) font
+  embedding директно през `fontkit` (не пълен pdf-lib `PDFDocument`
+  round-trip, който би преизчислил вече подписаните байтове от предходния
+  signer) — ръчно построени Type0/CIDFontType2/FontDescriptor/FontFile2 PDF
+  обекти (raw byte templates, същия стил като останалата част от
+  `prepareIncrementalSignature`). Съзнателно без `/ToUnicode` CMap (нужен
+  само за text search/copy-paste, не за рендиране) — намалява scope/риск.
+  Замества по-ранната `transliterateToLatin()` (изтрита изцяло, вкл. тестове)
+  от hotfix v2 — recipient маркерите вече показват пълна кирилица, идентично
+  на owner-ския маркер. Потвърдено визуално от потребителя в Adobe Reader.
+- `src/lib/pdf/markerLayout.ts` (нов) — `computeAutoLayoutSlots()`/
+  `validateMarkerZone()`. Замества click-to-position-за-всеки-участник UI-я:
+  owner очертава ЕДНА обща зона (drag правоъгълник) върху документа,
+  функцията я разделя на N равни хоризонтални слота — по дефиниция не могат
+  да излязат извън зоната → не могат да излязат извън страницата (решава
+  overflow бъга директно, не само козметично). Кумулативно закръгляне на
+  границите на слотовете (не независимо на всяка ширина) — иначе последният
+  слот "изтича" с 1pt при half-integer division.
+- Marker размерът е динамичен навсякъде по веригата: `SignOptions`/
+  `IncrementalSignOptions` (`markerWidth`/`markerHeight`, default 200×50,
+  backward compat), нови DB колони `marker_width`/`marker_height`
+  (migration 0017, DEFAULT 200/50 за стари редове), текстът в маркера е
+  закотвен към ГОРНИЯ край (не долния) — ако зоната е по-висока от 50pt,
+  остава празно място отдолу вместо да се чупи 4-редовият layout.
+- `InviteRecipientsModal.tsx` StepPositions — пълен UI rewrite:
+  mousedown/mousemove/mouseup drag overlay върху PDF thumbnail-а вместо
+  click-per-participant; преглед на финализираните слотове (цветни
+  правоъгълници с номера) directly върху документа.
+- 8 нови unit теста (`markerLayout.test.ts`) + 1 обновен структурен тест за
+  CID/Type0 обектите (`pdfMultiSign.test.ts`).
+
+**#4 in-app нотификации:**
+- Migration 0018 — таблица `notifications` + SECURITY DEFINER RPC
+  `notify_signing_participants(signing_request_id, type, message,
+  exclude_user_id)`. RPC вместо директен INSERT policy — insert-ващият
+  (текущият signer) трябва да пише редове за ДРУГИ потребители
+  (owner + sibling recipients), което не е изразимо с проста row-level
+  policy без да отвори произволен insert достъп (същия принцип като
+  `claim_recipient_invitation`, migration 0010).
+- `src/lib/notificationService.ts` (нов) + `src/hooks/useNotifications.ts` —
+  explicit refetch pattern (не realtime, виж `usePendingInvitationsCount`
+  за същата обосновка).
+- `src/components/NotificationBell.tsx` (нов) — bell икона с unread badge +
+  dropdown списък, вградена в `MainApp` header-а до `UserMenu`.
+- Тригер точки в `signingService.ts`: `signAsOwner()` (ако има recipients)
+  → `type='owner_signed'`; `attemptRecipientSign()` (винаги) →
+  `type='recipient_signed'`; при `allSigned` — допълнително
+  `type='request_completed'`. И трите best-effort (грешка тук не отменя
+  вече записания подпис).
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **194/194 unit
+теста** (186 + 8 нови markerLayout).
+
+**ВАЖНО: migrations 0017 и 0018 трябва да се приложат ръчно в Supabase SQL
+Editor** преди следващия live тест.
+
 ### Ден 6 hotfix: критичен RLS bug (преждевременно "completed") + латиница в recipient маркерите (2026-07-28)
 
 Открито при първия реален live E2E тест (2 recipients: 1 регистриран, 1 не):

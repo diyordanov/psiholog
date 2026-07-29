@@ -42,6 +42,7 @@ import {
   type PqSignatureData, type SignOptions,
 } from './pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from './pdf/cmsBuilder';
+import { notifySigningParticipants } from './notificationService';
 import type { NewRecipientInput, SigningRequestStatus } from './types';
 
 // ─── Типове ──────────────────────────────────────────────────────────────────
@@ -478,6 +479,15 @@ export async function signAsOwner(
 
     await logAuditEvent(userId, 'document_signed', documentId);
 
+    // Известяваме recipients-ите best-effort (Ден 6 hotfix v4) — само ако
+    // има на кого (recipients.length > 0); single-signer flow няма други участници.
+    if (!isComplete) {
+      await notifySigningParticipants(
+        signingRequestId, 'owner_signed',
+        `${signerName} подписа документа и очаква вашия подпис.`, userId,
+      );
+    }
+
     return {
       signingRequestId,
       signatureId:       sigRow.id as string,
@@ -760,6 +770,18 @@ async function attemptRecipientSign(
     }
 
     await logAuditEvent(userId, 'document_signed', signingRequest.document_id);
+
+    // Известяваме останалите участници best-effort (Ден 6 hotfix v4).
+    await notifySigningParticipants(
+      signingRequest.id, 'recipient_signed',
+      `${signerName} подписа документа.`, userId,
+    );
+    if (allSigned) {
+      await notifySigningParticipants(
+        signingRequest.id, 'request_completed',
+        'Документът е подписан от всички участници.', userId,
+      );
+    }
 
     return {
       signingRequestId: signingRequest.id,
