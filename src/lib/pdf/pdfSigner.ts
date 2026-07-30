@@ -597,6 +597,33 @@ function findCatalogObjectNumber(bytes: Uint8Array): number {
 }
 
 /**
+ * Обхожда /Pages дървото рекурсивно (depth-first, по реда на /Kids) и
+ * връща object номерата на ВСИЧКИ leaf /Page обекти, по същия ред както
+ * pdf-lib's PDFDocument.getPages() (използван в preparePdfForSigning за
+ * owner-а). BUGFIX (2026-07-30): предишният код четеше /Kids на ROOT /Pages
+ * директно като плосък списък от leaf страници — грешно за PDF-и с ВЛОЖЕНО
+ * page tree (intermediate /Type /Pages възли, групиращи няколко leaf
+ * страници — често срещано при документи с повече страници). Реален случай:
+ * root /Kids имаше 2 записа (1 вложен /Pages възел с 2 leaf страници + 1
+ * директна leaf страница = 3 реални страници), но кодът виждаше само 2 kid-а
+ * → "страница 2 не съществува (общо 2)" при recipient маркер на 3-тата
+ * (index 2) реална страница, докато owner-ското flow (pdf-lib getPages())
+ * коректно я намираше.
+ */
+function collectLeafPageObjectNumbers(pdfBytes: Uint8Array, nodeNum: number, out: number[] = []): number[] {
+  const dict = findLastObjectDict(pdfBytes, nodeNum);
+  if (!/\/Type\s*\/Pages\b/.test(dict.text)) {
+    out.push(nodeNum);
+    return out;
+  }
+  const kidsMatch = dict.text.match(/\/Kids\s*\[([^\]]*)\]/);
+  if (!kidsMatch) throw new Error('prepareIncrementalSignature: /Kids не е намерен');
+  const kids = [...kidsMatch[1].matchAll(/(\d+)\s+0\s+R/g)].map(m => parseInt(m[1], 10));
+  for (const kid of kids) collectLeafPageObjectNumbers(pdfBytes, kid, out);
+  return out;
+}
+
+/**
  * Подготвя incremental update, който добавя НОВ /Sig подпис (+ Widget) към
  * вече подписан PDF — append-only, не пипа съществуващи байтове.
  *
@@ -633,14 +660,11 @@ export async function prepareIncrementalSignature(
   const acroFormNum  = extractRefNumber(catalogDict.text, 'AcroForm');
   const pagesRootNum = extractRefNumber(catalogDict.text, 'Pages');
 
-  const pagesDict = findLastObjectDict(pdfBytes, pagesRootNum);
-  const kidsMatch = pagesDict.text.match(/\/Kids\s*\[([^\]]*)\]/);
-  if (!kidsMatch) throw new Error('prepareIncrementalSignature: /Kids не е намерен');
-  const kidRefs = [...kidsMatch[1].matchAll(/(\d+)\s+0\s+R/g)].map(m => parseInt(m[1], 10));
-  if (pageIndex >= kidRefs.length) {
-    throw new Error(`prepareIncrementalSignature: страница ${pageIndex} не съществува (общо ${kidRefs.length})`);
+  const leafPageNums = collectLeafPageObjectNumbers(pdfBytes, pagesRootNum);
+  if (pageIndex >= leafPageNums.length) {
+    throw new Error(`prepareIncrementalSignature: страница ${pageIndex} не съществува (общо ${leafPageNums.length})`);
   }
-  const pageNum = kidRefs[pageIndex];
+  const pageNum = leafPageNums[pageIndex];
 
   const acroFormDict = findLastObjectDict(pdfBytes, acroFormNum);
   const pageDict      = findLastObjectDict(pdfBytes, pageNum);

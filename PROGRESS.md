@@ -63,6 +63,43 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v9: prepareIncrementalSignature четеше /Pages /Kids като ПЛОСЪК списък — грешно за вложено page tree (2026-07-30)
+
+Веднага след hotfix v8 потребителят направи нов чист тест (owner + 1
+recipient) и получи нова грешка при опит на поканения да подпише:
+`prepareIncrementalSignature: страница 2 не съществува (общо 2)`.
+
+**Root cause:** документът реално има 3 страници — owner-ът коректно
+избра 3-тата (index 2) за recipient маркера, защото UI-то (и
+`preparePdfForSigning` за owner-ския подпис) минават през pdf-lib's
+`PDFDocument.getPages()`, който коректно обхожда/"flatten"-ва
+ПРОИЗВОЛНО вложено `/Pages` дърво. Но `prepareIncrementalSignature()`
+(incremental-update primitive-ът за 2-рия+ подпис) четеше `/Kids` на
+РУТ `/Pages` обекта директно чрез regex, като приемаше, че всеки Kid Е
+leaf `/Page` — грешно предположение за PDF-и с intermediate `/Type
+/Pages` възли (документът имаше root `/Kids` с 2 записа: 1 вложен
+`/Pages` възел, групиращ 2 leaf страници, + 1 директна leaf страница =
+3 реални страници, но кодът виждаше само 2 root kid-а).
+
+**Fix:** нова `collectLeafPageObjectNumbers()` helper функция —
+рекурсивно обхожда `/Pages` дървото (depth-first по `/Kids`, проверява
+`/Type` на всеки Kid, рекурсира в intermediate `/Pages` възли), връща
+плосък списък от leaf `/Page` object номера в същия ред като pdf-lib's
+`getPages()`. `prepareIncrementalSignature()` вече индексира в този
+списък вместо в суровия root `/Kids` regex резултат.
+
+**Регресионен тест:** нов `it('намира правилната leaf страница при
+ВЛОЖЕНО /Pages дърво...')` в `pdfMultiSign.test.ts` — ръчно построен
+PDF fixture с точно тази 3-странична nested-tree структура (root Kids
+= [nested Pages възел с 2 leaf деца, 1 директен leaf]); проверих, че
+тестът РЕАЛНО дискриминира старо/ново поведение (временно върнах
+старата плоска логика, тестът гръмна с точно същата грешка като
+потребителя — "страница 2 не съществува (общо 2)" — след което
+възстанових fix-а).
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **204/204
+unit теста**.
+
 ### Ден 6 hotfix v8: signerIndex беше hardcoded/version-based, не реалната файлова позиция (2026-07-30)
 
 След hotfix v6+v7 потребителят направи нов чист тест (owner + 1 recipient,

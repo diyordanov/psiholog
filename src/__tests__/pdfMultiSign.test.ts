@@ -220,6 +220,57 @@ describe('prepareIncrementalSignature / injectIncrementalSignature', () => {
     ).rejects.toThrow(/страница/);
   });
 
+  // BUGFIX regression (2026-07-30): предишният код четеше /Kids на ROOT
+  // /Pages директно като плосък списък от leaf страници — грешно за PDF-и
+  // с ВЛОЖЕНО page tree (intermediate /Type /Pages възли). Реален случай от
+  // потребителски тест: 3-странен документ с root /Kids [nested-Pages, leaf]
+  // → owner коректно (pdf-lib getPages()) слага recipient маркер на 3-тата
+  // (index 2) реална страница, но старият код виждаше само 2 root kid-а и
+  // хвърляше "страница 2 не съществува (общо 2)".
+  it('намира правилната leaf страница при ВЛОЖЕНО /Pages дърво (intermediate nodes)', async () => {
+    // Ръчно построен "вече веднъж подписан" PDF с 3 leaf страници, но root
+    // /Pages /Kids съдържа само 2 записа: [nested /Pages (2 leaf деца), leaf].
+    // Не минава през preparePdfForSigning (pdf-lib), защото pdf-lib's save()
+    // не гарантира запазване на ръчно построена nested структура — тук ни
+    // трябва точно контролирана структура, за да изолираме page-resolution бъга.
+    const nestedPdf = new TextEncoder().encode(
+      '%PDF-1.4\n' +
+      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R /AcroForm 7 0 R >>\nendobj\n' +
+      '2 0 obj\n<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 3 >>\nendobj\n' +
+      '3 0 obj\n<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 5 0 R] /Count 2 >>\nendobj\n' +
+      '4 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +
+      '5 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +
+      '6 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\n' +
+      '7 0 obj\n<< /Type /AcroForm /Fields [] /SigFlags 3 >>\nendobj\n' +
+      'xref\n0 8\n0000000000 65535 f \n' +
+      'trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n0\n%%EOF\n',
+    );
+
+    // pageIndex 0 и 1 са ВЪТРЕ в nested Pages възел 3 0 R (leaf 4 0 R / 5 0 R),
+    // pageIndex 2 е директен leaf на root (6 0 R) — точно сценарият от бъга.
+    const prepared0 = await prepareIncrementalSignature(nestedPdf, 'X', SIGNING_DATE, {
+      markerX: 30, markerY: 30, pageIndex: 0, fieldName: 'Signature1', fontBytes,
+    });
+    expect(new TextDecoder('latin1').decode(prepared0.bytes)).toContain('/P 4 0 R');
+
+    const prepared1 = await prepareIncrementalSignature(nestedPdf, 'X', SIGNING_DATE, {
+      markerX: 30, markerY: 30, pageIndex: 1, fieldName: 'Signature1', fontBytes,
+    });
+    expect(new TextDecoder('latin1').decode(prepared1.bytes)).toContain('/P 5 0 R');
+
+    const prepared2 = await prepareIncrementalSignature(nestedPdf, 'X', SIGNING_DATE, {
+      markerX: 30, markerY: 30, pageIndex: 2, fieldName: 'Signature1', fontBytes,
+    });
+    expect(new TextDecoder('latin1').decode(prepared2.bytes)).toContain('/P 6 0 R');
+
+    // pageIndex 3 не съществува (общо 3 leaf страници) — все още трябва да гърми ясно.
+    await expect(
+      prepareIncrementalSignature(nestedPdf, 'X', SIGNING_DATE, {
+        markerX: 30, markerY: 30, pageIndex: 3, fieldName: 'Signature1', fontBytes,
+      }),
+    ).rejects.toThrow(/страница 3 не съществува \(общо 3\)/);
+  });
+
   it('вгражда subset CID font (Type0/CIDFontType2) за пълна кирилица в recipient маркера', async () => {
     const sig1 = await signAsOwner();
     const prepared = await prepareIncrementalSignature(
