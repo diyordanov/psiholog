@@ -63,6 +63,56 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v8: signerIndex беше hardcoded/version-based, не реалната файлова позиция (2026-07-30)
+
+След hotfix v6+v7 потребителят направи нов чист тест (owner + 1 recipient,
+и двамата с ML-DSA ключове) и съобщи: Adobe вече показва "At least one
+signature is invalid" за ДВАТА подписа, а SignShield verify показва
+"Подписан от 3 лица" — owner-ът напълно липсва (показва се вместо това
+като "получател"), а има двама "получатели".
+
+**Root cause:** директен `verifyDocument()` тест върху реално свален файл
+(`Договор- SEO Gabioni_signed.pdf`) показа `totalSigners: 3`:
+позиция 0 — невалиден чужд подпис (пак leftover Adobe artifact, виж
+hotfix v6 бележката — очевидно повтарящ се артефакт в тестовите файлове на
+потребителя), позиция 1 — Dimo (owner) с `ecdsaStatus: "valid"` но
+`mlDsaStatus: "invalid"`, позиция 2 — хаха (recipient) с `mlDsaStatus:
+null`. Проблемът: `pqData.signerIndex` се задаваше hardcoded — `0` за
+owner-а и `newVersion - 1` за recipient-а — базирано на "колко пъти НИЕ
+сме подписвали", не на реалната файлова позиция на `/Type /Sig` обекта.
+Когато файлът съдържа чужд предшестващ подпис, реалната позиция се измества
+с 1, но `signerIndex`-ът вътре в `/PostQuantumSignature` payload-а не се
+измества — `extractAllPqStreams()`'s `pqByIndex` map в `verifyService.ts`
+асоциира PQ данните с грешния подписващ (owner-ското PQ, тагнато 0, отива
+при невалидния чужд обект на позиция 0 и се губи; recipient-ското PQ,
+тагнато 1, погрешно се сдвоява с owner-а на реална позиция 1).
+
+**Fix:** заменени и двата hardcoded/version-based `signerIndex` с динамично
+броене чрез вече съществуващата `countSignatureMarkers(pdfBytes)`
+(`pdfVerifier.ts`) — броим `/Type /Sig` обектите в PDF байтовете ПРЕДИ да
+добавим собствения си нов подпис (`originalPdfBytes` в `signAsOwner()`,
+`currentPdfBytes` в `attemptRecipientSign()`). Това е коректно by
+construction за чист файл (0 съществуващи → owner=0, 1 съществуващ →
+recipient 1=1, ...) и вече издържа на произволен брой чужди
+предшестващи подписи. Добавен import на `countSignatureMarkers` от
+`./pdf/pdfVerifier` в `signingService.ts`.
+
+Странична бележка за потребителя: verify винаги ще показва чужд leftover
+подпис (ако има такъв в оригиналния файл) като допълнителен invalid
+"подписващ" в списъка — това е ОЧАКВАНО/коректно поведение (документира
+реален чужд артефакт), не нов бъг, стига НАШИТЕ подписи (owner +
+recipients) вече винаги да излизат valid независимо от него.
+
+**Странична промяна в теста:** `signingService.test.ts` mock-ваше целия
+`pdf/pdfSigner` модул статично (без `importOriginal`) — това чупеше
+`countSignatureMarkers()` (в `pdfVerifier.ts`), защото тя реално ползва
+истинския `findPattern`/`findDictEnd` от `pdfSigner.ts`. Сменено на
+partial mock (`importOriginal` + override само на функциите, които тестът
+реално иска да фейкне), за да останат byte-level helper-ите истински.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **203/203 unit
+теста**.
+
 ### Ден 6 hotfix v7: recipient маркерът показваше hardcoded "ECDSA P-256" независимо от реалния ML-DSA статус (2026-07-29)
 
 След hotfix v6 потребителят потвърди: verify + Adobe вече показват валидно

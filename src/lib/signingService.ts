@@ -41,6 +41,7 @@ import {
   prepareIncrementalSignature, injectIncrementalSignature,
   type PqSignatureData, type SignOptions,
 } from './pdf/pdfSigner';
+import { countSignatureMarkers } from './pdf/pdfVerifier';
 import { buildSignedAttrs, buildCmsDetached } from './pdf/cmsBuilder';
 import { notifySigningParticipants } from './notificationService';
 import type { NewRecipientInput, SigningRequestStatus } from './types';
@@ -405,7 +406,14 @@ export async function signAsOwner(
         publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
         attestation: keys.mlDsaData.certificateDer ? { hasCert: true } : { hasCert: false },
         byteRange: [...byteRange],
-        signerIndex: 0, // owner е ВИНАГИ signer #0 (файлов ред)
+        // BUGFIX (2026-07-30): преди беше hardcoded 0, но ако оригиналният
+        // PDF вече съдържа чужд/предшестващ /Type /Sig обект (напр. недовършен
+        // Adobe Acrobat Reader signature field artifact — установено чрез
+        // директен byte-level анализ на реални тестови файлове), реалната
+        // файлова позиция на owner-ския подпис НЕ е 0, а countSignatureMarkers()
+        // на оригиналния PDF (преди нашия обект да бъде добавен). Броим тук,
+        // защото preparePdfForSigning вече добави нашия обект в `prepared`.
+        signerIndex: countSignatureMarkers(originalPdfBytes),
       };
     } else {
       mlDsaKeyIdUsed = null;
@@ -673,9 +681,8 @@ async function attemptRecipientSign(
 
     // ── 5б. ML-DSA-65 PQ подпис (ако recipient-ът има ключ — задание изисква
     // хибриден подпис навсякъде, не само за owner-а; виж PROJECT_BRIEF.md
-    // "Ключово изискване"). signerIndex = файловия ред на този подпис
-    // (newVersion-1, 0-based, owner е винаги 0) — extractAllPqStreams() в
-    // pdfVerifier.ts вече е построена да чете N такива streams по signerIndex.
+    // "Ключово изискване"). extractAllPqStreams() в pdfVerifier.ts вече е
+    // построена да чете N такива streams по signerIndex.
     let pqData: PqSignatureData | null = null;
     let mlDsaKeyIdUsed: string | null = null;
     if (mlDsaSecretKey && keys.mlDsaData) {
@@ -688,7 +695,15 @@ async function attemptRecipientSign(
         publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
         attestation: keys.mlDsaData.certificateDer ? { hasCert: true } : { hasCert: false },
         byteRange: [...byteRange],
-        signerIndex: newVersion - 1,
+        // BUGFIX (2026-07-30): преди беше `newVersion - 1` — вярно е САМО ако
+        // няма чужди /Type /Sig обекти във файла (owner е 0, recipient 1 е 1,
+        // ...). Ако оригиналният upload вече съдържаше чужд подпис-артефакт,
+        // newVersion-1 се разминава с реалната файлова позиция на нашия
+        // подпис и PQ данните се асоциират с грешния подписващ при verify.
+        // countSignatureMarkers(currentPdfBytes) брои ВСИЧКИ /Type /Sig
+        // обекти (чужди + наши) преди тази recipient-ска сигнатура да бъде
+        // добавена — това Е реалната файлова позиция.
+        signerIndex: countSignatureMarkers(currentPdfBytes),
       };
       mlDsaKeyIdUsed = keys.mlDsaKeyId;
     }
