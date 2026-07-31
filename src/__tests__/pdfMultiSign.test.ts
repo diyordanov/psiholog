@@ -8,7 +8,7 @@
  * байтове) СЛЕД добавянето на signature 2 — защото incremental update е
  * чист append, никога не мутира съществуващи байтове.
  *
- * НЕ тества PQ (/PostQuantumSignature) — извън scope на Ден 2 Стъпка 1
+ * НЕ тества PQ (/PQSignature) — извън scope на Ден 2 Стъпка 1
  * (виж бележка в pdfSigner.ts, Стъпка 5).
  */
 import { describe, it, expect, beforeAll } from 'vitest';

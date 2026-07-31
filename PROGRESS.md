@@ -63,6 +63,77 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v10: АРХИТЕКТУРЕН fix — /PostQuantumSignature вече е В СЪЩИЯ /Sig dict, не отделен incremental block (2026-07-31)
+
+След hotfix v8/v9 потребителят направи нов чист тест (owner + 1 recipient,
+и двамата с ML-DSA) и съобщи нов проблем: **Adobe Acrobat маркира ДВАТА
+подписа като "invalid: Document has been altered or corrupted since it
+was signed"**, докато SignShield-овата собствена verify страница показваше
+и двата като напълно валидни ("Документът е автентичен").
+
+**Диагностика:** директен byte-level forensic анализ на реален свален файл
+(`Valentin_Angelov_Newsletter_2023_BG_signed.pdf`, 3 страници) — извлякох
+и независимо проверих ByteRange/CMS/ML-DSA математически (извън UI, чрез
+`verifyDocument()` директно) — и двата подписа бяха 100% криптографски
+валидни. Дедукция: Adobe открива нещо, което нашата собствена (naive,
+byte-range-based) верификация не проверява.
+
+**Root cause:** ML-DSA-65 PQ данните ('/PostQuantumSignature`) винаги се
+добавяха като ОТДЕЛЕН incremental update **СЛЕД** декларирания `/ByteRange`
+на всеки подпис (архитектурно "решение" от Ден 6 hotfix v5) — байтове,
+физически ИЗВЪН подписания диапазон. По-ранен тест мина в Adobe само защото
+тогава recipient-ът НЯМАШЕ ML-DSA (отделен бъг, поправен в hotfix v7/v8) —
+recipient-ът беше ПОСЛЕДНИЯТ обект във файла и нищо не следваше след него.
+След като recipient-ите вече РЕАЛНО получават ML-DSA, ВИНАГИ има "опашка"
+от неразпознати байтове след ПОСЛЕДНИЯ подпис във файла — Adobe Acrobat не
+толерира това (дори technically валиден incremental update), независимо че
+математически хешът/подписът е коректен.
+
+**Fix (архитектурна промяна, не bugfix за 5 реда):** `/PQSignature` вече е
+ВТОРИ ключ В СЪЩИЯ `/Sig` dictionary, веднага след `/Contents` — И ДВАТА
+placeholder-а (`/Contents` за ECDSA CMS, `/PQSignature` за ML-DSA JSON,
+нов `PQ_PLACEHOLDER_BYTES = 10240`) живеят в ЕДИН общ изключен `/ByteRange`
+диапазон `[A, B)`. Резултат: НИЩО не се добавя СЛЕД никой подпис —
+`/ByteRange` стига чак до края на файла (за последния подписващ) или до
+началото на следващата (напълно призната от Adobe) incremental сигнатура.
+
+Странична, много по-важна последица: **елиминира ЦЯЛ клас бъгове**
+(hotfix v8's `signerIndex` association проблем) — PQ данните вече са
+directly paired с техния `/Sig` (bounded extraction в рамките на СЪЩИЯ
+dict), не се нуждаят повече от `signerIndex`/`byteRange` полета в JSON
+payload-а, нито от cross-referencing логика при verify.
+
+**Засегнати файлове:**
+- `pdfSigner.ts`: нов `PQ_PLACEHOLDER_BYTES`/`fillPqPlaceholder()`;
+  `PreparedPdf`/`PreparedIncrementalSignature` вече имат `pqOffset`;
+  `SignOptions`/`IncrementalSignOptions` имат нов `includePq?: boolean`
+  (решава се от извикващия ПРЕДИ подготовка, базирано на наличие на
+  ML-DSA ключ); `computeByteRanges()` разширява excluded диапазона до
+  края на `/PQSignature`, ако е резервиран; `injectSignatureAndPQ()`/
+  `injectIncrementalSignature()` вече само патчват placeholder-и IN-PLACE
+  (без append); премахната `buildPqIncrementalUpdate()` (dead code);
+  `PqSignatureData` вече БЕЗ `byteRange`/`signerIndex` полета.
+- `pdfVerifier.ts`: `extractPqStream()`/`extractAllPqStreams()` премахнати;
+  нова bounded `extractPqDataBounded()`, извикана directly В
+  `extractAllSignatures()` — всеки `ExtractedSignature` вече носи
+  собствения си `pqData` (без индиректност).
+- `verifyService.ts`: премахнат `pqByIndex` Map — `verifySingleSigner()`
+  чете `raw.pqData` directly.
+- `signingService.ts`: `signAsOwner()`/`attemptRecipientSign()` подават
+  `includePq` към prepare функциите (базирано на `keys.mlDsaData`); PQ
+  данните вече БЕЗ `signerIndex`/`byteRange` конструкция (премахнат целият
+  `countSignatureMarkers()`-based workaround от hotfix v8 — вече ненужен).
+
+**Верификация:** ad hoc скрипт (извън test suite) симулира ТОЧНО бъг
+сценария (owner + recipient, И ДВАТА с ML-DSA) end-to-end — потвърди
+`byteRange[2] + byteRange[3]` на ПОСЛЕДНИЯ подпис = точната дължина на
+файла (0 trailing байта), `verifyDocument()` връща и двата `valid`.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **204/204 unit
+теста** (актуализирани fixtures/тестове в `helpers/signingFixtures.ts`,
+`pdfVerifier.test.ts`, `verifyService.test.ts`, `pdfSigning.test.ts` да
+ползват новата `includePq`/`pqData` форма без `byteRange`/`signerIndex`).
+
 ### Ден 6 hotfix v9: prepareIncrementalSignature четеше /Pages /Kids като ПЛОСЪК списък — грешно за вложено page tree (2026-07-30)
 
 Веднага след hotfix v8 потребителят направи нов чист тест (owner + 1

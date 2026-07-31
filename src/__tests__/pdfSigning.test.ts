@@ -210,7 +210,7 @@ describe('computeByteRanges', () => {
     const brHeader = '/ByteRange [';
     const byteRangeNumOffset = afterContents + brHeader.length;
 
-    return { bytes, contentsOffset, byteRangeNumOffset };
+    return { bytes, contentsOffset, pqOffset: null, byteRangeNumOffset };
   }
 
   it('byteRange[0] е 0', () => {

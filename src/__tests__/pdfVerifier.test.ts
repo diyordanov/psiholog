@@ -3,7 +3,7 @@
  * Unit тестове за:
  *   - extractByteRange()
  *   - extractCmsDer()
- *   - extractPqStream()
+ *   - extractAllSignatures() (pqData поле — виж bugfix 2026-07-31)
  *   - extractSigningDate()
  *   - computeSignedHash()
  *   - decodeBase64url()
@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
-  extractByteRange, extractCmsDer, extractPqStream,
+  extractByteRange, extractCmsDer, extractAllSignatures,
   extractSigningDate, computeSignedHash, decodeBase64url,
 } from '../lib/pdf/pdfVerifier';
 import { encodeBase64url } from '../lib/pdf/pdfSigner';
@@ -78,22 +78,22 @@ describe('extractCmsDer', () => {
   });
 });
 
-// ─── extractPqStream ──────────────────────────────────────────────────────────
+// ─── extractAllSignatures().pqData (bugfix 2026-07-31: /PQSignature вече е ──
+// В СЪЩИЯ /Sig dict, не отделен incremental stream) ─────────────────────────
 
-describe('extractPqStream', () => {
-  it('извлича PQ stream от hybrid PDF', () => {
-    const pq = extractPqStream(hybridPdf);
-    expect(pq).not.toBeNull();
-    expect(pq!.algorithm).toBe('ml-dsa-65');
-    expect(pq!.signatureB64url).toBeTruthy();
-    expect(pq!.publicKeyB64url).toBeTruthy();
-    expect(pq!.signedHash).toBeTruthy();
-    expect(pq!.byteRange).toHaveLength(4);
+describe('extractAllSignatures() pqData', () => {
+  it('извлича PQ данни от hybrid PDF', () => {
+    const [sig] = extractAllSignatures(hybridPdf);
+    expect(sig.pqData).not.toBeNull();
+    expect(sig.pqData!.algorithm).toBe('ml-dsa-65');
+    expect(sig.pqData!.signatureB64url).toBeTruthy();
+    expect(sig.pqData!.publicKeyB64url).toBeTruthy();
+    expect(sig.pqData!.signedHash).toBeTruthy();
   });
 
-  it('връща null за ECDSA-only PDF (без PQ stream)', () => {
-    const pq = extractPqStream(ecdsaOnlyPdf);
-    expect(pq).toBeNull();
+  it('връща null pqData за ECDSA-only PDF (без /PQSignature)', () => {
+    const [sig] = extractAllSignatures(ecdsaOnlyPdf);
+    expect(sig.pqData).toBeNull();
   });
 });
 

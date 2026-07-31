@@ -5,15 +5,15 @@
  *
  * Flow:
  *   1. PDF sanitization (scanPdf)       — отхвърля malicious PDF
- *   2. extractAllSignatures()           — намира ВСИЧКИ /Sig обекта (файлов ред)
- *   3. extractAllPqStreams()            — намира ВСИЧКИ /PostQuantumSignature streams
- *   4. За всеки /Sig обект:
+ *   2. extractAllSignatures()           — намира ВСИЧКИ /Sig обекта (файлов ред),
+ *                                          вкл. /PQSignature от СЪЩИЯ dict (bugfix 2026-07-31)
+ *   3. За всеки /Sig обект:
  *        computeSignedHash()            — SHA-256 на своя ByteRange
  *        parseCms()                     — leaf cert, signedAttrs, sig
  *        verifyCertChain()              — валидира leaf cert срещу Root CA
  *        verifyEcdsaSignature()         — ECDSA P-256 верификация
- *        verifyMlDsaSignature()         — ако има асоцииран PQ stream
- *   5. determineOverall()                — приоритет: tampered > invalid >
+ *        verifyMlDsaSignature()         — ако има pqData в /Sig dict-а
+ *   4. determineOverall()                — приоритет: tampered > invalid >
  *                                          authentic_with_warnings > authentic
  *
  * N=1 (single-signer PDF) е частен случай: extractAllSignatures() връща масив
@@ -28,7 +28,7 @@ import * as x509 from '@peculiar/x509';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { scanPdf } from '../pdfSanitizer';
 import {
-  extractAllSignatures, extractAllPqStreams, countSignatureMarkers,
+  extractAllSignatures, countSignatureMarkers,
   computeSignedHash, bytesToHexStr, decodeBase64url,
 } from '../pdf/pdfVerifier';
 import { parseCms, makeSignedAttrsSet } from '../pdf/cmsParser';
@@ -150,7 +150,7 @@ export async function verifyEcdsaSignature(
 }
 
 /**
- * Верифицира ML-DSA-65 подпис от /PostQuantumSignature stream.
+ * Верифицира ML-DSA-65 подпис от /PQSignature (виж bugfix 2026-07-31 в pdfSigner.ts).
  *
  * Ако publicKeyB64url е празен (стар документ без вграден публичен ключ),
  * връщаме статус 'not_included' с информативно съобщение.
@@ -209,8 +209,13 @@ export function verifyMlDsaSignature(
  */
 async function verifySingleSigner(
   pdfBytes: Uint8Array,
-  raw: { index: number; byteRange: [number, number, number, number] | null; cmsDer: Uint8Array | null; signedAt: Date | null },
-  pqData: import('../pdf/pdfSigner').PqSignatureData | undefined,
+  raw: {
+    index: number;
+    byteRange: [number, number, number, number] | null;
+    cmsDer: Uint8Array | null;
+    signedAt: Date | null;
+    pqData: import('../pdf/pdfSigner').PqSignatureData | null;
+  },
   rootCaCertDer: Uint8Array,
 ): Promise<SignerResult> {
   // Структурно повреден /Sig обект (липсва ByteRange или Contents в dict-а) —
@@ -235,7 +240,7 @@ async function verifySingleSigner(
   }
 
   const computedHash = computeSignedHash(pdfBytes, raw.byteRange);
-  const mlDsa: MlDsaVerifyResult | null = pqData ? verifyMlDsaSignature(pqData, computedHash) : null;
+  const mlDsa: MlDsaVerifyResult | null = raw.pqData ? verifyMlDsaSignature(raw.pqData, computedHash) : null;
 
   let ecdsa: EcdsaVerifyResult;
   try {
@@ -353,15 +358,13 @@ export async function verifyDocument(
     };
   }
 
-  // ── 3. ML-DSA-65 streams (опционални, асоциирани по signerIndex) ─────────
-  const pqEntries = extractAllPqStreams(pdfBytes);
-  const pqByIndex = new Map<number, import('../pdf/pdfSigner').PqSignatureData>();
-  for (const e of pqEntries) if (!pqByIndex.has(e.signerIndex)) pqByIndex.set(e.signerIndex, e.data);
-
-  // ── 4. Верификация на всеки подписващ поотделно ──────────────────────────
+  // ── 3. Верификация на всеки подписващ поотделно (pqData вече directly
+  // paired В extractAllSignatures() резултата — /PQSignature е В СЪЩИЯ /Sig
+  // dict, виж bugfix 2026-07-31, елиминира целия signerIndex association клас
+  // бъгове) ─────────────────────────────────────────────────────────────────
   const signers: SignerResult[] = [];
   for (const raw of rawSignatures) {
-    signers.push(await verifySingleSigner(pdfBytes, raw, pqByIndex.get(raw.index), rootCaCertDer));
+    signers.push(await verifySingleSigner(pdfBytes, raw, rootCaCertDer));
   }
 
   // ── 5. documentHash / byteRange на ниво резултат ─────────────────────────

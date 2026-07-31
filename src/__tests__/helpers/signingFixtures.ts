@@ -196,7 +196,7 @@ async function signPdf(opts: SignOptions): Promise<Uint8Array> {
     new Uint8Array(MINIMAL_PDF),
     'Test Signer',
     signingDate,
-    { markerX: 30, markerY: 30, pageIndex: 0 },
+    { markerX: 30, markerY: 30, pageIndex: 0, includePq: !!opts.includePQ },
   );
 
   const byteRange = computeByteRanges(prepared);
@@ -223,7 +223,6 @@ async function signPdf(opts: SignOptions): Promise<Uint8Array> {
       signatureB64url: encodeBase64url(mlSig),
       publicKeyB64url: opts.emptyPqPublicKey ? '' : encodeBase64url(opts.mlDsaPublic),
       attestation:     { hasCert: false },
-      byteRange:       [...byteRange],
     };
   }
 
@@ -353,7 +352,7 @@ export async function makeMlDsaInvalidPdf(keys: TestKeys): Promise<Uint8Array> {
   const signingDate = new Date('2026-07-10T12:00:00Z');
   const prepared = await preparePdfForSigning(
     new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate,
-    { markerX: 30, markerY: 30, pageIndex: 0 },
+    { markerX: 30, markerY: 30, pageIndex: 0, includePq: true },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -378,7 +377,6 @@ export async function makeMlDsaInvalidPdf(keys: TestKeys): Promise<Uint8Array> {
     signatureB64url: encodeBase64url(corruptedMlSig),
     publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
     attestation:     { hasCert: false },
-    byteRange:       [...byteRange],
   };
 
   return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);

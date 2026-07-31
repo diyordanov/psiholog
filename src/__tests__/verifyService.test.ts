@@ -296,7 +296,7 @@ const SIGNING_DATE = new Date('2026-07-19T10:00:00Z');
 async function signAsOwner(withPq: boolean) {
   const prepared = await preparePdfForSigning(
     new Uint8Array(MINIMAL_PDF), 'Owner Test', SIGNING_DATE,
-    { markerX: 30, markerY: 30, pageIndex: 0 },
+    { markerX: 30, markerY: 30, pageIndex: 0, includePq: withPq },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -319,7 +319,6 @@ async function signAsOwner(withPq: boolean) {
       signatureB64url: encodeBase64url(mlSig),
       publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
       attestation: { hasCert: false },
-      byteRange: [...byteRange],
     };
   }
   return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
@@ -327,16 +326,15 @@ async function signAsOwner(withPq: boolean) {
 
 /**
  * Recipient: prepareIncrementalSignature + injectIncrementalSignature.
- * `withPq` (Ден 6 hotfix v5) — вгражда ML-DSA-65 /PostQuantumSignature block
- * със signerIndex = позицията на recipient-а във файла (същия pattern като
- * signAsOwner(withPq) по-горе, само с explicit index вместо винаги 0).
+ * `withPq` (Ден 6 hotfix v5) — вгражда ML-DSA-65 /PQSignature В СЪЩИЯ /Sig
+ * dict (bugfix 2026-07-31, вместо отделен incremental stream + signerIndex).
  */
 async function signAsRecipient(
   prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array,
-  fieldName: string, markerX: number, signerIndex: number, withPq = false,
+  fieldName: string, markerX: number, _signerIndex: number, withPq = false,
 ) {
   const prepared = await prepareIncrementalSignature(
-    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes },
+    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes, includePq: withPq },
   );
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
@@ -359,8 +357,6 @@ async function signAsRecipient(
       signatureB64url: encodeBase64url(mlSig),
       publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
       attestation: { hasCert: false },
-      byteRange: [...byteRange],
-      signerIndex,
     };
   }
   return injectIncrementalSignature(prepared, cmsDer, pqData);
@@ -445,7 +441,7 @@ describe('N=2 подписа, auto-layout размери (owner С PQ, recipient
     // подава изобщо, крие точно тази комбинация).
     const preparedOwner = await preparePdfForSigning(
       new Uint8Array(MINIMAL_PDF), 'Owner AutoLayout', SIGNING_DATE,
-      { markerX: 30, markerY: 30, pageIndex: 0, fontBytes, markerWidth: 270, markerHeight: 60 },
+      { markerX: 30, markerY: 30, pageIndex: 0, fontBytes, markerWidth: 270, markerHeight: 60, includePq: true },
     );
     const ownerByteRange = computeByteRanges(preparedOwner);
     patchByteRangeInPlace(preparedOwner, ownerByteRange);
@@ -459,7 +455,6 @@ describe('N=2 подписа, auto-layout размери (owner С PQ, recipient
     const ownerPq = {
       algorithm: 'ml-dsa-65', signedHash: encodeBase64url(ownerDigest), signatureB64url: encodeBase64url(mlSig),
       publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey), attestation: { hasCert: false },
-      byteRange: [...ownerByteRange], signerIndex: 0,
     };
     const ownerSigned = injectSignatureAndPQ(preparedOwner, ownerByteRange, ownerCms, ownerPq);
 
@@ -517,8 +512,8 @@ describe('N=2 подписа, recipient С ML-DSA (Ден 6 hotfix v5 — hybrid
     recipientCertDer = new Uint8Array(cert.rawData);
 
     const ownerSigned = await signAsOwner(true); // owner ИМА PQ
-    // recipient СЪЩО ИМА PQ (withPq=true, signerIndex=1) — тества
-    // extractAllPqStreams() с ВТОРИ /PostQuantumSignature incremental block.
+    // recipient СЪЩО ИМА PQ (withPq=true) — тества, че /PQSignature на
+    // ВТОРИЯ /Sig dict се извлича правилно, независимо от owner-ския.
     hybridDualSigned = await signAsRecipient(
       ownerSigned, 'Recipient Hybrid', recipientKeys.privateKey, recipientCertDer, 'Signature2', 260, 1, true,
     );

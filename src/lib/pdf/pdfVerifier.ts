@@ -10,8 +10,18 @@
  * Формат (от pdfSigner.ts):
  *   /ByteRange [ 0 A B C ]          — подписаните диапазони
  *   /Contents <hex...>              — CMS DER bytes (hex-encoded)
- *   /PostQuantumSignature stream    — ML-DSA-65 JSON (incremental update)
+ *   /PQSignature <hex...>           — ML-DSA-65 JSON (hex-encoded, СЪЩИЯ /Sig dict — bugfix 2026-07-31)
  *   /SubFilter /adbe.pkcs7.detached — идентификатор на нашия подпис
+ *
+ * BUGFIX (2026-07-31): /PQSignature преди беше ОТДЕЛЕН incremental update
+ * СЛЕД подписа (виж git history), асоцииран с конкретен /Sig чрез
+ * `signerIndex` поле в JSON payload-а — цял клас бъгове (PQ данни, свързани
+ * с грешния подписващ при наличие на чужди /Type /Sig обекти във файла,
+ * виж Ден 6 hotfix v8), и допълнително причиняваше Adobe Acrobat да маркира
+ * подписите като "invalid: Document has been altered or corrupted" (байтове
+ * СЛЕД декларирания /ByteRange на последния подписващ). Сега /PQSignature
+ * живее В СЪЩИЯ /Sig dict, вътре в ОБЩИЯ изключен /ByteRange диапазон —
+ * извлича се bounded, directly paired с неговия /Sig, БЕЗ нужда от индекс.
  */
 
 import { findPattern, hashByteRanges, findDictEnd } from './pdfSigner';
@@ -200,44 +210,41 @@ function extractCmsDerBounded(pdfBytes: Uint8Array, from: number, to: number): U
   return bytes.slice(0, end);
 }
 
-// ─── /PostQuantumSignature stream ─────────────────────────────────────────────
+// ─── /PQSignature (СЪЩИЯ /Sig dict) ────────────────────────────────────────────
 
 /**
- * Извлича /PostQuantumSignature stream от PDF incremental update.
+ * Извлича ML-DSA-65 PQ JSON payload от /PQSignature <hex> поле — bounded в
+ * границите [from, to) на КОНКРЕТЕН /Sig dict (виж bugfix 2026-07-31:
+ * /PQSignature вече живее В СЪЩИЯ /Sig dict, директно до /Contents, вместо
+ * като отделен incremental stream, асоцииран чрез signerIndex).
  *
- * Стриймът е raw JSON (без компресия), добавен от injectSignatureAndPQ()
- * в pdfSigner.ts. Намираме го по type marker.
+ * Hex-декодиране + trim на trailing zero padding — идентичен подход на
+ * extractCmsDerBounded(), но резултатът е UTF-8 JSON текст, не binary DER.
  */
-export function extractPqStream(pdfBytes: Uint8Array): PqSignatureData | null {
-  const typeMarker = enc.encode('/PostQuantumSignature');
-  const pos = findPattern(pdfBytes, typeMarker, 0);
-  if (pos === -1) return null;
+function extractPqDataBounded(pdfBytes: Uint8Array, from: number, to: number): PqSignatureData | null {
+  const marker = enc.encode('/PQSignature <');
+  const pos = findPattern(pdfBytes, marker, from);
+  if (pos === -1 || pos >= to) return null;
 
-  // Намираме 'stream\n' или 'stream\r\n' след маркера
-  const streamMarker1 = enc.encode('stream\r\n');
-  const streamMarker2 = enc.encode('stream\n');
-  let streamStart = findPattern(pdfBytes, streamMarker1, pos);
-  let streamDataOffset: number;
-  if (streamStart !== -1) {
-    streamDataOffset = streamStart + streamMarker1.length;
-  } else {
-    streamStart = findPattern(pdfBytes, streamMarker2, pos);
-    if (streamStart === -1) return null;
-    streamDataOffset = streamStart + streamMarker2.length;
+  const hexStart = pos + marker.length;
+  let hexEnd = hexStart;
+  while (hexEnd < to && pdfBytes[hexEnd] !== 0x3e) hexEnd++;
+  if (hexEnd >= to) return null;
+
+  const hexLen = hexEnd - hexStart;
+  const bytes = new Uint8Array(hexLen >> 1);
+  for (let j = 0; j < bytes.length; j++) {
+    bytes[j] = (hexNibble(pdfBytes[hexStart + j * 2]) << 4)
+              | hexNibble(pdfBytes[hexStart + j * 2 + 1]);
   }
 
-  // Намираме '\nendstream' след началото
-  const endMarker1 = enc.encode('\r\nendstream');
-  const endMarker2 = enc.encode('\nendstream');
-  let streamEnd = findPattern(pdfBytes, endMarker1, streamDataOffset);
-  if (streamEnd === -1) streamEnd = findPattern(pdfBytes, endMarker2, streamDataOffset);
-  if (streamEnd === -1) return null;
-
-  const jsonBytes = pdfBytes.slice(streamDataOffset, streamEnd);
-  const jsonStr = new TextDecoder().decode(jsonBytes);
+  // Trailing zero-byte padding (placeholder overflow) — trim преди JSON.parse.
+  let end = bytes.length;
+  while (end > 0 && bytes[end - 1] === 0x00) end--;
+  if (end === 0) return null;
 
   try {
-    return JSON.parse(jsonStr) as PqSignatureData;
+    return JSON.parse(new TextDecoder().decode(bytes.slice(0, end))) as PqSignatureData;
   } catch {
     return null;
   }
@@ -308,9 +315,9 @@ function extractSigningDateBounded(pdfBytes: Uint8Array, from: number, to: numbe
 // /ByteRange, /Contents, /M В РАМКИТЕ на този dict (bounded вариант на
 // съществуващите single-shot extract функции по-горе).
 //
-// extractByteRange()/extractCmsDer()/extractSigningDate()/extractPqStream()
-// ОСТАВАТ непроменени (single-signer поведение, все още ползвани от
-// pdfVerifier.test.ts) — новите функции са добавка, не замяна.
+// extractByteRange()/extractCmsDer()/extractSigningDate() ОСТАВАТ непроменени
+// (single-signer поведение, все още ползвани от pdfVerifier.test.ts) — новите
+// функции са добавка, не замяна.
 
 export interface ExtractedSignature {
   /** 0-based, файлов ред = ред на подписване (owner е 0). */
@@ -318,6 +325,8 @@ export interface ExtractedSignature {
   byteRange:  [number, number, number, number] | null;
   cmsDer:     Uint8Array | null;
   signedAt:   Date | null;
+  /** ML-DSA-65 PQ данни от /PQSignature В СЪЩИЯ /Sig dict, или null ако липсва. */
+  pqData:     PqSignatureData | null;
 }
 
 /** Брой /Type /Sig обекта във файла (0 = наистина unsigned, >0 но без extractAllSignatures резултати = поврежден подпис). */
@@ -341,7 +350,7 @@ export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[]
   positions.forEach((sigPos, index) => {
     const dictStart = findLastBefore(pdfBytes, openMarker, sigPos);
     if (dictStart === -1) {
-      results.push({ index, byteRange: null, cmsDer: null, signedAt: null });
+      results.push({ index, byteRange: null, cmsDer: null, signedAt: null, pqData: null });
       return;
     }
     const dictEnd = findDictEnd(pdfBytes, dictStart);
@@ -351,56 +360,8 @@ export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[]
       byteRange: extractByteRangeBounded(pdfBytes, dictStart, dictEnd),
       cmsDer:    extractCmsDerBounded(pdfBytes, dictStart, dictEnd),
       signedAt:  extractSigningDateBounded(pdfBytes, dictStart, dictEnd),
+      pqData:    extractPqDataBounded(pdfBytes, dictStart, dictEnd),
     });
-  });
-  return results;
-}
-
-/** Резултат от extractAllPqStreams() — асоцииран с конкретен signerIndex. */
-export interface ExtractedPqSignature {
-  signerIndex: number;
-  data:        PqSignatureData;
-}
-
-/**
- * Извлича ВСИЧКИ /PostQuantumSignature streams (не само първия — виж bug fix
- * Ден 3: recipients в incremental flow-а нямат PQ, но бъдещ N-PQ сценарий
- * трябва да работи без промяна тук). Асоциация със signerIndex:
- *   - ако JSON payload-ът съдържа `signerIndex` — ползваме го директно
- *   - иначе — позиционен fallback (ред на срещане във файла), coверд текущия
- *     single-signer случай (единствен PQ stream, без signerIndex поле → 0)
- */
-export function extractAllPqStreams(pdfBytes: Uint8Array): ExtractedPqSignature[] {
-  const typeMarker = enc.encode('/PostQuantumSignature');
-  const positions  = findAllOccurrences(pdfBytes, typeMarker);
-
-  const streamMarker1 = enc.encode('stream\r\n');
-  const streamMarker2 = enc.encode('stream\n');
-  const endMarker1    = enc.encode('\r\nendstream');
-  const endMarker2    = enc.encode('\nendstream');
-
-  const results: ExtractedPqSignature[] = [];
-  positions.forEach((pos, i) => {
-    let streamStart = findPattern(pdfBytes, streamMarker1, pos);
-    let streamDataOffset: number;
-    if (streamStart !== -1) {
-      streamDataOffset = streamStart + streamMarker1.length;
-    } else {
-      streamStart = findPattern(pdfBytes, streamMarker2, pos);
-      if (streamStart === -1) return;
-      streamDataOffset = streamStart + streamMarker2.length;
-    }
-
-    let streamEnd = findPattern(pdfBytes, endMarker1, streamDataOffset);
-    if (streamEnd === -1) streamEnd = findPattern(pdfBytes, endMarker2, streamDataOffset);
-    if (streamEnd === -1) return;
-
-    const jsonStr = new TextDecoder().decode(pdfBytes.slice(streamDataOffset, streamEnd));
-    try {
-      const data = JSON.parse(jsonStr) as PqSignatureData;
-      const signerIndex = typeof data.signerIndex === 'number' ? data.signerIndex : i;
-      results.push({ signerIndex, data });
-    } catch { /* повреден JSON — игнорираме този stream */ }
   });
   return results;
 }
