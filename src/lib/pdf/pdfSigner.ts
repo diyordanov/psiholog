@@ -58,8 +58,9 @@ export interface SignOptions {
   /** Височина на маркера в PDF points (default: 50) — текстът е закотвен към горния край, ако е по-висока от 50pt остава празно място отдолу. */
   markerHeight?: number;
   /**
-   * Резервира /PQSignature placeholder В СЪЩИЯ /Sig dict, веднага след
-   * /Contents (bugfix 2026-07-31, виж бележката над fillPqPlaceholder()).
+   * Резервира /PQSignature placeholder — ОТДЕЛЕН обект, appended след PDF-а
+   * чрез appendPqPlaceholder() (виж bugfix 2026-07-31 v2 бележката над
+   * fillPqPlaceholder()), но пак вътре в защитения /ByteRange диапазон.
    * Извикващият знае предварително (resolveSigningKeys()) дали ще подписва
    * и с ML-DSA-65 — подава true само тогава (иначе не резервираме място
    * напразно за ECDSA-only подписващи).
@@ -68,9 +69,9 @@ export interface SignOptions {
 }
 
 export interface PreparedPdf {
-  bytes:               Uint8Array;       // PDF с placeholders
+  bytes:               Uint8Array;       // PDF с placeholders (+ appended /PQSignature обект, ако includePq)
   contentsOffset:      number;           // byte offset на '<' в /Contents <000...>
-  pqOffset:            number | null;    // byte offset на '<' в /PQSignature <000...> (null ако includePq=false)
+  pqOffset:            number | null;    // byte offset на '<' в appended /PQSignature <000...> (null ако includePq=false)
   byteRangeNumOffset:  number;           // byte offset на '0 999...' в /ByteRange [...]
 }
 
@@ -152,13 +153,28 @@ function fillContentsPlaceholder(bytes: Uint8Array, contentsOffset: number, cmsD
  * recipient-ът НЯМАШЕ ML-DSA (бъг, поправен в hotfix v7/v8) — така
  * recipient-ът беше последен в файла БЕЗ опашка след себе си.
  *
- * Fix: /PQSignature вече е ВТОРИ ключ В СЪЩИЯ /Sig dict, веднага след
- * /Contents — И ДВАТА placeholder-а са вътре в ЕДИН общ изключен диапазон
- * [A, B) на /ByteRange (Adobe пропуска ЦЕЛИЯ диапазон между A и B при
- * хеширане, независимо какво точно съдържа). Резултат: НИЩО не се добавя
- * СЛЕД подписа — /ByteRange стига чак до края на файла (за последния
- * подписващ) или до началото на следващата (напълно призната от Adobe)
- * incremental сигнатура.
+ * Fix v1 (2026-07-31): /PQSignature стана ВТОРИ ключ В СЪЩИЯ /Sig dict,
+ * веднага след /Contents — И ДВАТА placeholder-а вътре в ЕДИН общ изключен
+ * диапазон [A, B) на /ByteRange, за да остане /ByteRange чак до края на
+ * файла (0 незащитени trailing байта). Живо тестване с новата версия
+ * потвърди: НЯМА повече "Document has been altered or corrupted" — НО
+ * се появи НОВА Adobe грешка: "Signature is invalid: There are errors in
+ * the formatting or information contained in the signature" (за ДВАТА
+ * подписа). Root cause: Adobe Acrobat валидира /Type /Sig речници със
+ * СОБСТВЕН, СТРОГ парсер (различен от генеричния PDF dict парсер) и
+ * отхвърля НЕПОЗНАТИ ключове (като нашия /PQSignature) директно ВЪТРЕ в
+ * /Sig dict-а — за разлика от други места в PDF-а, където Adobe е
+ * толерантен към custom keys (потвърдено чрез byte-level forensic анализ:
+ * dict синтаксисът беше 100% валиден, ByteRange coverage коректен, но
+ * Adobe пак отказваше).
+ *
+ * Fix v2 (2026-07-31): /PQSignature вече е ОТДЕЛЕН обект (не ключ на
+ * /Sig!), appended СЛЕД целия /Sig dict чрез appendPqPlaceholder()
+ * (собствен xref+trailer/Prev, като класически incremental update) — НО
+ * computeByteRanges() пак разширява excluded [A, B) диапазона да ГО
+ * покрие, така че остава ЗАЩИТЕН (0 trailing байта извън ByteRange),
+ * само структурно е отделен, напълно "анонимен" custom обект, а не
+ * непознат ключ вътре в строго валидирания /Sig dict.
  */
 function fillPqPlaceholder(bytes: Uint8Array, pqOffset: number, pqJsonBytes: Uint8Array): void {
   if (pqJsonBytes.length > PQ_PLACEHOLDER_BYTES) {
@@ -169,6 +185,45 @@ function fillPqPlaceholder(bytes: Uint8Array, pqOffset: number, pqJsonBytes: Uin
   const pqHex = bytesToHex(pqJsonBytes).toUpperCase().padEnd(PQ_HEX_LENGTH, '0');
   const hexBytes = new TextEncoder().encode(pqHex);
   bytes.set(hexBytes, pqOffset + 1); // +1 прескача '<'
+}
+
+/**
+ * Добавя /PQSignature placeholder (hex-кодиран, PQ_HEX_LENGTH символа) като
+ * ОТДЕЛЕН обект, appended СЛЕД вече построения PDF, със собствен xref
+ * subsection + trailer (/Prev → стария startxref) — класически incremental
+ * update, структурно идентичен на стария (премахнат) buildPqIncrementalUpdate().
+ * Разликата: computeByteRanges() винаги разширява excluded диапазона да
+ * ГО покрие (виж fix v2 бележката над fillPqPlaceholder() по-горе), така
+ * че тези байтове остават В защитения /ByteRange, не след него.
+ */
+function appendPqPlaceholder(bytes: Uint8Array): { bytes: Uint8Array; pqOffset: number } {
+  const prevXref   = findStartXref(bytes);
+  const nextObjNum = findHighestObjectNumber(bytes) + 1;
+
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  let offset = bytes.length;
+  const push = (s: string) => { const b = enc.encode(s); parts.push(b); offset += b.length; };
+
+  const objOffset = offset + 1; // +1 прескача водещото '\n'
+  push(`\n${nextObjNum} 0 obj\n<< /Type /PostQuantumSignature /Data <`);
+  const pqOffset = offset - 1; // offset на самото '<'
+  push('0'.repeat(PQ_HEX_LENGTH));
+  push('> >>\nendobj\n');
+
+  const xrefBlockStart = offset;
+  push(`\nxref\n${nextObjNum} 1\n${String(objOffset).padStart(10, '0')} 00000 n \n`);
+  const xrefKeyword = xrefBlockStart + 1; // +1 за водещото '\n'
+
+  push(`trailer\n<< /Size ${nextObjNum + 1} /Root ${findCatalogRef(bytes)} /Prev ${prevXref} >>\nstartxref\n${xrefKeyword}\n%%EOF\n`);
+
+  const totalLen = parts.reduce((n, p) => n + p.length, 0);
+  const combined = new Uint8Array(bytes.length + totalLen);
+  combined.set(bytes, 0);
+  let pos = bytes.length;
+  for (const p of parts) { combined.set(p, pos); pos += p.length; }
+
+  return { bytes: combined, pqOffset };
 }
 
 // ─── Стъпка 1: Подготовка на PDF с placeholders ──────────────────────────────
@@ -261,10 +316,13 @@ export async function preparePdfForSigning(
     SubFilter:  PDFName.of('adbe.pkcs7.detached'),
     ByteRange:  ctx.obj([0, BR_PLACEHOLDER_NUM, BR_PLACEHOLDER_NUM, BR_PLACEHOLDER_NUM]),
     Contents:   PDFHexString.of('0'.repeat(CONTENTS_HEX_LENGTH)),
-    // /PQSignature (ако includePq) е ВЕДНАГА след /Contents — И ДВАТА
-    // placeholder-а трябва да останат в ЕДИН общ изключен /ByteRange диапазон
-    // (виж bugfix бележката над fillPqPlaceholder() по-горе).
-    ...(includePq ? { PQSignature: PDFHexString.of('0'.repeat(PQ_HEX_LENGTH)) } : {}),
+    // BUGFIX (2026-07-31 v2): /PQSignature НЕ е ключ тук — Adobe Acrobat
+    // валидира /Type /Sig речници със собствен, СТРОГ парсер (не общия PDF
+    // dict парсер) и отхвърля непознати ключове ВЪТРЕ в /Sig dict-а със
+    // "Signature is invalid: There are errors in the formatting or
+    // information contained in the signature" (потвърдено с реален тест —
+    // виж appendPqPlaceholder() по-долу за фикса, който вгражда PQ данните
+    // като ОТДЕЛЕН обект, но пак вътре в защитения ByteRange диапазон).
     // PDFHexString.fromText() кодира UTF-16BE + BOM (PDF spec 1.7 §7.9.2.2) —
     // PDFString.of() ползва PDFDocEncoding, което чупи кирилица (виж bugfix 2026-07-19).
     Reason:      PDFHexString.fromText('SignShield Digital Signature'),
@@ -342,17 +400,6 @@ export async function preparePdfForSigning(
   // '<' е последният символ в маркера
   const contentsOffset = contentsMarkerPos + contentsMarker.length - 1;
 
-  // ── Намираме /PQSignature < (веднага след /Contents, само ако includePq) ──
-  let pqOffset: number | null = null;
-  if (includePq) {
-    const pqMarker = new TextEncoder().encode('/PQSignature <');
-    const pqMarkerPos = findPattern(bytes, pqMarker, sigObjPos);
-    if (pqMarkerPos === -1) {
-      throw new Error('PDF подготовка: /PQSignature placeholder не е намерен след serialize');
-    }
-    pqOffset = pqMarkerPos + pqMarker.length - 1;
-  }
-
   // ── Намираме /ByteRange [ ... ] placeholder (в рамките на sig обекта) ──
   const brMarker = new TextEncoder().encode('/ByteRange [');
   const brMarkerPos = findPattern(bytes, brMarker, sigObjPos);
@@ -362,7 +409,21 @@ export async function preparePdfForSigning(
   // Числата започват след '[': offset = brMarkerPos + '/ByteRange ['.length
   const byteRangeNumOffset = brMarkerPos + brMarker.length;
 
-  return { bytes, contentsOffset, pqOffset, byteRangeNumOffset };
+  // ── /PQSignature (ако includePq) — ОТДЕЛЕН обект, appended СЛЕД целия
+  // pdf-lib изход (виж appendPqPlaceholder() по-долу и bugfix 2026-07-31 v2
+  // бележката над sigDict по-горе — Adobe отхвърля непознати ключове
+  // ВЪТРЕ в /Sig dict-а). computeByteRanges() разширява excluded диапазона
+  // да покрие и него, така че пак остава ЗАЩИТЕН (вътре в ByteRange), само
+  // структурно е отделен обект, не ключ на /Sig.
+  let finalBytes: Uint8Array = bytes;
+  let pqOffset: number | null = null;
+  if (includePq) {
+    const appended = appendPqPlaceholder(bytes);
+    finalBytes = appended.bytes;
+    pqOffset = appended.pqOffset;
+  }
+
+  return { bytes: finalBytes, contentsOffset, pqOffset, byteRangeNumOffset };
 }
 
 // ─── Стъпка 2: Изчисляване на byte range ─────────────────────────────────────
@@ -443,9 +504,10 @@ export function hashByteRanges(
 /**
  * Инжектира CMS подпис в /Contents placeholder и обновява /ByteRange.
  * Ако prepared.pqOffset е зададен (includePq=true при preparePdfForSigning),
- * попълва и /PQSignature placeholder-а в СЪЩИЯ /Sig dict — виж bugfix
- * 2026-07-31 бележката над fillPqPlaceholder() (по-старата incremental-update
- * след подписа схема чупеше Adobe валидация).
+ * попълва и /PQSignature placeholder-а (отделен appended обект, виж bugfix
+ * 2026-07-31 v2 бележката над fillPqPlaceholder()) — и двата placeholder-а
+ * вече само се ПАТЧВАТ IN-PLACE тук, без append (позициите са фиксирани
+ * от preparePdfForSigning()/appendPqPlaceholder()).
  *
  * @param prepared    Резултат от preparePdfForSigning()
  * @param byteRange   Резултат от computeByteRanges() (не се ползва тук вече —
@@ -459,7 +521,7 @@ export function injectSignatureAndPQ(
   cmsDer: Uint8Array,
   pqData?: PqSignatureData | null,
 ): Uint8Array {
-  void byteRange; // вече не се вгражда в PQ payload-а (co-located с /Sig-а, не се нуждае от signerIndex/byteRange)
+  void byteRange; // вече не се вгражда в PQ payload-а (directly paired с /Sig-а, не се нуждае от signerIndex/byteRange)
   const result = new Uint8Array(prepared.bytes); // копие
 
   // 1. Инжектираме CMS hex в /Contents (след '<') — fillContentsPlaceholder
@@ -469,7 +531,7 @@ export function injectSignatureAndPQ(
   // 2. /ByteRange е вече patch-нат от patchByteRangeInPlace() (задължително преди хеширане).
   // result е копие на prepared.bytes, което вече съдържа реалните ByteRange стойности.
 
-  // 3. /PQSignature placeholder (СЪЩИЯТ /Sig dict) — само ако беше резервиран.
+  // 3. /PQSignature placeholder (отделен appended обект) — само ако беше резервиран.
   if (prepared.pqOffset !== null && pqData) {
     fillPqPlaceholder(result, prepared.pqOffset, new TextEncoder().encode(JSON.stringify(pqData)));
   }
@@ -814,19 +876,8 @@ export async function prepareIncrementalSignature(
   push('0 999999999 999999999 999999999]\n/Contents <');
   const contentsOffset = offset - 1; // offset на '<' самия (последният push-нат символ)
   push('0'.repeat(CONTENTS_HEX_LENGTH));
-  push('>\n');
-  // /PQSignature (ако includePq) — ВЕДНАГА след /Contents, преди /Reason —
-  // И ДВАТА placeholder-а трябва да останат в ЕДИН общ изключен /ByteRange
-  // диапазон (виж bugfix бележката над fillPqPlaceholder() в началото на файла).
-  let pqOffset: number | null = null;
-  if (includePq) {
-    push('/PQSignature <');
-    pqOffset = offset - 1;
-    push('0'.repeat(PQ_HEX_LENGTH));
-    push('>\n');
-  }
   push(
-    `/Reason ${reasonHex}\n/M (${formatPdfDate(signingDate)})\n/Name ${nameHex}\n` +
+    `>\n/Reason ${reasonHex}\n/M (${formatPdfDate(signingDate)})\n/Name ${nameHex}\n` +
     `/Location ${locationHex}\n/ContactInfo ${contactInfoHex}\n>>\nendobj\n`,
   );
 
@@ -862,7 +913,20 @@ export async function prepareIncrementalSignature(
   let pos = pdfBytes.length;
   for (const p of parts) { combined.set(p, pos); pos += p.length; }
 
-  return { bytes: combined, contentsOffset, pqOffset, byteRangeNumOffset };
+  // ── 9. /PQSignature (ако includePq) — ОТДЕЛЕН обект, appended СЛЕД целия
+  // incremental block по-горе (виж appendPqPlaceholder() и bugfix 2026-07-31 v2
+  // бележката над fillPqPlaceholder() — Adobe отхвърля непознати ключове
+  // ВЪТРЕ в /Sig dict-а). computeByteRanges() разширява excluded диапазона
+  // да покрие и него — пак остава ЗАЩИТЕН (0 trailing байта извън ByteRange).
+  let finalBytes: Uint8Array = combined;
+  let pqOffset: number | null = null;
+  if (includePq) {
+    const appended = appendPqPlaceholder(combined);
+    finalBytes = appended.bytes;
+    pqOffset = appended.pqOffset;
+  }
+
+  return { bytes: finalBytes, contentsOffset, pqOffset, byteRangeNumOffset };
 }
 
 /**

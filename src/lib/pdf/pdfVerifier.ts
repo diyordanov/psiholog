@@ -210,23 +210,39 @@ function extractCmsDerBounded(pdfBytes: Uint8Array, from: number, to: number): U
   return bytes.slice(0, end);
 }
 
-// ─── /PQSignature (СЪЩИЯ /Sig dict) ────────────────────────────────────────────
+// ─── /PostQuantumSignature (отделен обект, ВЪТРЕ в /ByteRange gap-а) ───────────
 
 /**
- * Извлича ML-DSA-65 PQ JSON payload от /PQSignature <hex> поле — bounded в
- * границите [from, to) на КОНКРЕТЕН /Sig dict (виж bugfix 2026-07-31:
- * /PQSignature вече живее В СЪЩИЯ /Sig dict, директно до /Contents, вместо
- * като отделен incremental stream, асоцииран чрез signerIndex).
+ * Извлича ML-DSA-65 PQ JSON payload от /PostQuantumSignature обект — bounded
+ * В РАМКИТЕ на [A, B) на КОНКРЕТЕН подпис (excluded /ByteRange gap-а).
  *
- * Hex-декодиране + trim на trailing zero padding — идентичен подход на
- * extractCmsDerBounded(), но резултатът е UTF-8 JSON текст, не binary DER.
+ * bugfix 2026-07-31 v1 сложи /PQSignature като КЛЮЧ ВЪТРЕ в /Sig dict-а
+ * (директно до /Contents) — но Adobe Acrobat валидира /Type /Sig речници
+ * със СТРОГ, специализиран парсер и отхвърля непознати ключове там
+ * ("Signature is invalid: There are errors in the formatting or
+ * information contained in the signature", потвърдено с реален тест).
+ *
+ * bugfix 2026-07-31 v2: /PostQuantumSignature вече е ОТДЕЛЕН обект
+ * (appendPqPlaceholder() в pdfSigner.ts), appended след /Sig-а, но
+ * computeByteRanges() пак разширява excluded [A, B) диапазона да го
+ * покрие — затова тук търсим bounded В РАМКИТЕ на [A, B), НЕ В /Sig
+ * dict-а самия. Гарантирано коректна асоциация by construction (всеки
+ * /PostQuantumSignature е ФИЗИЧЕСКИ вътре в byte-range gap-а точно на
+ * "своя" подпис) — без нужда от signerIndex.
  */
-function extractPqDataBounded(pdfBytes: Uint8Array, from: number, to: number): PqSignatureData | null {
-  const marker = enc.encode('/PQSignature <');
-  const pos = findPattern(pdfBytes, marker, from);
+function extractPqDataInByteRangeGap(
+  pdfBytes: Uint8Array, byteRange: [number, number, number, number],
+): PqSignatureData | null {
+  const [, from, to] = byteRange;
+  const typeMarker = enc.encode('/Type /PostQuantumSignature');
+  const typePos = findPattern(pdfBytes, typeMarker, from);
+  if (typePos === -1 || typePos >= to) return null;
+
+  const dataMarker = enc.encode('/Data <');
+  const pos = findPattern(pdfBytes, dataMarker, typePos);
   if (pos === -1 || pos >= to) return null;
 
-  const hexStart = pos + marker.length;
+  const hexStart = pos + dataMarker.length;
   let hexEnd = hexStart;
   while (hexEnd < to && pdfBytes[hexEnd] !== 0x3e) hexEnd++;
   if (hexEnd >= to) return null;
@@ -354,13 +370,16 @@ export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[]
       return;
     }
     const dictEnd = findDictEnd(pdfBytes, dictStart);
+    const byteRange = extractByteRangeBounded(pdfBytes, dictStart, dictEnd);
 
     results.push({
       index,
-      byteRange: extractByteRangeBounded(pdfBytes, dictStart, dictEnd),
+      byteRange,
       cmsDer:    extractCmsDerBounded(pdfBytes, dictStart, dictEnd),
       signedAt:  extractSigningDateBounded(pdfBytes, dictStart, dictEnd),
-      pqData:    extractPqDataBounded(pdfBytes, dictStart, dictEnd),
+      // /PostQuantumSignature е ОТДЕЛЕН обект (не в dict-а) — търсим го в
+      // excluded [A, B) diapazona на СЪЩИЯ byteRange (виж bugfix 2026-07-31 v2).
+      pqData:    byteRange ? extractPqDataInByteRangeGap(pdfBytes, byteRange) : null,
     });
   });
   return results;

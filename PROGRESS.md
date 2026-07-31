@@ -134,6 +134,52 @@ payload-а, нито от cross-referencing логика при verify.
 `pdfVerifier.test.ts`, `verifyService.test.ts`, `pdfSigning.test.ts` да
 ползват новата `includePq`/`pqData` форма без `byteRange`/`signerIndex`).
 
+#### v2 addendum (2026-07-31, същия ден): "Document altered" изчезна, но се появи НОВА Adobe грешка
+
+Веднага след v1 push потребителят тества нов документ (owner + 1
+recipient, И двамата с ML-DSA) и съобщи: вече НЯМА "document altered or
+corrupted" (v1 фикса реално проработи за ByteRange coverage-а!), НО Adobe
+сега показва **"Signature is invalid: There are errors in the formatting
+or information contained in the signature"** за ДВАТА подписа — с
+допълнителни "A drawing error occurred" / "Cannot find or create the font
+'TimesNewRomanPS-BoldItalicMT'" диалози (несвързани, artifact на самия
+тестов документ, не от нашия код).
+
+**Диагностика:** директен byte-level forensic dump на реалния свален файл
+показа /Sig dict-овете напълно валиден PDF синтаксис, `/ByteRange`
+coverage коректен (стига до края на файла за последния подписващ),
+`verifyDocument()` потвърждава и двата 100% валидни криптографски.
+"There are errors in the formatting or information contained in the
+signature" е ИЗВЕСТНА Adobe фраза СПЕЦИФИЧНО за проблем в самата
+`/Type /Sig` dictionary структура (различна от "document altered/
+corrupted", която е за hash mismatch) — не hash проблем.
+
+**Root cause (v1 fix's страничен ефект):** v1 сложи `/PQSignature` като
+ключ ВЪТРЕ в `/Sig` dict-а (до `/Contents`). Adobe Acrobat валидира
+`/Type /Sig` речници със СОБСТВЕН, СТРОГ парсер (различен от генеричния
+PDF dict парсер, който е толерантен към custom keys навсякъде другаде в
+PDF-а) — и отхвърля НЕПОЗНАТИ ключове точно вътре в `/Sig` dict-а.
+
+**Fix v2:** `/PQSignature` вече е **ОТДЕЛЕН обект** (`/Type
+/PostQuantumSignature`, нов `appendPqPlaceholder()` в `pdfSigner.ts` —
+структурно идентичен на класическия incremental-update модел, подобен на
+изтритата в v1 `buildPqIncrementalUpdate()`), appended СЛЕД целия `/Sig`
+dict. `computeByteRanges()` пак разширява excluded `[A, B)` диапазона да
+ГО покрие — значи пак остава 0 trailing байта извън `/ByteRange` (v1
+фиксът се запазва), но вече като напълно "анонимен" custom обект, не
+ключ вътре в строго валидирания `/Sig`. `pdfVerifier.ts` вече търси
+`/PostQuantumSignature` bounded В РАМКИТЕ на `[A, B)` (byteRange gap-а) на
+всеки подпис, вместо bounded в самия `/Sig` dict — гарантирано коректна
+асоциация by construction, все още без `signerIndex`.
+
+**Верификация:** същият end-to-end ad hoc скрипт — потвърди `/Sig`
+dict-овете вече съдържат САМО стандартни ключове (без `/PQSignature`),
+`/PostQuantumSignature` е отделен обект, `byteRange[2] + byteRange[3]` на
+последния подпис пак = точната дължина на файла.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **204/204 unit
+теста**.
+
 ### Ден 6 hotfix v9: prepareIncrementalSignature четеше /Pages /Kids като ПЛОСЪК списък — грешно за вложено page tree (2026-07-30)
 
 Веднага след hotfix v8 потребителят направи нов чист тест (owner + 1
