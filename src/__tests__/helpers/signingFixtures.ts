@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as x509 from '@peculiar/x509';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   preparePdfForSigning, computeByteRanges, patchByteRangeInPlace,
   hashByteRanges, injectSignatureAndPQ, encodeBase64url,
@@ -191,12 +192,26 @@ interface SignOptions {
 /** Подписва MINIMAL_PDF с дадените ключове. Връща signed PDF bytes. */
 async function signPdf(opts: SignOptions): Promise<Uint8Array> {
   const signingDate = new Date('2026-07-10T12:00:00Z');
+  const prepOptions = { markerX: 30, markerY: 30, pageIndex: 0 };
+
+  // Двустъпков PQ flow (виж архитектурна бележка v3/FINAL в pdfSigner.ts):
+  // pre-digest → ML-DSA подпис → РЕАЛНО вграждане в СЛЕДВАЩОТО prepare извикване.
+  let pqData = null;
+  if (opts.includePQ && opts.mlDsaSecret && opts.mlDsaPublic) {
+    const preDigestPrepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate, prepOptions);
+    const pqPreDigest = sha256(preDigestPrepared.bytes);
+    const mlSig = ml_dsa65.sign(pqPreDigest, opts.mlDsaSecret);
+    pqData = {
+      algorithm:       'ml-dsa-65',
+      signedHash:      encodeBase64url(pqPreDigest),
+      signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: opts.emptyPqPublicKey ? '' : encodeBase64url(opts.mlDsaPublic),
+      attestation:     { hasCert: false },
+    };
+  }
 
   const prepared = await preparePdfForSigning(
-    new Uint8Array(MINIMAL_PDF),
-    'Test Signer',
-    signingDate,
-    { markerX: 30, markerY: 30, pageIndex: 0, includePq: !!opts.includePQ },
+    new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate, prepOptions, pqData,
   );
 
   const byteRange = computeByteRanges(prepared);
@@ -214,19 +229,7 @@ async function signPdf(opts: SignOptions): Promise<Uint8Array> {
 
   const cmsDer = buildCmsDetached(messageDigest, ecdsaSigReal, opts.certDer, opts.caCertDer);
 
-  let pqData = null;
-  if (opts.includePQ && opts.mlDsaSecret && opts.mlDsaPublic) {
-    const mlSig = ml_dsa65.sign(messageDigest, opts.mlDsaSecret);
-    pqData = {
-      algorithm:       'ml-dsa-65',
-      signedHash:      encodeBase64url(messageDigest),
-      signatureB64url: encodeBase64url(mlSig),
-      publicKeyB64url: opts.emptyPqPublicKey ? '' : encodeBase64url(opts.mlDsaPublic),
-      attestation:     { hasCert: false },
-    };
-  }
-
-  return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
+  return injectSignatureAndPQ(prepared, byteRange, cmsDer);
 }
 
 // ─── Fixture генератори ────────────────────────────────────────────────────────
@@ -292,7 +295,7 @@ export async function makeModifiedSignaturePdf(keys: TestKeys): Promise<Uint8Arr
   corruptedSig[13] ^= 0xFF;
 
   const cmsDer = buildCmsDetached(messageDigest, corruptedSig, keys.leafCertDer, keys.rootCaCertDer);
-  return injectSignatureAndPQ(prepared, byteRange, cmsDer, null);
+  return injectSignatureAndPQ(prepared, byteRange, cmsDer);
 }
 
 /** 5. Изтекъл сертификат (notAfter в миналото). */
@@ -345,15 +348,33 @@ export async function makeOldFormatPdf(keys: TestKeys): Promise<Uint8Array> {
 
 /**
  * 10. ML-DSA подписът е corrupted — вграждаме невалиден PQ sig при construction.
- * PQ stream е извън ByteRange (incremental update), затова ECDSA не го засяга.
+ * PQ обектът е ВЪТРЕ в ECDSA-защитения байт диапазон (виж архитектурна
+ * бележка v3/FINAL в pdfSigner.ts), но ML-DSA сама по себе си е невалидна.
  * Résultat: ECDSA valid, ML-DSA invalid → overall = 'invalid'.
  */
 export async function makeMlDsaInvalidPdf(keys: TestKeys): Promise<Uint8Array> {
   const signingDate = new Date('2026-07-10T12:00:00Z');
-  const prepared = await preparePdfForSigning(
-    new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate,
-    { markerX: 30, markerY: 30, pageIndex: 0, includePq: true },
-  );
+  const prepOptions = { markerX: 30, markerY: 30, pageIndex: 0 };
+
+  const preDigestPrepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate, prepOptions);
+  const pqPreDigest = sha256(preDigestPrepared.bytes);
+
+  // Генерираме валиден ML-DSA подпис (върху pre-digest-а), после корумпираме първите 10 байта
+  const mlSig = ml_dsa65.sign(pqPreDigest, keys.mlDsaSecretKey);
+  const corruptedMlSig = new Uint8Array(mlSig);
+  corruptedMlSig[0]  ^= 0xFF;
+  corruptedMlSig[5]  ^= 0xFF;
+  corruptedMlSig[10] ^= 0xFF;
+
+  const pqData = {
+    algorithm:       'ml-dsa-65',
+    signedHash:      encodeBase64url(pqPreDigest),
+    signatureB64url: encodeBase64url(corruptedMlSig),
+    publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
+    attestation:     { hasCert: false },
+  };
+
+  const prepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Test Signer', signingDate, prepOptions, pqData);
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
   const messageDigest = hashByteRanges(prepared.bytes, byteRange);
@@ -364,20 +385,5 @@ export async function makeMlDsaInvalidPdf(keys: TestKeys): Promise<Uint8Array> {
   );
   const cmsDer = buildCmsDetached(messageDigest, ecdsaSig, keys.leafCertDer, keys.rootCaCertDer);
 
-  // Генерираме валиден ML-DSA подпис, после корумпираме първите 10 байта
-  const mlSig = ml_dsa65.sign(messageDigest, keys.mlDsaSecretKey);
-  const corruptedMlSig = new Uint8Array(mlSig);
-  corruptedMlSig[0]  ^= 0xFF;
-  corruptedMlSig[5]  ^= 0xFF;
-  corruptedMlSig[10] ^= 0xFF;
-
-  const pqData = {
-    algorithm:       'ml-dsa-65',
-    signedHash:      encodeBase64url(messageDigest),
-    signatureB64url: encodeBase64url(corruptedMlSig),
-    publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
-    attestation:     { hasCert: false },
-  };
-
-  return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
+  return injectSignatureAndPQ(prepared, byteRange, cmsDer);
 }

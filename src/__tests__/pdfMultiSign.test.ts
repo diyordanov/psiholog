@@ -86,7 +86,7 @@ async function signAsOwner() {
     ),
   );
   const cmsDer = buildCmsDetached(messageDigest, sigP1363, keys.leafCertDer, keys.rootCaCertDer);
-  const bytes = injectSignatureAndPQ(prepared, byteRange, cmsDer, null);
+  const bytes = injectSignatureAndPQ(prepared, byteRange, cmsDer);
   return { bytes, byteRange, messageDigest, cmsDer, sigP1363, signedAttrs, contentsOffset: prepared.contentsOffset };
 }
 

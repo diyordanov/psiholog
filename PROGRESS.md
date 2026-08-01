@@ -63,6 +63,74 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6 hotfix v11 (v3/FINAL): PQ данните вече се изчисляват и вграждат ПРЕДИ /Contents/ByteRange — ByteRange gap отново тесен (2026-08-01)
+
+Директно след v2 push (по-долу) потребителят тества нов документ (owner +
+1 recipient, и двамата с ML-DSA) и Adobe пак отказа подписите, този път
+дори по-конкретно: **"Signature is invalid: There are errors in the
+formatting or information contained in this signature (support
+information: SigDict /Contents illegal data)"**.
+
+**Диагностика:** byte-level forensic dump на реалния свален файл потвърди
+нашата byte математика е коректна (B-1 е точно `>`, A е точно `<`, всичко
+сочи където трябва) — НО excluded `/ByteRange` диапазонът [A, B) беше
+**350KB широк** (обхващаше целия остатък от /Sig dict-а, xref, trailer,
+EOF, чак до appended /PostQuantumSignature обекта от v2 фикса), вместо да
+съвпада точно с /Contents. Извод: **Adobe изисква excluded диапазона да
+покрива ТОЧНО /Contents стойността, нищо повече** — не толерира "разширен"
+gap, дори ако технически покрива легитимно съдържание.
+
+**Root cause на целия проблем (v0→v2):** и трите предишни опита (incremental
+append СЛЕД подписа; ключ ВЪТРЕ в /Sig dict-а; отделен обект с РАЗШИРЕН
+ByteRange gap) се опитваха да "защитят" PQ данните ПОСЛЕ /Contents/ByteRange
+вече бяха изчислени — архитектурно несъвместимо с Adobe, защото PQ стойността
+не е известна ПРЕДИ хеширането (класическа chicken-egg situace за всеки
+placeholder-и-запълни-по-късно подход).
+
+**FINAL fix — обърнат ред на операциите:** PQ данните вече се изчисляват
+и вграждат като РЕАЛЕН обект **ПРЕДИ** /Contents/ByteRange изобщо да
+съществуват:
+  1. `preparePdfForSigning()`/`prepareIncrementalSignature()` се извикват
+     ПЪРВО БЕЗ pqData → връщат "pre-digest" bytes (маркер + AcroForm + Sig
+     placeholder, БЕЗ PQ).
+  2. `sha256(pre-digest bytes)` → ML-DSA-65 подписва ТОЗИ pre-digest
+     (различен от ECDSA-байт-range-хеша — по дизайн, не бъг).
+  3. Същите prepare функции се извикват ВТОРИ ПЪТ, този път С готовото
+     `pqData` → вграждат `/PostQuantumSignature` като напълно РЕАЛЕН (не
+     placeholder!) обект, ПРЕДИ /Sig обекта, в СЪЩАТА ревизия.
+  4. `computeByteRanges()` се връща към ОРИГИНАЛНАТА проста формула — gap-ът
+     обхваща САМО /Contents, нищо друго. ECDSA хешът транзитивно защитава
+     ЦЕЛИЯ /PostQuantumSignature обект (всяка манипулация чупи ECDSA).
+
+**Верификация:** `verifyMlDsaSignature()` вече проверява `ml_dsa65.verify`
+директно срещу ДЕКЛАРИРАНИЯ `signedHash` (не срещу прясно преизчислен
+byte-range хеш — двата digest-а вече по дизайн са различни; сигурността
+идва транзитивно от ECDSA защитата на целия PQ обект). `extractAllSignatures()`
+в `pdfVerifier.ts` асоциира `/PostQuantumSignature` с "неговия" `/Sig` по
+**revision-прозорец** (байтове между края на ПРЕДИШНИЯ `/Sig` dict и
+началото на ТОЗИ), не по byte-range gap.
+
+**End-to-end потвърждение** (ad hoc скрипт извън test suite, симулира
+owner+recipient с ML-DSA): gap ширина = точно 16386 (=`CONTENTS_HEX_LENGTH+2`,
+Contents-only) за ДВАТА подписа; последният подпис пак стига точно до края
+на файла; `/Sig` dict-овете съдържат САМО стандартни ключове;
+`/PostQuantumSignature` обектите са физически ПРЕДИ своя `/Sig`, в СЪЩАТА
+ревизия; `verifyDocument()` потвърждава и двата 100% валидни.
+
+**Засегнати файлове:** `pdfSigner.ts` (премахнати `PQ_PLACEHOLDER_BYTES`,
+`fillPqPlaceholder()`, `appendPqPlaceholder()`, `includePq`/`pqOffset` —
+`preparePdfForSigning()`/`prepareIncrementalSignature()` вече приемат
+опционален `pqData` директно; `computeByteRanges()`/`injectSignatureAndPQ()`/
+`injectIncrementalSignature()` върнати към простата им форма); `pdfVerifier.ts`
+(`extractPqDataBounded()` вече revision-windowed, не byte-range-gap-bounded);
+`verifyService.ts` (`verifyMlDsaSignature()` вече без `computedHash`
+cross-check); `signingService.ts` (`signAsOwner()`/`attemptRecipientSign()`
+вече правят двоен prepare-call: pre-digest → PQ подпис → реален prepare).
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **204/204 unit
+теста** (fixtures/тестове в `helpers/signingFixtures.ts` и
+`verifyService.test.ts` преработени за двустъпковия PQ flow).
+
 ### Ден 6 hotfix v10: АРХИТЕКТУРЕН fix — /PostQuantumSignature вече е В СЪЩИЯ /Sig dict, не отделен incremental block (2026-07-31)
 
 След hotfix v8/v9 потребителят направи нов чист тест (owner + 1 recipient,

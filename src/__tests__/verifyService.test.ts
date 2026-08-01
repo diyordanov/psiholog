@@ -33,6 +33,7 @@ import {
 } from '../lib/pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from '../lib/pdf/cmsBuilder';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   initTestKeys, type TestKeys, MINIMAL_PDF, loadTestFontBytes,
   makeValidHybridPdf, makeValidEcdsaOnlyPdf,
@@ -294,10 +295,23 @@ const SIGNING_DATE = new Date('2026-07-19T10:00:00Z');
 
 /** Owner: preparePdfForSigning + injectSignatureAndPQ (с опционален PQ подпис). */
 async function signAsOwner(withPq: boolean) {
-  const prepared = await preparePdfForSigning(
-    new Uint8Array(MINIMAL_PDF), 'Owner Test', SIGNING_DATE,
-    { markerX: 30, markerY: 30, pageIndex: 0, includePq: withPq },
-  );
+  const prepOptions = { markerX: 30, markerY: 30, pageIndex: 0 };
+
+  let pqData = null;
+  if (withPq) {
+    const preDigestPrepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Owner Test', SIGNING_DATE, prepOptions);
+    const pqPreDigest = sha256(preDigestPrepared.bytes);
+    const mlSig = ml_dsa65.sign(pqPreDigest, keys.mlDsaSecretKey);
+    pqData = {
+      algorithm: 'ml-dsa-65',
+      signedHash: encodeBase64url(pqPreDigest),
+      signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
+      attestation: { hasCert: false },
+    };
+  }
+
+  const prepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Owner Test', SIGNING_DATE, prepOptions, pqData);
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
   const messageDigest = hashByteRanges(prepared.bytes, byteRange);
@@ -310,32 +324,36 @@ async function signAsOwner(withPq: boolean) {
   );
   const cmsDer = buildCmsDetached(messageDigest, sigP1363, keys.leafCertDer, keys.rootCaCertDer);
 
-  let pqData = null;
-  if (withPq) {
-    const mlSig = ml_dsa65.sign(messageDigest, keys.mlDsaSecretKey);
-    pqData = {
-      algorithm: 'ml-dsa-65',
-      signedHash: encodeBase64url(messageDigest),
-      signatureB64url: encodeBase64url(mlSig),
-      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
-      attestation: { hasCert: false },
-    };
-  }
-  return injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
+  return injectSignatureAndPQ(prepared, byteRange, cmsDer);
 }
 
 /**
  * Recipient: prepareIncrementalSignature + injectIncrementalSignature.
- * `withPq` (Ден 6 hotfix v5) — вгражда ML-DSA-65 /PQSignature В СЪЩИЯ /Sig
- * dict (bugfix 2026-07-31, вместо отделен incremental stream + signerIndex).
+ * `withPq` (Ден 6 hotfix v5) — вгражда ML-DSA-65 /PostQuantumSignature като
+ * РЕАЛЕН обект ПРЕДИ /Sig-а (bugfix 2026-08-01, виж архитектурна бележка
+ * v3/FINAL в pdfSigner.ts).
  */
 async function signAsRecipient(
   prevBytes: Uint8Array, name: string, privateKey: CryptoKey, certDer: Uint8Array,
   fieldName: string, markerX: number, _signerIndex: number, withPq = false,
 ) {
-  const prepared = await prepareIncrementalSignature(
-    prevBytes, name, SIGNING_DATE, { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes, includePq: withPq },
-  );
+  const incrementalOptions = { markerX, markerY: 30, pageIndex: 0, fieldName, fontBytes };
+
+  let pqData = null;
+  if (withPq) {
+    const preDigestPrepared = await prepareIncrementalSignature(prevBytes, name, SIGNING_DATE, incrementalOptions);
+    const pqPreDigest = sha256(preDigestPrepared.bytes);
+    const mlSig = ml_dsa65.sign(pqPreDigest, keys.mlDsaSecretKey);
+    pqData = {
+      algorithm: 'ml-dsa-65',
+      signedHash: encodeBase64url(pqPreDigest),
+      signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
+      attestation: { hasCert: false },
+    };
+  }
+
+  const prepared = await prepareIncrementalSignature(prevBytes, name, SIGNING_DATE, incrementalOptions, pqData);
   const byteRange = computeByteRanges(prepared);
   patchByteRangeInPlace(prepared, byteRange);
   const messageDigest = hashByteRanges(prepared.bytes, byteRange);
@@ -348,18 +366,7 @@ async function signAsRecipient(
   );
   const cmsDer = buildCmsDetached(messageDigest, sigP1363, certDer, keys.rootCaCertDer);
 
-  let pqData = null;
-  if (withPq) {
-    const mlSig = ml_dsa65.sign(messageDigest, keys.mlDsaSecretKey);
-    pqData = {
-      algorithm: 'ml-dsa-65',
-      signedHash: encodeBase64url(messageDigest),
-      signatureB64url: encodeBase64url(mlSig),
-      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey),
-      attestation: { hasCert: false },
-    };
-  }
-  return injectIncrementalSignature(prepared, cmsDer, pqData);
+  return injectIncrementalSignature(prepared, cmsDer);
 }
 
 describe('N=2 подписа (owner + 1 recipient, от multi-sign fixtures)', () => {
@@ -439,10 +446,16 @@ describe('N=2 подписа, auto-layout размери (owner С PQ, recipient
     // (реалният app flow ВИНАГИ подава fontBytes/markerWidth/markerHeight
     // за owner-а — за разлика от по-стария test helper по-долу, който не ги
     // подава изобщо, крие точно тази комбинация).
-    const preparedOwner = await preparePdfForSigning(
-      new Uint8Array(MINIMAL_PDF), 'Owner AutoLayout', SIGNING_DATE,
-      { markerX: 30, markerY: 30, pageIndex: 0, fontBytes, markerWidth: 270, markerHeight: 60, includePq: true },
-    );
+    const ownerPrepOptions = { markerX: 30, markerY: 30, pageIndex: 0, fontBytes, markerWidth: 270, markerHeight: 60 };
+    const ownerPreDigestPrepared = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Owner AutoLayout', SIGNING_DATE, ownerPrepOptions);
+    const ownerPqPreDigest = sha256(ownerPreDigestPrepared.bytes);
+    const mlSig = ml_dsa65.sign(ownerPqPreDigest, keys.mlDsaSecretKey);
+    const ownerPq = {
+      algorithm: 'ml-dsa-65', signedHash: encodeBase64url(ownerPqPreDigest), signatureB64url: encodeBase64url(mlSig),
+      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey), attestation: { hasCert: false },
+    };
+
+    const preparedOwner = await preparePdfForSigning(new Uint8Array(MINIMAL_PDF), 'Owner AutoLayout', SIGNING_DATE, ownerPrepOptions, ownerPq);
     const ownerByteRange = computeByteRanges(preparedOwner);
     patchByteRangeInPlace(preparedOwner, ownerByteRange);
     const ownerDigest = hashByteRanges(preparedOwner.bytes, ownerByteRange);
@@ -451,12 +464,7 @@ describe('N=2 подписа, auto-layout размери (owner С PQ, recipient
       await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.leafKeys.privateKey, ownerSignedAttrs as unknown as Uint8Array<ArrayBuffer>),
     );
     const ownerCms = buildCmsDetached(ownerDigest, ownerSig, keys.leafCertDer, keys.rootCaCertDer);
-    const mlSig = ml_dsa65.sign(ownerDigest, keys.mlDsaSecretKey);
-    const ownerPq = {
-      algorithm: 'ml-dsa-65', signedHash: encodeBase64url(ownerDigest), signatureB64url: encodeBase64url(mlSig),
-      publicKeyB64url: encodeBase64url(keys.mlDsaPublicKey), attestation: { hasCert: false },
-    };
-    const ownerSigned = injectSignatureAndPQ(preparedOwner, ownerByteRange, ownerCms, ownerPq);
+    const ownerSigned = injectSignatureAndPQ(preparedOwner, ownerByteRange, ownerCms);
 
     // Recipient: auto-layout зона, БЕЗ PQ (не всеки recipient има ML-DSA ключ) —
     // точната комбинация от live репродукцията на потребителя.
@@ -472,7 +480,7 @@ describe('N=2 подписа, auto-layout размери (owner С PQ, recipient
       await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, recipientKeys.privateKey, recSignedAttrs as unknown as Uint8Array<ArrayBuffer>),
     );
     const recCms = buildCmsDetached(recDigest, recSig, recipientCertDer, keys.rootCaCertDer);
-    signed = injectIncrementalSignature(preparedRecipient, recCms, null);
+    signed = injectIncrementalSignature(preparedRecipient, recCms);
   }, 60_000);
 
   it('totalSigners е ТОЧНО 2', async () => {
@@ -716,7 +724,7 @@ describe('preparePdfForSigning с pre-existing чужд /Contents /ByteRange pla
       ),
     );
     const cmsDer = buildCmsDetached(digest, sig, keys.leafCertDer, keys.rootCaCertDer);
-    const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer, null);
+    const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer);
 
     const r = await verify(finalPdf);
     // Чуждият placeholder ОСТАВА като отделен (невалиден/непопълнен) /Type /Sig

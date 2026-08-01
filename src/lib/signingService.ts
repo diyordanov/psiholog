@@ -26,6 +26,7 @@
  * UI wiring е Ден 5-6 — тези функции не се викат от никой компонент още.
  */
 
+import { sha256 } from '@noble/hashes/sha2.js';
 import { supabase } from './supabase';
 import { logAuditEvent } from './auditLog';
 import { fetchBestKeyId, fetchKeyDecryptData } from './signingKeyStore';
@@ -374,37 +375,33 @@ export async function signAsOwner(
     const originalPdfBytes = new Uint8Array(await pdfBlob.arrayBuffer());
 
     // ── 8. Подготовка на PDF с визуален маркер (owner е ВИНАГИ signer #1) ──
-    // includePq: резервира /PQSignature placeholder В СЪЩИЯ /Sig dict, ако
-    // ще опитаме ML-DSA (известно предварително — виж bugfix 2026-07-31
-    // бележката над fillPqPlaceholder() в pdfSigner.ts).
     const signOptions: SignOptions = {
       markerX: position.x, markerY: position.y, pageIndex: position.page, fontBytes,
       markerWidth: position.width, markerHeight: position.height,
-      includePq: !!(mlDsaSecretKey && keys.mlDsaData),
     };
-    const prepared = await preparePdfForSigning(originalPdfBytes, signerName, signingDate, signOptions);
 
-    // ── 9. Byte ranges + SHA-256 hash ─────────────────────────────────────
-    const byteRange = computeByteRanges(prepared);
-    patchByteRangeInPlace(prepared, byteRange);
-    const messageDigest = hashByteRanges(prepared.bytes, byteRange);
-
-    // ── 10. ECDSA P-256 подпис + CMS ───────────────────────────────────────
-    onProgress?.(55, 'Подписване ECDSA P-256...');
-    const signedAttrs   = buildSignedAttrs(messageDigest);
-    const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
-    const cmsDer = buildCmsDetached(messageDigest, ecdsaSigP1363, keys.ecdsaData.certificateDer, ROOT_CA_CERT_DER);
-
-    // ── 11. ML-DSA-65 PQ подпис (пропуснат ако няма ключ) ─────────────────
+    // ── 8б. ML-DSA-65 PQ подпис (пропуснат ако няма ключ) — ДВУСТЪПКОВ flow
+    // (виж архитектурна бележка v3/FINAL над preparePdfForSigning() в
+    // pdfSigner.ts): PQ трябва да е ВЕЧЕ изчислен и вграден като РЕАЛЕН
+    // обект ПРЕДИ /Contents/ByteRange да се изчислят, иначе Adobe отхвърля
+    // подписа ("SigDict /Contents illegal data" — ByteRange gap-ът трябва
+    // да съвпада ТОЧНО с /Contents, нищо повече не може да е "защитено" в
+    // него). Затова: (1) preparePdfForSigning() БЕЗ pqData → pre-digest;
+    // (2) подписваме pre-digest-а с ML-DSA; (3) preparePdfForSigning() ПАК,
+    // този път С pqData → вгражда се РЕАЛНО, ByteRange остава тесен.
     let pqData: PqSignatureData | null = null;
     let mlDsaKeyIdUsed: string | null = keys.mlDsaKeyId;
 
     if (mlDsaSecretKey && keys.mlDsaData) {
-      onProgress?.(70, 'Подписване ML-DSA-65...');
-      const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, messageDigest);
+      onProgress?.(45, 'Подготовка за ML-DSA-65...');
+      const preDigestPrepared = await preparePdfForSigning(originalPdfBytes, signerName, signingDate, signOptions);
+      const pqPreDigest = sha256(preDigestPrepared.bytes);
+
+      onProgress?.(55, 'Подписване ML-DSA-65...');
+      const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, pqPreDigest);
       pqData = {
         algorithm: 'ml-dsa-65',
-        signedHash: encodeBase64url(messageDigest),
+        signedHash: encodeBase64url(pqPreDigest),
         signatureB64url: encodeBase64url(mlDsaSig),
         publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
         attestation: keys.mlDsaData.certificateDer ? { hasCert: true } : { hasCert: false },
@@ -413,8 +410,21 @@ export async function signAsOwner(
       mlDsaKeyIdUsed = null;
     }
 
-    // ── 12. Инжектиране + upload на v1 ─────────────────────────────────────
-    const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer, pqData);
+    const prepared = await preparePdfForSigning(originalPdfBytes, signerName, signingDate, signOptions, pqData);
+
+    // ── 9. Byte ranges + SHA-256 hash ─────────────────────────────────────
+    const byteRange = computeByteRanges(prepared);
+    patchByteRangeInPlace(prepared, byteRange);
+    const messageDigest = hashByteRanges(prepared.bytes, byteRange);
+
+    // ── 10. ECDSA P-256 подпис + CMS ───────────────────────────────────────
+    onProgress?.(70, 'Подписване ECDSA P-256...');
+    const signedAttrs   = buildSignedAttrs(messageDigest);
+    const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
+    const cmsDer = buildCmsDetached(messageDigest, ecdsaSigP1363, keys.ecdsaData.certificateDer, ROOT_CA_CERT_DER);
+
+    // ── 11. Инжектиране + upload на v1 (PQ вече вграден в `prepared`) ──────
+    const finalPdf = injectSignatureAndPQ(prepared, byteRange, cmsDer);
 
     onProgress?.(85, 'Качване на документа...');
     const signedPath = versionedPath(signingRequestId, 1);
@@ -658,35 +668,32 @@ async function attemptRecipientSign(
     // keys.mlDsaData, известно вече от resolveSigningKeys() по-горе) — виж
     // bugfix бележката в pdfSigner.ts/IncrementalSignOptions.algoLabel.
     const algoLabel = keys.mlDsaData ? 'ECDSA P-256 + ML-DSA-65 (хибриден)' : 'ECDSA P-256';
-    const prepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, {
+    const incrementalOptions = {
       markerX: recipient.marker_x, markerY: recipient.marker_y,
       pageIndex: recipient.marker_page, fieldName: `Signature${newVersion}`,
       fontBytes, markerWidth: recipient.marker_width, markerHeight: recipient.marker_height,
       algoLabel,
-      includePq: !!(mlDsaSecretKey && keys.mlDsaData),
-    });
-    const byteRange = computeByteRanges(prepared);
-    patchByteRangeInPlace(prepared, byteRange);
-    const messageDigest = hashByteRanges(prepared.bytes, byteRange);
-
-    onProgress?.(55, 'Подписване ECDSA P-256...');
-    const signedAttrs   = buildSignedAttrs(messageDigest);
-    const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
-    const cmsDer = buildCmsDetached(messageDigest, ecdsaSigP1363, keys.ecdsaData.certificateDer, ROOT_CA_CERT_DER);
+    };
 
     // ── 5б. ML-DSA-65 PQ подпис (ако recipient-ът има ключ — задание изисква
     // хибриден подпис навсякъде, не само за owner-а; виж PROJECT_BRIEF.md
-    // "Ключово изискване"). pqData се вгражда В СЪЩИЯ /Sig dict (виж bugfix
-    // 2026-07-31 бележката над fillPqPlaceholder() в pdfSigner.ts) — не се
-    // нуждае повече от signerIndex/byteRange за асоцииране при verify.
+    // "Ключово изискване"). ДВУСТЪПКОВ flow (виж архитектурна бележка v3/
+    // FINAL над preparePdfForSigning() в pdfSigner.ts): PQ трябва да е ВЕЧЕ
+    // изчислен и вграден като РЕАЛЕН обект ПРЕДИ /Contents/ByteRange, иначе
+    // Adobe отхвърля подписа — затова prepareIncrementalSignature() се вика
+    // ДВА ПЪТИ: първо БЕЗ pqData (само за pre-digest), после С pqData (реално).
     let pqData: PqSignatureData | null = null;
     let mlDsaKeyIdUsed: string | null = null;
     if (mlDsaSecretKey && keys.mlDsaData) {
-      onProgress?.(70, 'Подписване ML-DSA-65...');
-      const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, messageDigest);
+      onProgress?.(45, 'Подготовка за ML-DSA-65...');
+      const preDigestPrepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, incrementalOptions);
+      const pqPreDigest = sha256(preDigestPrepared.bytes);
+
+      onProgress?.(55, 'Подписване ML-DSA-65...');
+      const mlDsaSig = await signWithMlDsa(mlDsaSecretKey, pqPreDigest);
       pqData = {
         algorithm: 'ml-dsa-65',
-        signedHash: encodeBase64url(messageDigest),
+        signedHash: encodeBase64url(pqPreDigest),
         signatureB64url: encodeBase64url(mlDsaSig),
         publicKeyB64url: encodeBase64url(keys.mlDsaData.publicKey ?? new Uint8Array(0)),
         attestation: keys.mlDsaData.certificateDer ? { hasCert: true } : { hasCert: false },
@@ -694,7 +701,17 @@ async function attemptRecipientSign(
       mlDsaKeyIdUsed = keys.mlDsaKeyId;
     }
 
-    const finalPdf = injectIncrementalSignature(prepared, cmsDer, pqData);
+    const prepared = await prepareIncrementalSignature(currentPdfBytes, signerName, signingDate, incrementalOptions, pqData);
+    const byteRange = computeByteRanges(prepared);
+    patchByteRangeInPlace(prepared, byteRange);
+    const messageDigest = hashByteRanges(prepared.bytes, byteRange);
+
+    onProgress?.(70, 'Подписване ECDSA P-256...');
+    const signedAttrs   = buildSignedAttrs(messageDigest);
+    const ecdsaSigP1363 = await signWithEcdsaP256(ecdsaSecretKey, signedAttrs);
+    const cmsDer = buildCmsDetached(messageDigest, ecdsaSigP1363, keys.ecdsaData.certificateDer, ROOT_CA_CERT_DER);
+
+    const finalPdf = injectIncrementalSignature(prepared, cmsDer);
 
     // ── 6. Upload новата версия ─────────────────────────────────────────────
     onProgress?.(85, 'Качване на документа...');

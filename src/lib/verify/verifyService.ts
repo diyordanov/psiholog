@@ -6,13 +6,14 @@
  * Flow:
  *   1. PDF sanitization (scanPdf)       — отхвърля malicious PDF
  *   2. extractAllSignatures()           — намира ВСИЧКИ /Sig обекта (файлов ред),
- *                                          вкл. /PQSignature от СЪЩИЯ dict (bugfix 2026-07-31)
+ *                                          вкл. асоциирания /PostQuantumSignature
+ *                                          обект по revision-прозорец (виж pdfSigner.ts)
  *   3. За всеки /Sig обект:
  *        computeSignedHash()            — SHA-256 на своя ByteRange
  *        parseCms()                     — leaf cert, signedAttrs, sig
  *        verifyCertChain()              — валидира leaf cert срещу Root CA
  *        verifyEcdsaSignature()         — ECDSA P-256 верификация
- *        verifyMlDsaSignature()         — ако има pqData в /Sig dict-а
+ *        verifyMlDsaSignature()         — ако има pqData
  *   4. determineOverall()                — приоритет: tampered > invalid >
  *                                          authentic_with_warnings > authentic
  *
@@ -150,14 +151,25 @@ export async function verifyEcdsaSignature(
 }
 
 /**
- * Верифицира ML-DSA-65 подпис от /PQSignature (виж bugfix 2026-07-31 в pdfSigner.ts).
+ * Верифицира ML-DSA-65 подпис от /PostQuantumSignature обект.
+ *
+ * АРХИТЕКТУРНА БЕЛЕЖКА (2026-08-01, виж пълната история в pdfSigner.ts над
+ * preparePdfForSigning() — "v0 → v3/FINAL"): ML-DSA вече подписва СОБСТВЕН
+ * pre-digest (хеш на документа ПРЕДИ /Sig/AcroForm инфраструктурата да
+ * съществува), НЕ СЪЩИЯ byteRange-hash като ECDSA — затова тук вече НЕ
+ * сравняваме `pqData.signedHash` срещу prясно преизчислен ECDSA хеш (двата
+ * digest-а по дизайн са РАЗЛИЧНИ). Вместо това проверяваме `ml_dsa65.verify`
+ * директно срещу ДЕКЛАРИРАНИЯ `signedHash` — сигурно е, защото ЦЕЛИЯТ
+ * /PostQuantumSignature обект (вкл. полето `signedHash`) седи ВЪТРЕ в
+ * ECDSA-защитения /ByteRange диапазон: всяка манипулация на `signedHash`
+ * би счупила ECDSA хеша (ecdsa.tampered=true), така че PQ не се нуждае от
+ * собствена независима tamper-detection — само от валиден ML-DSA подпис.
  *
  * Ако publicKeyB64url е празен (стар документ без вграден публичен ключ),
  * връщаме статус 'not_included' с информативно съобщение.
  */
 export function verifyMlDsaSignature(
   pqData: { signatureB64url: string; publicKeyB64url: string; signedHash: string },
-  computedHash: Uint8Array,
 ): MlDsaVerifyResult {
   const publicKeyBytes = decodeBase64url(pqData.publicKeyB64url);
 
@@ -171,20 +183,11 @@ export function verifyMlDsaSignature(
   }
 
   try {
-    const sig       = decodeBase64url(pqData.signatureB64url);
-    const embHash   = decodeBase64url(pqData.signedHash);
-
-    // Embedded hash трябва да съвпада с изчисления (допълнителна integrity проверка)
-    if (!bytesArrayEqual(embHash, computedHash)) {
-      return {
-        status: 'invalid',
-        algorithm: 'ml-dsa-65',
-        errorMessage: 'ML-DSA хешът не съвпада с документа.',
-      };
-    }
+    const sig     = decodeBase64url(pqData.signatureB64url);
+    const embHash = decodeBase64url(pqData.signedHash);
 
     // ml_dsa65.verify(sig, msg, publicKey) — ред: sig, message, pubKey
-    const valid = ml_dsa65.verify(sig, computedHash, publicKeyBytes);
+    const valid = ml_dsa65.verify(sig, embHash, publicKeyBytes);
     return {
       status: valid ? 'valid' : 'invalid',
       algorithm: 'ml-dsa-65',
@@ -240,7 +243,7 @@ async function verifySingleSigner(
   }
 
   const computedHash = computeSignedHash(pdfBytes, raw.byteRange);
-  const mlDsa: MlDsaVerifyResult | null = raw.pqData ? verifyMlDsaSignature(raw.pqData, computedHash) : null;
+  const mlDsa: MlDsaVerifyResult | null = raw.pqData ? verifyMlDsaSignature(raw.pqData) : null;
 
   let ecdsa: EcdsaVerifyResult;
   try {
