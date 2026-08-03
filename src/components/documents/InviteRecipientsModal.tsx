@@ -298,6 +298,18 @@ function StepPositions({
                 {i + 1}
               </button>
             ))}
+            {numPages > pageButtons && (
+              <button
+                onClick={() => { setCurrentPage(numPages - 1); setZone(null); }}
+                className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                  currentPage === numPages - 1
+                    ? 'bg-indigo-600 text-white'
+                    : 'border border-neutral-200 text-neutral-600 hover:border-indigo-300 hover:text-indigo-600'
+                }`}
+              >
+                Последна ({numPages})
+              </button>
+            )}
             {numPages > 3 && (
               <form onSubmit={handleJump} className="flex items-center gap-1.5">
                 <span className="text-xs text-neutral-400">или</span>
