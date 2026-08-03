@@ -63,6 +63,37 @@ custom SMTP template в Supabase Dashboard, не код).
 теста** (без нови — чисто integration промяна, разчита на съществуващото
 `signInWithOtp` покритие от Фаза 1).
 
+### Ден 6: PQ сагата приключи ✅ + hotfix v12: page selector в multi-signer flow нямаше jump за страница 4+ (2026-08-01)
+
+След hotfix v11 потребителят потвърди с ЧИСТ тест документ (без Word
+невградени системни шрифтове като TimesNewRomanPS-BoldItalicMT): **и
+двата подписа са напълно валидни в Adobe Acrobat, както и в собствената ни
+verify страница**. Предният "owner invalid" резултат (виж v11) се оказа
+**НЕ бъг в нашия код** — конкретният тестов документ имаше собствен
+рендиращ проблем в Adobe ("Cannot find or create the font
+'TimesNewRomanPS-BoldItalicMT'", "A drawing error occurred"), независим от
+подписването, потвърдено чрез директен byte-level forensic анализ (openssl
+CMS cross-check + gap width/PQ placement идентични и коректни и за двата
+подписа). PQ архитектурната сага (hotfix v5 → v11, 4 дни) приключва тук.
+
+**Отделен, много по-прост bug report:** при документ с >3 страници,
+избора на страница за маркер в **multi-signer** flow-а (`InviteRecipientsModal.tsx`,
+Стъпка 2 "Зона за подписите") показваше само бутони за страници 1-3, БЕЗ
+начин да се избере страница 4+ — маркер не можеше да се постави на
+последната страница на по-дълъг документ. **Root cause:** `pageButtons =
+Math.min(numPages, 3)` ограничаваше бутоните до 3, БЕЗ jump-to-page input
+(за разлика от single-signer `SignDocumentModal.tsx`, който винаги е имал
+"или [страница] Отиди" форма за numPages > 3 — пропуснато при добавянето
+на multi-signer flow-а в по-ранен ден).
+
+**Fix:** добавен идентичен jump-to-page `<form>` (number input + "Отиди"
+бутон) в `InviteRecipientsModal.tsx`'s `StepPositions`, копирайки patterna
+от `SignDocumentModal.tsx`. `usePdfThumbnail()` вече поддържаше произволен
+`page` индекс (pdf.js `getPage(page+1)`) — ограничението беше чисто UI.
+
+**Статус на тестовете:** `npx tsc --build --force` чист, **204/204 unit
+теста** (UI-only промяна, без нужда от нови тестове).
+
 ### Ден 6 hotfix v11 (v3/FINAL): PQ данните вече се изчисляват и вграждат ПРЕДИ /Contents/ByteRange — ByteRange gap отново тесен (2026-08-01)
 
 Директно след v2 push (по-долу) потребителят тества нов документ (owner +

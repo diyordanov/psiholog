@@ -198,6 +198,7 @@ function StepPositions({
   signedUrl, docId, participants, onSlotsChosen, onBack, onNext, onClose,
 }: StepPositionsProps) {
   const [currentPage, setCurrentPage] = useState(0);
+  const [jumpInput, setJumpInput] = useState('');
   const overlayRef = useRef<HTMLDivElement>(null);
   const [dragStartPx, setDragStartPx] = useState<{ x: number; y: number } | null>(null);
   const [dragCurrentPx, setDragCurrentPx] = useState<{ x: number; y: number } | null>(null);
@@ -230,9 +231,24 @@ function StepPositions({
     setDragCurrentPx(null);
   };
 
+  const handleJump = (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = parseInt(jumpInput, 10);
+    if (!isNaN(n) && n >= 1 && n <= numPages) {
+      setCurrentPage(n - 1);
+      setZone(null);
+      setJumpInput('');
+    }
+  };
+
   const count = participants.length;
   const zoneError = zone ? validateMarkerZone(zone, count) : null;
   const slots = zone && !zoneError ? computeAutoLayoutSlots(zone, count) : null;
+  // BUGFIX (2026-08-01): преди показвахме макс. 3 бутона БЕЗ jump input за
+  // документи с >3 страници — страница 4+ беше физически непостижима в
+  // multi-signer flow-а (за разлика от single-signer SignDocumentModal.tsx,
+  // който винаги е имал jump input). Сега и двата UI-та показват макс. 3
+  // бутона + "Отиди на" поле за директен избор на произволна страница.
   const pageButtons = Math.min(numPages, 3);
 
   const handleNext = () => {
@@ -282,6 +298,26 @@ function StepPositions({
                 {i + 1}
               </button>
             ))}
+            {numPages > 3 && (
+              <form onSubmit={handleJump} className="flex items-center gap-1.5">
+                <span className="text-xs text-neutral-400">или</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={numPages}
+                  value={jumpInput}
+                  onChange={(e) => setJumpInput(e.target.value)}
+                  placeholder="страница"
+                  className="w-20 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:border-indigo-400 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600 hover:border-indigo-300 hover:text-indigo-600"
+                >
+                  Отиди
+                </button>
+              </form>
+            )}
           </div>
         )}
 
