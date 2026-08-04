@@ -140,6 +140,7 @@
       <li><a href="#02-literaturen-obzor">Раздел 2. Литературен обзор и съществуващи решения</a></li>
       <li><a href="#03-cel-i-zadachi">Раздел 3. Цел и задачи на разработката</a></li>
       <li><a href="#04-proektirane">Раздел 4. Проектиране</a></li>
+      <li><a href="#05-arhitektura">Раздел 5. Архитектура</a></li>
     </ol>
   </nav>
 
@@ -484,6 +485,334 @@
 <p>[8] Mozilla Foundation. <em>PDF.js — A Portable Document Format (PDF) viewer</em> (Преглед на PDF документи в браузъра). <a href="https://mozilla.github.io/pdf.js">https://mozilla.github.io/pdf.js</a>. 2024.</p>
 <p>[9] Peculiar Ventures. <em>@peculiar/x509 — X.509 certificate library for Node.js and browser</em> (Библиотека за X.509 сертификати). <a href="https://github.com/PeculiarVentures/x509">https://github.com/PeculiarVentures/x509</a>. 2024.</p>
 <p>[10] World Wide Web Consortium. <em>Web Content Accessibility Guidelines (WCAG) 2.1</em> (Насоки за достъпност на уеб съдържание). <a href="https://www.w3.org/TR/WCAG21/">https://www.w3.org/TR/WCAG21/</a>. 2018.</p>
+
+</section>
+
+<section class="doc-section" id="05-arhitektura">
+<h1>Раздел 5. Архитектура</h1>
+<h2>5.1 Обща архитектура</h2>
+<p>SignShield е реализиран изцяло като клиент-сървър приложение (client-server model), при което <strong>клиентът извършва цялата криптографска работа</strong>, а сървърната инфраструктура се грижи единствено за съхранение на данни, автентикация и една-единствена чувствителна операция — издаването на сертификати. Това разпределение на отговорностите не е случайно техническо решение, а пряко следствие от изискването частните ключове никога да не напускат устройството на потребителя в незашифрован вид (виж Раздел 4.3): щом ключовете живеят само в паметта на браузъра, логично е и операциите, които ги ползват — генериране, декриптиране, подписване — да се изпълняват там.</p>
+<p>Приложението е изградено от пет основни компонента:</p>
+<ul>
+<li><strong>Browser (React SPA)</strong> — цялата бизнес логика и криптография: WebAuthn ceremonies, HKDF деривация на ключове, ECDSA P-256 и ML-DSA-65 подписване, манипулация на PDF байтове, верификация на подписи. Нищо от изброеното не изисква сървър — верификацията например работи офлайн, дори без интернет връзка, след първоначалното зареждане на страницата.</li>
+<li><strong>Cloudflare Pages</strong> — статичен хостинг за компилирания SPA bundle (HTML, JavaScript, CSS, шрифтове, PDF.js worker). Автоматичен deploy при всеки push към <code>main</code> клона на GitHub хранилището; глобален CDN осигурява ниска латентност при зареждане навсякъде по света.</li>
+<li><strong>Supabase Postgres</strong> — релационна база данни за всички метаданни на приложението: потребителски профили, сертификатни ключове (в криптиран вид), документи, подписи, многоучастникови заявки. Защитена изцяло чрез Row Level Security (RLS) политики — виж 5.4.</li>
+<li><strong>Supabase Storage</strong> — частни S3-съвместими bucket-и (<code>documents</code>, <code>signed-documents</code>) за самите PDF файлове. Достъпът е чрез временни signed URL адреси, не чрез директни пътища.</li>
+<li><strong>Supabase Auth</strong> — управлява passkey (WebAuthn/FIDO2) идентичностите и издава JWT сесийни токени. Единственият механизъм за вход в приложението — няма парола никъде в системата.</li>
+<li><strong>Supabase Edge Functions (Deno runtime)</strong> — единствената сървърна операция с достъп до чувствителна тайна: издаването на X.509 сертификати от частния ключ на вътрешния Root CA (mini-CA, виж 5.4). Всичко останало в приложението работи без сървърна логика.</li>
+</ul>
+<p>Диаграмата по-долу показва как петте компонента комуникират помежду си при типична сесия на потребителя.</p>
+<pre><code class="language-mermaid">flowchart TB
+    subgraph Client[&quot;Клиент&quot;]
+        SPA[&quot;React SPA&lt;br/&gt;(ECDSA P-256 · ML-DSA-65 · PDF манипулация)&quot;]
+    end
+
+    subgraph CF[&quot;Cloudflare&quot;]
+        CDN[&quot;Cloudflare Pages CDN&lt;br/&gt;HTML / JS / CSS / шрифтове&quot;]
+    end
+
+    subgraph SB[&quot;Supabase проект&quot;]
+        Auth[&quot;Supabase Auth&lt;br/&gt;Passkey / WebAuthn / JWT&quot;]
+        DB[(&quot;Postgres&lt;br/&gt;Row Level Security&quot;)]
+        Storage[&quot;Storage&lt;br/&gt;documents / signed-documents&quot;]
+        EF[&quot;Edge Function&lt;br/&gt;issue-certificate (Deno)&quot;]
+        Vault[(&quot;Supabase Vault&lt;br/&gt;Root CA частен ключ&quot;)]
+    end
+
+    SPA -- &quot;HTTPS GET (зареждане на приложението)&quot; --&gt; CDN
+    SPA -- &quot;REST + Realtime (сесия, документи, заявки)&quot; --&gt; Auth
+    SPA -- &quot;PostgREST заявки&quot; --&gt; DB
+    SPA -- &quot;качване/сваляне през signed URL&quot; --&gt; Storage
+    SPA -- &quot;POST /issue-certificate + JWT&quot; --&gt; EF
+    EF -- &quot;UPDATE signing_keys.certificate&quot; --&gt; DB
+    EF -. &quot;чете само тук, никога не напуска функцията&quot; .-&gt; Vault
+</code></pre>
+<p><em>[FIG 1: Deployment диаграма — компоненти на SignShield и посоките на комуникация]</em></p>
+<p>Важна архитектурна особеност е, че браузърът комуникира директно с Postgres чрез PostgREST (вградения REST слой на Supabase) — без посредничещ Node.js или друг custom бекенд. Това е възможно, защото цялата авторизационна логика е преместена в базата данни чрез RLS политики (5.4), а не в приложен слой. Единственото изключение е Edge Function-ът за сертификати, който съществува именно защото частния ключ на Root CA не може да бъде изложен на клиента — той трябва да остане в среда, недостъпна за браузъра.</p>
+<h2>5.2 Модел на данните</h2>
+<p>Схемата на базата данни е израснала органично през осем фази на разработка — от единичен потребител с един подпис (Фаза 0–4) до пълноценен workflow за подписване от няколко страни (Фаза 8, &quot;Multi-signer&quot;). Крайният резултат се състои от девет таблици в <code>public</code> схемата на Postgres, всички защитени с Row Level Security.</p>
+<pre><code class="language-mermaid">erDiagram
+    profiles ||--o{ signing_keys : &quot;притежава&quot;
+    profiles ||--o{ documents : &quot;качва&quot;
+    profiles ||--o{ signing_requests : &quot;стартира (owner)&quot;
+    profiles ||--o{ audit_log : &quot;действия&quot;
+    documents ||--o| signing_requests : &quot;предмет на&quot;
+    documents ||--o{ signatures : &quot;подписан чрез&quot;
+    signing_requests ||--o{ signing_request_recipients : &quot;кани&quot;
+    signing_requests ||--o{ signatures : &quot;съдържа&quot;
+    signing_requests ||--o{ email_notifications : &quot;изпраща&quot;
+    signing_requests ||--o{ notifications : &quot;уведомява за&quot;
+    signing_keys ||--o{ signatures : &quot;ecdsa_key_id / ml_dsa_key_id&quot;
+    signing_request_recipients ||--o| signatures : &quot;signature_id&quot;
+
+    profiles {
+        uuid id PK
+        text display_name
+        timestamptz deleted_at
+    }
+    signing_keys {
+        uuid id PK
+        uuid user_id FK
+        enum algorithm &quot;ecdsa-p256 | ml-dsa-65 | ed25519&quot;
+        bytea public_key
+        bytea encrypted_private_key
+        bytea prf_salt
+        bytea wrapped_key_iv
+        text credential_id
+        bytea certificate
+        timestamptz certificate_expires_at
+        timestamptz deleted_at
+    }
+    documents {
+        uuid id PK
+        uuid user_id FK
+        text storage_path
+        text signed_storage_path
+        bytea original_hash_sha256
+        enum status &quot;uploaded | signed&quot;
+        timestamptz deleted_at
+    }
+    signatures {
+        uuid id PK
+        uuid document_id FK
+        uuid ecdsa_key_id FK
+        uuid ml_dsa_key_id FK
+        bytea signature_bytes
+        text signed_storage_path
+        uuid signing_request_id FK
+        timestamptz signed_at
+    }
+    signing_requests {
+        uuid id PK
+        uuid document_id FK
+        uuid owner_user_id FK
+        text status &quot;draft|owner_signing|awaiting_recipients|completed|cancelled&quot;
+        int version
+        text current_signed_storage_path
+        timestamptz deleted_at
+    }
+    signing_request_recipients {
+        uuid id PK
+        uuid signing_request_id FK
+        text invited_email
+        uuid user_id FK
+        text status &quot;pending|registered|signed&quot;
+        numeric marker_x
+        numeric marker_y
+        numeric marker_width
+        numeric marker_height
+        uuid signature_id FK
+    }
+    email_notifications {
+        uuid id PK
+        uuid signing_request_id FK
+        uuid recipient_id FK
+        text type &quot;invitation|completion|cancellation&quot;
+        text status &quot;queued|sent|failed&quot;
+    }
+    notifications {
+        uuid id PK
+        uuid user_id FK
+        uuid signing_request_id FK
+        text type
+        text message
+        timestamptz read_at
+    }
+    audit_log {
+        uuid id PK
+        uuid user_id FK
+        text action
+        uuid resource_id
+        timestamptz created_at
+    }
+</code></pre>
+<p><em>[FIG 2: ER диаграма — база данни на SignShield]</em></p>
+<p><strong><code>profiles</code></strong> съхранява показваното име на потребителя. Редът се създава автоматично чрез Postgres тригер при регистрация (<code>handle_new_user()</code>), а не от клиентски код — гарантира, че всеки автентикиран потребител винаги има точно един профилен запис.</p>
+<p><strong><code>signing_keys</code></strong> е най-чувствителната таблица в схемата. Всеки ред представлява един подписващ ключ (ECDSA P-256 или ML-DSA-65) и съдържа частния ключ <strong>само</strong> в AES-256-GCM криптиран вид (<code>encrypted_private_key</code>), заедно с материалите, нужни за декриптирането му — <code>prf_salt</code> (уникална сол за WebAuthn PRF ceremony-то), <code>wrapped_key_iv</code> (инициализационен вектор за AES-GCM) и <code>credential_id</code> (кой passkey е ползван). Полето <code>certificate</code> пази X.509 сертификата (за ECDSA) или JSON attestation (за ML-DSA-65), издаден от вътрешния Root CA. Backend-ът никога не вижда декриптирания частен ключ — той съществува единствено временно, в паметта на браузъра, по време на самата операция по подписване.</p>
+<p><strong><code>documents</code></strong> пази метаданните на качения PDF — оригиналния път в storage, хеша при качване и, след подписване, пътя на подписаната версия. Статусът е умишлено опростен до <code>uploaded</code>/<code>signed</code> — целият по-сложен многоучастников progress живее в <code>signing_requests</code>, за да не се налага миграция на съществуващата логика, която чете <code>documents.status</code>.</p>
+<p><strong><code>signatures</code></strong> е одиторски запис за всеки индивидуален подпис — коя двойка ключове е ползвана (<code>ecdsa_key_id</code>, задължителен; <code>ml_dsa_key_id</code>, nullable — ML-DSA-65 е препоръчителен, не задължителен), суровите байтове на CMS структурата и точния storage път на файла, който този подпис е произвел. Таблицата поддържа само <code>SELECT</code> и <code>INSERT</code> на ниво RLS политика — умишлено няма <code>UPDATE</code>/<code>DELETE</code>, защото подписът е доказателство, че документът е бил подписан в конкретен момент; позволяването на промяна би обезсмислило одиторската му функция.</p>
+<p><strong><code>signing_requests</code></strong> и <strong><code>signing_request_recipients</code></strong> реализират многоучастниковия workflow (Фаза 8, разгледан подробно в 5.3.4 и 5.5). Заявката пази текущата версия на файла (<code>current_signed_storage_path</code>) и брояч <code>version</code>, ползван за optimistic concurrency control при паралелно подписване от няколко получателя. Всеки получател е отделен ред с позиция на визуалния маркер и статус на процеса (<code>pending</code> → <code>registered</code> → <code>signed</code>).</p>
+<p><strong><code>email_notifications</code></strong> проследява доставката на покани по email (Резенд-подобен delivery tracking), а <strong><code>notifications</code></strong> захранва вътрешно-приложен нотификационен център — когато един участник подпише, останалите виждат съобщение в интерфейса, без да чакат email.</p>
+<p><strong><code>audit_log</code></strong> е единствената съзнателно <strong>immutable</strong> таблица в схемата — няма поле <code>deleted_at</code>, а RLS политиките разрешават само <code>SELECT</code> и <code>INSERT</code>. Всяко чувствително действие (вход, генериране на ключ, подписване, издаване на сертификат) оставя необратим запис.</p>
+<p>Останалите пет таблици следват принципа на <strong>soft deletion</strong>, установен в Раздел 4.3: вместо <code>DELETE</code>, изтриването е <code>UPDATE ... SET deleted_at = NOW()</code>, а всички <code>SELECT</code>/<code>UPDATE</code> RLS политики филтрират допълнително по <code>deleted_at IS NULL</code>. Мотивацията е правна и практическа едновременно — вече издаден подпис трябва да остане проверим завинаги, дори ако потребителят по-късно изтрие акаунта или ключа си (публичният ключ вече е вграден трайно в самия PDF файл, независимо от състоянието на базата данни).</p>
+<h2>5.3 Основни потоци</h2>
+<p>Този раздел проследява петте най-съществени потока на изпълнение в приложението — от регистрация до верификация — представени като диаграми на последователността (sequence diagrams).</p>
+<h3>5.3.1 Signup + Passkey регистрация</h3>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor U as Потребител
+    participant B as Браузър (SPA)
+    participant A as Supabase Auth
+    participant P as Postgres
+
+    U-&gt;&gt;B: Въвежда email адрес
+    B-&gt;&gt;A: signInWithOtp(email, shouldCreateUser: true)
+    A--&gt;&gt;U: Изпраща email с magic link
+    U-&gt;&gt;B: Кликва линка
+    B-&gt;&gt;A: Обменя токена за сесия (JWT)
+    A-&gt;&gt;P: INSERT INTO auth.users
+    P-&gt;&gt;P: Тригер handle_new_user() → INSERT INTO profiles
+    A--&gt;&gt;B: Активна сесия
+    B-&gt;&gt;B: needsPasskeySetup? → RegisterPasskeyStep
+    U-&gt;&gt;B: Натиска &quot;Регистрирай passkey&quot;
+    B-&gt;&gt;A: supabase.auth.registerPasskey()
+    A--&gt;&gt;U: WebAuthn ceremony (Face ID / Touch ID / Windows Hello)
+    U--&gt;&gt;A: Биометрично потвърждение
+    A-&gt;&gt;P: Съхранява публичния ключ на passkey-а
+    A--&gt;&gt;B: Готово
+    B-&gt;&gt;P: UPDATE profiles SET display_name (ако е ново име)
+    B-&gt;&gt;U: Достъп до приложението
+</code></pre>
+<p><em>[FIG 3: Sequence diagram — регистрация и passkey ceremony]</em></p>
+<p>Регистрацията умишлено избягва отделен &quot;sign up&quot; екран с потребителско име и парола. Вместо това се ползва механизмът <code>signInWithOtp</code> на Supabase Auth с флаг <code>shouldCreateUser: true</code> — идентичен път обслужва едновременно нова регистрация, обикновен вход и (в Фаза 8) приемане на покана за подписване от друг потребител, което значително опростява кодовата база. Едва след потвърждение на email адреса потребителят преминава през истинската WebAuthn ceremony, при която устройството генерира нова асиметрична двойка ключове (публичният се регистрира при Supabase Auth) и биометрията никога не напуска устройството.</p>
+<h3>5.3.2 Генериране на подписни ключове</h3>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor U as Потребител
+    participant B as Браузър (SPA)
+    participant W as WebAuthn API
+    participant EF as Edge Function&lt;br/&gt;(issue-certificate)
+    participant P as Postgres
+
+    U-&gt;&gt;B: &quot;Генерирай ECDSA P-256 ключ&quot;
+    B-&gt;&gt;B: crypto.subtle.generateKey (ECDSA P-256)
+    B-&gt;&gt;W: navigator.credentials.get() + PRF extension (unguided)
+    W--&gt;&gt;U: Биометрично потвърждение
+    W--&gt;&gt;B: PRF output (32 байта) + credential ID
+    B-&gt;&gt;B: HKDF-SHA256(PRF output, prf_salt) → AES-256 ключ
+    B-&gt;&gt;B: AES-256-GCM encrypt(частен ключ)
+    B-&gt;&gt;P: INSERT INTO signing_keys (криптиран частен ключ, публичен ключ)
+    B-&gt;&gt;EF: POST /issue-certificate { signingKeyId }
+    EF-&gt;&gt;EF: Проверка на собственост + rate limit
+    EF-&gt;&gt;EF: Изгражда X.509 leaf сертификат (подписан с Root CA)
+    EF-&gt;&gt;P: UPDATE signing_keys SET certificate
+    EF--&gt;&gt;B: { ok: true }
+    B-&gt;&gt;U: &quot;Ключ и сертификат готови&quot;
+</code></pre>
+<p><em>[FIG 4: Sequence diagram — генериране на подписващ ключ и издаване на сертификат]</em></p>
+<p>Генерирането на ключ и деривацията на неговия защитен обвиващ ключ (wrapping key) са две отделни криптографски операции, свързани чрез PRF extension-а на WebAuthn. Собственият подписващ ключ (ECDSA P-256 или ML-DSA-65) се генерира изцяло в браузъра чрез Web Crypto API, съответно чрез <code>@noble/post-quantum</code>. Той никога не е предназначен да бъде видим — веднага след генериране бива обвит с AES-256-GCM ключ, изведен от WebAuthn PRF output-а чрез HKDF-SHA256. Резултатът е верига на доверието, в която самата биометрия на потребителя е крайният защитен елемент: без физическо докосване на устройството не съществува начин AES ключът да бъде възстановен.</p>
+<p>Издаването на сертификат е единствената стъпка от целия жизнен цикъл на ключа, изискваща сървърна намеса — Edge Function-ът приема публичния ключ (никога частния), проверява собствеността чрез JWT, и изгражда leaf X.509 сертификат, подписан с частния ключ на вътрешния Root CA (детайли в 5.4).</p>
+<h3>5.3.3 Подписване (single-signer)</h3>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor U as Потребител
+    participant B as Браузър (SPA)
+    participant W as WebAuthn API
+    participant S as Supabase Storage
+    participant P as Postgres
+
+    U-&gt;&gt;B: Избира документ, позиция на маркера, &quot;Подпиши&quot;
+    B-&gt;&gt;P: resolveSigningKeys() — четене на ECDSA/ML-DSA ключове
+    B-&gt;&gt;W: PRF ceremony (единичен или двоен tap)
+    W--&gt;&gt;B: PRF output(и)
+    B-&gt;&gt;B: HKDF → AES ключ(ове) → decrypt частни ключове
+    B-&gt;&gt;S: Изтегля оригиналния PDF
+    B-&gt;&gt;B: preparePdfForSigning() БЕЗ PQ данни → pre-digest = SHA-256(bytes)
+    B-&gt;&gt;B: ML-DSA-65.sign(pre-digest) → PQ подпис
+    B-&gt;&gt;B: preparePdfForSigning() ПАК, вгражда PQ обекта като реален
+    B-&gt;&gt;B: SHA-256(ByteRange) = messageDigest
+    B-&gt;&gt;B: ECDSA-P256.sign(signedAttrs) → CMS подпис
+    B-&gt;&gt;B: Инжектира CMS в /Contents placeholder-а
+    B-&gt;&gt;S: Качва финалния PDF (signed-documents bucket)
+    B-&gt;&gt;P: INSERT signatures, UPDATE documents SET status=&#39;signed&#39;
+    B-&gt;&gt;U: &quot;Документът е подписан&quot; + свали PDF
+</code></pre>
+<p><em>[FIG 5: Sequence diagram — единичен (single-signer) поток на подписване]</em></p>
+<p>Технически най-нетривиалната част от този поток е <strong>редът</strong>, в който се изчисляват двата подписа. И ECDSA, и ML-DSA-65 подписват дайджест на документа, но всеки алгоритъм подписва различен дайджест поради архитектурно ограничение: PDF стандартът изисква стойността в <code>/ByteRange</code> да изключва <strong>точно</strong> байтовете на <code>/Contents</code> placeholder-а, нищо повече — Adobe Acrobat отхвърля подпис, при който изключеният диапазон е по-широк (&quot;SigDict /Contents illegal data&quot;). Ако ML-DSA-65 подписът трябваше да живее в същия изключен диапазон като ECDSA (за да остане &quot;защитен&quot; от манипулация), диапазонът би станал по-широк от <code>/Contents</code> и Adobe валидацията би се провалила.</p>
+<p>Решението е двустъпков процес: документът се подготвя веднъж <strong>без</strong> ML-DSA данни, за да се получи &quot;pre-digest&quot; — SHA-256 хеш на документа във вида, в който ще изглежда точно преди <code>/Sig</code> обекта да съществува. ML-DSA-65 подписва този pre-digest. След това документът се подготвя <strong>отново</strong>, този път вграждайки готовия ML-DSA подпис като напълно реален обект (не placeholder), позициониран <strong>преди</strong> <code>/Sig</code> обекта в същата ревизия на файла. Едва тогава се изчислява финалният <code>/ByteRange</code> — тесен, обхващащ само <code>/Contents</code> — и ECDSA P-256 подписва точно него. Резултатът е транзитивна защита: тъй като целият ML-DSA-65 обект вече седи вътре в диапазона, защитен от ECDSA хеша, всяка манипулация на постквантовия подпис би скъсала ECDSA верификацията — ML-DSA-65 не се нуждае от собствен независим механизъм за детекция на промяна.</p>
+<h3>5.3.4 Multi-signer workflow</h3>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor O as Собственик (Owner)
+    participant B1 as Браузър (Owner)
+    actor R as Получател (Recipient)
+    participant B2 as Браузър (Recipient)
+    participant P as Postgres
+    participant S as Storage
+    participant A as Supabase Auth
+
+    O-&gt;&gt;B1: Кани получател(и) + очертава зона за подписи
+    B1-&gt;&gt;P: INSERT signing_requests (status=&#39;draft&#39;) + recipients
+    B1-&gt;&gt;B1: signAsOwner() — подписва пръв (5.3.3 flow)
+    B1-&gt;&gt;P: UPDATE signing_requests SET status=&#39;awaiting_recipients&#39;, version=1
+    B1-&gt;&gt;A: sendInvitationEmail() за всеки получател (signInWithOtp)
+    A--&gt;&gt;R: Email покана с линк /invite/:recipientId
+
+    R-&gt;&gt;B2: Кликва линка
+    B2-&gt;&gt;A: Обменя токен → сесия (нов или съществуващ акаунт)
+    B2-&gt;&gt;P: claim_recipient_invitation(recipientId) — token-scoped линкване
+    B2-&gt;&gt;P: Чете детайли на поканата (документ, собственик)
+    R-&gt;&gt;B2: Преглежда, натиска &quot;Подпиши&quot;
+    B2-&gt;&gt;P: Чете current version на заявката
+    B2-&gt;&gt;S: Изтегля текущата подписана версия
+    B2-&gt;&gt;B2: signAsRecipient() — incremental подпис (append-only)
+    B2-&gt;&gt;S: Качва v{version+1}.pdf (upsert:false)
+    B2-&gt;&gt;P: UPDATE signing_requests SET version=version+1 WHERE version=&lt;прочетената&gt;
+    alt 0 засегнати реда (race с друг получател)
+        B2-&gt;&gt;B2: ConcurrentSignError → повторен опит (до 3 пъти)
+    else успешен UPDATE
+        B2-&gt;&gt;P: INSERT signatures, UPDATE recipients SET status=&#39;signed&#39;
+        B2-&gt;&gt;P: notify_signing_participants() — известява останалите
+    end
+    alt Всички получатели подписаха
+        B2-&gt;&gt;P: UPDATE signing_requests SET status=&#39;completed&#39;
+        B2-&gt;&gt;P: UPDATE documents SET status=&#39;signed&#39;
+    end
+</code></pre>
+<p><em>[FIG 6: Sequence diagram — многоучастников (multi-signer) поток на подписване]</em></p>
+<p>За разлика от единичното подписване, тук всеки получател подписва <strong>инкрементално</strong> върху последната налична версия на файла (append-only PDF update, виж 5.5) — а не документът се пресъздава от нулата. Тъй като получателите могат да отворят поканата по всяко време и потенциално да подпишат почти едновременно, потокът включва механизъм за optimistic concurrency control (детайли в 5.5), реализиран чрез условен <code>UPDATE ... WHERE version = &lt;прочетена стойност&gt;</code>.</p>
+<h3>5.3.5 Верификация</h3>
+<pre><code class="language-mermaid">sequenceDiagram
+    actor U as Потребител (без login)
+    participant B as Браузър (/verify)
+    participant RC as Вграден Root CA сертификат
+
+    U-&gt;&gt;B: Качва подписан PDF
+    B-&gt;&gt;B: scanPdf() — sanitization (JS/Launch/EmbeddedFile)
+    B-&gt;&gt;B: extractAllSignatures() — намира ВСИЧКИ /Sig обекти
+    loop за всеки подписващ (N ≥ 1)
+        B-&gt;&gt;B: computeSignedHash(ByteRange)
+        B-&gt;&gt;B: parseCms() → leaf сертификат, signedAttrs, ECDSA подпис
+        B-&gt;&gt;RC: verifyCertChain(leaf, Root CA)
+        B-&gt;&gt;B: verifyEcdsaSignature() — hash match + подпис
+        alt Има /PostQuantumSignature обект
+            B-&gt;&gt;B: verifyMlDsaSignature() срещу декларирания signedHash
+        end
+    end
+    B-&gt;&gt;B: determineOverall() — tampered &gt; invalid &gt; with_warnings &gt; authentic
+    B-&gt;&gt;U: Резултат по подписващ + обобщен статус
+    opt Потребителят иска доклад
+        B-&gt;&gt;B: Генерира PDF верификационен доклад
+        B-&gt;&gt;U: Свали доклада
+    end
+</code></pre>
+<p><em>[FIG 7: Sequence diagram — верификация на подписан документ]</em></p>
+<p>Верификацията е публична страница, достъпна без login, и работи изцяло офлайн — файлът никога не напуска браузъра, а единствената външна зависимост е сертификатът на Root CA, вграден статично в JavaScript bundle-а при компилация. Модулът поддържа произволен брой подписващи (N ≥ 1) в един и същ документ, тъй като multi-signer файловете съдържат по един <code>/Sig</code> обект на всеки участник — единичното подписване е частен случай (N = 1) на същия код път, без специална обработка.</p>
+<h2>5.4 Модел на сигурността</h2>
+<p>Сигурността на SignShield е изградена на няколко независими защитни слоя, всеки от които покрива различна заплаха. Целта е компрометирането на един слой да не води автоматично до компрометиране на цялата система.</p>
+<p><strong>Транспорт.</strong> Цялата комуникация минава през HTTPS — гарантирано автоматично от Cloudflare Pages (статичния фронтенд) и от Supabase (API, storage, Edge Functions). Няма endpoint в системата, достъпен по обикновен HTTP.</p>
+<p><strong>Автентикация.</strong> Единственият механизъм за вход е passkey (WebAuthn/FIDO2) [2] — няма парола никъде в системата, следователно няма и класически атаки от типа credential stuffing, phishing на парола или брутфорс. Всяка сесия се представя чрез Supabase-издаден JWT токен.</p>
+<p><strong>Контрол на достъпа (Row Level Security).</strong> RLS [1] е <strong>единственият</strong> слой на изолация между потребителите в приложението — приложен на ниво база данни, а не в клиентски или сървърен код, който потенциално може да бъде заобиколен. Философията, следвана последователно във всички 18 миграции на схемата, е &quot;always deny by default, explicit allow per user_id&quot;: PostgREST заявките, идващи директно от браузъра, се филтрират автоматично от Postgres според <code>auth.uid()</code> в текущата JWT сесия — дори при грешка в клиентския код, потребител физически не може да прочете чужд ред. Multi-signer таблиците (<code>signing_requests</code>, <code>signing_request_recipients</code>) добавят допълнителен слой сложност: собственикът на заявката вижда всичко, но всеки получател вижда единствено собствения си ред — email адресите на другите получатели никога не изтичат към чужд участник. За операции, които изискват &quot;привилегия&quot; извън обичайния row-ownership модел — например линкване на нов потребител към покана, която все още не му принадлежи, или запис на нотификация за друг потребител — схемата ползва <code>SECURITY DEFINER</code> функции (<code>claim_recipient_invitation</code>, <code>notify_signing_participants</code>) с точно ограничена, одитируема логика, вместо да отваря общ INSERT достъп.</p>
+<p><strong>Данни в покой.</strong> Частните подписващи ключове никога не се записват в четим вид никъде извън паметта на браузъра по време на активна операция. В базата данни те съществуват единствено като AES-256-GCM шифротекст. Ключът за това криптиране (wrapping key) не се съхранява никъде — той се извежда наново при всяка операция чрез HKDF-SHA256 [3] от WebAuthn PRF output-а, който самият изисква биометрично потвърждение на потребителя. С други думи, &quot;паролата&quot; за декриптиране на частния ключ буквално е отпечатъкът или лицето на потребителя, физически присъстващо на неговото устройство — тя никога не пътува по мрежата и сървърът никога не я вижда.</p>
+<p><strong>Инфраструктура за сертификати (mini-CA).</strong> Частният ключ на Root CA — коренът на доверие за цялата система — се съхранява единствено като Supabase Secret, достъпен само от изпълнителната среда на Edge Function-а <code>issue-certificate</code>; клиентският код никога няма достъп до него. Всеки издаден leaf сертификат [6] носи <code>basicConstraints CA:FALSE</code> и ограничен <code>keyUsage</code> (само <code>digitalSignature</code>) — дори при теоретична компрометация на конкретен потребителски ключ, той не може да бъде използван за издаване на нови сертификати от чуждо име. Edge Function-ът допълнително проверява собствеността на ключа спрямо JWT-то на заявителя и налага rate limit (максимум 10 издадени сертификата на потребител в минута), за да ограничи злоупотреба дори от автентикиран, но злонамерен клиент.</p>
+<p><strong>Санитизация на входа.</strong> Преди приемане, всеки качен PDF се сканира за вградени активни елементи — <code>/JavaScript</code>, <code>/Launch</code> действия, <code>/EmbeddedFile</code> обекти — и се отхвърля с ясно съобщение при откриване. Верификационният модул допълнително минава файла през същата проверка преди обработка, тъй като приема произволни, непотвърдени PDF файлове от анонимни потребители.</p>
+<p><strong>Одит.</strong> Всяко чувствително действие — вход, генериране на ключ, издаване на сертификат, подписване — оставя запис в неизменимата (immutable) таблица <code>audit_log</code>, филтруема само по собствения <code>user_id</code> на извършителя.</p>
+<p><strong>Дългосрочна валидност (crypto-agility).</strong> Хибридната схема осигурява защита срещу два различни хоризонта на заплахата едновременно: ECDSA P-256 гарантира съвместимост с настоящата PAdES/Adobe инфраструктура [5], докато ML-DSA-65 [4] пази валидността на документа дори ако класическата елиптична криптография бъде компрометирана от бъдещ квантов компютър. Известно ограничение (документирано и в Раздел 4.3): приложението не интегрира Time Stamp Authority, следователно подписите отговарят на профила PAdES-B-Basic, а не на по-строгия PAdES-B-T — добавянето на TSA е идентифицирано като приоритетна следваща стъпка за производствено внедряване.</p>
+<h2>5.5 Multi-signer архитектурни решения</h2>
+<p>Разширяването на приложението от единичен подписващ (Фаза 0–7) към workflow с няколко участника (Фаза 8) наложи няколко нетривиални архитектурни решения, всяко от които представлява компромис между простота на имплементацията и реалистично поведение на потребителите.</p>
+<p><strong>Паралелно, не последователно подписване.</strong> Ранен вариант на дизайна разглеждаше строго последователен (sequential) workflow — получател №2 не може да подпише преди получател №1. Реализираният модел позволява на всички поканени получатели да подписват в произволен ред, веднага след като собственикът е подписал пръв. Мотивацията е практическа: реалните документи с няколко страни (например договор между няколко физически лица) рядко имат естествена йерархия на подписване — налагането на изкуствен ред би затруднило потребителите без реална полза за сигурността.</p>
+<p><strong>Optimistic concurrency вместо server-side заключване.</strong> Тъй като получателите могат да подпишат по всяко време, независимо един от друг, съществува реален риск от състезателно условие (race condition), ако двама получатели се опитат да подпишат едновременно — всеки инкрементален подпис трябва да се приложи върху <strong>последната</strong> версия на файла, никога върху остаряла. Вместо песимистично заключване на ниво база данни (което би изисквало допълнителна инфраструктура и внимателно управление на locks/timeouts), системата ползва брояч <code>version</code> в <code>signing_requests</code>: всеки получател чете текущата версия преди да подпише, а финалният запис е условен <code>UPDATE ... WHERE version = &lt;прочетената стойност&gt;</code>. При race условие заявката засяга нула редове — клиентският код разпознава това и автоматично повтаря целия опит (до три пъти), включително нова WebAuthn ceremony, тъй като дайджестът на документа вече се е променил след успешния подпис на другия участник.</p>
+<p><strong>Token-scoped линкване на получатели, не directly по email.</strong> Поканите се идентифицират по уникален <code>recipient_id</code>, а не директно по email адрес на поканения. Линкването между покана и реален потребителски акаунт става само чрез изричен <code>claim_recipient_invitation()</code> извикване, изпълнено от логнатия потребител, който потвърждава собствения си email спрямо <code>invited_email</code> на конкретния ред. Алтернативата — автоматично линкване по съвпадение на email адрес при всяко зареждане — създава уязвимост тип enumeration attack: злонамерен потребител би могъл да провери дали даден email адрес е бил поканен за подписване на конкретен документ, без изобщо да има достъп до пощенската кутия. Token-scoped моделът елиминира тази възможност изцяло.</p>
+<p><strong>Инкрементални PDF актуализации (append-only), не пресъздаване.</strong> При всеки следващ подпис документът не се генерира наново от нулата — нов <code>/Sig</code> обект, заедно с необходимите auxiliary структури (redefined <code>/AcroForm</code>, <code>/Annots</code>), се добавя чрез append-only incremental update върху съществуващите байтове. Причината е двойна: първо, пресъздаването на файла би нарушило вече вградения подпис на предходния участник (байтовият диапазон, който той е подписал, трябва да остане непроменен завинаги); второ, incremental update е стандартният, PDF-спецификационно предвиден механизъм точно за тази ситуация — множество независими страни добавят подпис към един и същ документ във времето, без никоя от тях да презаписва работата на предходната.</p>
+<p><strong>Конвенция за пътя на файловете в storage.</strong> За разлика от единичното подписване, при което пътят следва потребителя (<code>&lt;user_id&gt;/&lt;filename&gt;</code>), многоучастниковите версии се пазят под <code>&lt;signing_request_id&gt;/v&lt;version&gt;.pdf</code> — папката представлява заявката, не конкретен потребител, тъй като файлът логически принадлежи на целия процес, не на един-единствен участник. Тази конвенция изисква собствени RLS политики върху <code>storage.objects</code>, различни от простото сравнение с <code>auth.uid()</code>, използвано другаде — достъпът се определя чрез проверка дали заявителят е собственик ИЛИ регистриран получател на съответната <code>signing_request_id</code>.</p>
+<hr>
+<h2>Използвана литература (раздел 5)</h2>
+<p>[1] PostgreSQL Global Development Group. <em>Row Security Policies</em> (Политики за защита на редове). PostgreSQL 16 Documentation, Chapter 5.9. <a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">https://www.postgresql.org/docs/current/ddl-rowsecurity.html</a>. 2024.</p>
+<p>[2] World Wide Web Consortium. <em>Web Authentication: An API for accessing Public Key Credentials, Level 3</em> (Уеб автентикация: API за достъп до публични ключови идентификатори, ниво 3). <a href="https://www.w3.org/TR/webauthn-3/">https://www.w3.org/TR/webauthn-3/</a>. 2023.</p>
+<p>[3] Krawczyk, H., Eronen, P. <em>HMAC-based Extract-and-Expand Key Derivation Function (HKDF)</em> (HMAC-базирана функция за деривация на ключове). RFC 5869. <a href="https://datatracker.ietf.org/doc/html/rfc5869">https://datatracker.ietf.org/doc/html/rfc5869</a>. Май 2010.</p>
+<p>[4] National Institute of Standards and Technology. <em>Module-Lattice-Based Digital Signature Standard</em> (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. <a href="https://csrc.nist.gov/pubs/fips/204/final">https://csrc.nist.gov/pubs/fips/204/final</a>. Август 2024.</p>
+<p>[5] European Telecommunications Standards Institute. <em>PDF Advanced Electronic Signatures (PAdES). Part 1: Building blocks and PAdES baseline signatures</em> (Усъвършенствани електронни подписи за PDF. Част 1). ETSI EN 319 142-1. <a href="https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/">https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/</a>. 2016.</p>
+<p>[6] Cooper, D., Santesson, S., Farrell, S., Boeyen, S., Housley, R., Polk, W. <em>Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile</em> (X.509 профил на сертификати и списъци за отмяна). RFC 5280. <a href="https://datatracker.ietf.org/doc/html/rfc5280">https://datatracker.ietf.org/doc/html/rfc5280</a>. Май 2008.</p>
+<p>[7] Housley, R. <em>Cryptographic Message Syntax (CMS)</em> (Криптографски синтаксис на съобщения). RFC 5652. <a href="https://datatracker.ietf.org/doc/html/rfc5652">https://datatracker.ietf.org/doc/html/rfc5652</a>. Септември 2009.</p>
+<p>[8] Supabase Inc. <em>Supabase — The Open Source Firebase Alternative</em> (Open-source алтернатива на Firebase). <a href="https://supabase.com">https://supabase.com</a>. 2024.</p>
+<p>[9] Cloudflare Inc. <em>Cloudflare Pages — Deploy web projects in record time</em> (Хостинг платформа за уеб проекти). <a href="https://pages.cloudflare.com">https://pages.cloudflare.com</a>. 2024.</p>
+<p>[10] Deno Land Inc. <em>Deno — A modern runtime for JavaScript and TypeScript</em> (Съвременна среда за изпълнение на JavaScript и TypeScript). <a href="https://deno.com">https://deno.com</a>. 2024.</p>
 
 </section>
 
