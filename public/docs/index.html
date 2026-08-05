@@ -142,6 +142,7 @@
       <li><a href="#04-proektirane">Раздел 4. Проектиране</a></li>
       <li><a href="#05-arhitektura">Раздел 5. Архитектура</a></li>
       <li><a href="#06-programna-realizatsiya">Раздел 6. Програмна реализация</a></li>
+      <li><a href="#07-rezultati">Раздел 7. Резултати</a></li>
     </ol>
   </nav>
 
@@ -428,7 +429,7 @@
 <p><strong>pdf-lib</strong> [7] е избран за манипулация на PDF документи. Библиотеката поддържа инкрементални обновления на PDF — критично за PAdES подписването, при което CMS подписът се вгражда в резервиран placeholder, без да се генерира нов файл от нулата. Алтернативата (iText, PDFBox) изисква Java сървър и е несъвместима с изискването за клиентска обработка.</p>
 <p><strong>pdfjs-dist</strong> [8] (Mozilla PDF.js) е използван единствено за визуализация — рендиране на PDF страниците като изображения в браузъра при избор на позиция на визуалния маркер. Важно: за поддръжка на iOS Safari е необходима legacy build на pdfjs-dist, тъй като стандартният build използва <code>Map.prototype.getOrInsertComputed</code> — метод, отсъстващ в текущата версия на Safari.</p>
 <h3>PKI библиотека: @peculiar/x509</h3>
-<p><strong><code>@peculiar/x509</code></strong> [9] е използван за: изграждане на X.509 leaf сертификати в Edge Function при генериране на ключове; парсиране на сертификати при верификация (четене на subject, issuer, дати, серийни номера). Алтернативата <code>node-forge</code> е по-тежка и практически неподдържана от 2022 г.</p>
+<p><strong><code>@peculiar/x509</code></strong> [9] е използван единствено клиентски, за парсиране на сертификати при верификация (четене на subject, issuer, дати, серийни номера, chain validation — виж 6.3). Изграждането на X.509 leaf сертификати в <code>issue-certificate</code> Edge Function-а НЕ минава през тази библиотека — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаване на прости leaf сертификати би увеличило bundle размера ненужно; вместо това сертификатите се изграждат ръчно чрез минимален ASN.1 DER encoder (виж 6.5). Алтернативата на <code>@peculiar/x509</code> за клиентското парсиране, <code>node-forge</code>, е по-тежка и практически неподдържана от 2022 г.</p>
 <hr>
 <h2>4.2 Функционални изисквания</h2>
 <p>Функционалните изисквания описват поведението, което системата трябва да осигури от гледна точка на потребителя.</p>
@@ -1123,6 +1124,244 @@ return derSeq(cat(tbs, sigAlgId, tlv(0x03, cat(new Uint8Array([0x00]), sigDer)))
 <p>[8] European Telecommunications Standards Institute. <em>PDF Advanced Electronic Signatures (PAdES). Part 1: Building blocks and PAdES baseline signatures</em> (Усъвършенствани електронни подписи за PDF. Част 1). ETSI EN 319 142-1. <a href="https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/">https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/</a>. 2016.</p>
 <p>[9] Peculiar Ventures. <em>@peculiar/x509 — X.509 certificate library for Node.js and browser</em> (Библиотека за X.509 сертификати). <a href="https://github.com/PeculiarVentures/x509">https://github.com/PeculiarVentures/x509</a>. 2024.</p>
 <p>[10] Deno Land Inc. <em>Deno — A modern runtime for JavaScript and TypeScript</em> (Съвременна среда за изпълнение на JavaScript и TypeScript). <a href="https://deno.com">https://deno.com</a>. 2024.</p>
+
+</section>
+
+<section class="doc-section" id="07-rezultati">
+<h1>Раздел 7. Резултати</h1>
+<p>Този раздел представя какво реално е тествано и измерено в SignShield — не какво е планирано или очаквано. Всички числа по-долу са или директно измерени (unit тестове, bundle размер, крипто операции), или взети от съществуваща одиторска документация в <code>docs/</code>.</p>
+<h2>7.1 Функционална верификация</h2>
+<p>Основната функционална проверка е дали PDF, подписан от SignShield, се разпознава като валиден от <strong>независим, широко използван инструмент</strong> — Adobe Acrobat Reader — а не само от собствения верификационен модул на приложението. Сравнителният тест (<code>docs/adobe-vs-signshield-verify.md</code>, 2026-07-13) съпоставя двата инструмента върху реален подписан документ в два сценария:</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Сценарий</th>
+<th>Adobe Reader</th>
+<th>SignShield Verify</th>
+<th>Съгласие</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Валиден документ (оригинал)</td>
+<td>Signatures panel зелено — подписът е валиден</td>
+<td>„Документът е автентичен и непроменен&quot; · Верига: доверена</td>
+<td>Пълно</td>
+</tr>
+<tr>
+<td>Модифициран документ (1 байт променен)</td>
+<td>„At least one signature is invalid&quot; — червено</td>
+<td>„Документът е модифициран след подписване&quot;</td>
+<td>Пълно</td>
+</tr>
+</tbody></table></div>
+<p>И двата инструмента се съгласяват както за валидност, така и за детекция на манипулация — разминаването е нула. Единствената семантична разлика е в trust anchor-а: Adobe валидира спрямо Adobe Approved Trust List (AATL), докато SignShield Verify валидира спрямо вградения <code>rootCaCert.ts</code> (собствения Root CA на приложението) — очаквано за академичен, а не публично сертифициран CA.</p>
+<p><strong>Multi-signer документи.</strong> Signature Properties panel-ът на Adobe показва всеки подпис в multi-signer PDF (2–3 подписващи, виж Раздел 5.3.4) като отделна ревизия (<code>Rev. 1</code>, <code>Rev. 2</code>, ...), всяка със собствен статус, име на подписващия (коректно изобразено на кирилица чрез <code>PDFHexString.fromText()</code>, виж 6.2), Reason, Location и ContactInfo полета. Постигането на този резултат за multi-signer документи изисква архитектурна поправка, описана в детайл в Раздел 5.3.3/6.2 — редът, в който ECDSA и ML-DSA-65 подписите се изчисляват спрямо <code>/ByteRange</code>, е точно това, което определя дали Adobe приема или отхвърля резултата.</p>
+<p><em>[FIG 1: Screenshot от Adobe Reader Signature Properties panel — multi-signer документ, всички подписи валидни]</em></p>
+<h2>7.2 Тестове</h2>
+<p><strong>Unit тестове.</strong> 204 теста в 13 файла (Vitest), <strong>всички успешни</strong> (<code>npx vitest run</code>, <code>npx tsc --build --force</code> чист). Покритието обхваща четири основни области:</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Област</th>
+<th>Файлове (<code>src/__tests__/</code>)</th>
+<th>Какво покрива</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Криптографски примитиви</td>
+<td><code>crypto.test.ts</code>, <code>certificate.test.ts</code></td>
+<td>HKDF деривация, AES-256-GCM encrypt/decrypt, ECDSA/ML-DSA sign-verify roundtrip, X.509 сертификатна структура</td>
+</tr>
+<tr>
+<td>CMS структура</td>
+<td><code>cmsParser.test.ts</code></td>
+<td>ASN.1 DER encode/decode roundtrip, P1363↔DER конверсия, извличане на messageDigest/signedAttrs</td>
+</tr>
+<tr>
+<td>PDF подписване</td>
+<td><code>pdfSigning.test.ts</code>, <code>pdfMultiSign.test.ts</code>, <code>markerLayout.test.ts</code></td>
+<td>Placeholder механика, byte range изчисление, incremental update за N подписа, auto-layout на маркери</td>
+</tr>
+<tr>
+<td>Верификация</td>
+<td><code>pdfVerifier.test.ts</code>, <code>verifyService.test.ts</code>, <code>edgeCases.test.ts</code>, <code>reportGenerator.test.ts</code></td>
+<td>Извличане на подписи от PDF, chain validation, tampered/invalid/expired сценарии, PDF доклад генериране</td>
+</tr>
+<tr>
+<td>Multi-signer orchestration</td>
+<td><code>signing.test.ts</code>, <code>signingService.test.ts</code>, <code>signAsOwnerRecipient.test.ts</code></td>
+<td><code>signAsOwner()</code>/<code>signAsRecipient()</code> разделение, retry logic при race condition, 0-recipient backward compat</td>
+</tr>
+</tbody></table></div>
+<p><strong>E2E скриптове (ръчно изпълнявани, извън <code>npm test</code>).</strong> Тъй като реален WebAuthn ceremony не може да бъде automate-нат от скрипт, следните integration тестове ползват инжектиран mock PRF extractor (същия механизъм като unit тестовете), но минават през <strong>истински</strong> Supabase проект, Storage и Root CA verификационна верига:</p>
+<ul>
+<li><code>test-e2e-signing.ts</code> — единичен подпис с реален Root CA chain, за ръчна проверка в Adobe Reader.</li>
+<li><code>test-multi-sign.ts</code> / <code>test-multi-sign-3.ts</code> — чист ECDSA/CMS incremental primitive тест с 2, съответно 3 подписа (без ML-DSA-65 — изолира конкретно incremental update механизма от 6.2).</li>
+<li><code>test-multi-signer-e2e.ts</code> — пълен цикъл през реалния <code>signAsOwner()</code>/<code>signAsRecipient()</code> orchestration: временни test потребители, реален DB запис, <code>claim_recipient_invitation</code> RPC, инкрементален подпис на получател.</li>
+</ul>
+<p><strong>RLS regression тестове (ръчно изпълнявани в Supabase SQL Editor).</strong> Row Level Security политиките (Раздел 5.4) са проверени чрез SQL скриптове, симулиращи конкретен <code>auth.uid()</code> за всеки сценарий:</p>
+<ul>
+<li><code>rls-test-0010.sql</code> — 5 сценария около multi-signer таблиците: owner вижда собствената заявка, друг owner не вижда чужда, recipient вижда собствения ред преди/след <code>claim</code>, анонимен потребител е блокиран по подразбиране, <code>email_notifications</code> не е директно записваем от <code>authenticated</code>.</li>
+<li><code>rls-test-0012-0014.sql</code> — 7 сценария около storage bucket и cross-table RLS: recipient чете/пише собствената версия на файла, не може да чете чужда заявка, <code>documents</code>/<code>signing_requests</code> политиките коректно разграничават собственик от получател.</li>
+</ul>
+<h2>7.3 Browser compatibility</h2>
+<p>Матрицата по-долу (<code>docs/browser-compat.md</code>, последна актуализация 2026-07-13) разграничава реално <strong>тествано в браузър</strong> от <strong>очаквано по спецификация, но непотвърдено</strong> — разграничение, запазено умишлено, защото WebAuthn PRF extension е сравнително нова функционалност (Chrome/Edge от версия 116, Firefox от 148, Safari от 18) с известни разлики в implementation детайли между доставчици (например <code>dual PRF eval.second</code> — единичен tap за два ключа, виж 6.4).</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Функционалност</th>
+<th align="center">Chrome 116+</th>
+<th align="center">Firefox 148+</th>
+<th align="center">Safari 18+</th>
+<th align="center">Edge 116+</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>WebAuthn login</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+</tr>
+<tr>
+<td>WebAuthn PRF extension</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+</tr>
+<tr>
+<td>ECDSA P-256 keygen</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+</tr>
+<tr>
+<td>ML-DSA-65 keygen (Worker)</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+<td align="center">очаква се</td>
+</tr>
+<tr>
+<td>PDF sign / verify flow</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">тествано на iOS (live)</td>
+<td align="center">очаква се</td>
+</tr>
+<tr>
+<td>Recovery flow</td>
+<td align="center">тествано</td>
+<td align="center">очаква се</td>
+<td align="center">тествано на iOS (live)</td>
+<td align="center">очаква се</td>
+</tr>
+</tbody></table></div>
+<p>Chrome/Edge (Chromium) служи като референтен браузър за разработката — всичко изброено е реално кликнато и потвърдено там. Safari iOS има частично живо тестване (upload, viewer, verify, recovery — потвърдени на реално устройство), но пълният sign flow с dual PRF не е верифициран. Firefox 148+ остава напълно нетестван към момента на write-up-а — известен риск е дали Firefox поддържа <code>eval.second</code> за единичен-tap dual PRF; при липса на поддръжка приложението деградира елегантно до два отделни tap-а (функционално коректно, но с влошено UX), тъй като <code>usePrfCeremony()</code> (6.4) вече разграничава двата случая explicit.</p>
+<h2>7.4 Accessibility</h2>
+<p>Lighthouse 13.2.0 (axe-core 4.11.4) audit на публичния production URL отчита:</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Категория</th>
+<th>Резултат</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Accessibility</strong></td>
+<td><strong>90 / 100</strong> (цел ≥ 90 постигната)</td>
+</tr>
+<tr>
+<td>Performance</td>
+<td>41 / 100 — повлиян от браузърни разширения по време на измерването (виж 7.5)</td>
+</tr>
+<tr>
+<td>Best Practices</td>
+<td>77 / 100</td>
+</tr>
+<tr>
+<td>SEO</td>
+<td>82 / 100</td>
+</tr>
+</tbody></table></div>
+<p>Постигнатият Accessibility резултат е следствие от 18 конкретни WCAG 2.1 AA поправки в 10 компонента (пълен списък в <code>docs/accessibility-audit.md</code>) — <code>role=&quot;alert&quot;</code> на всички съобщения за грешка, <code>role=&quot;status&quot;</code>/<code>aria-live</code> на асинхронни състояния (progress bar по време на подписване, verify spinner), <code>role=&quot;dialog&quot;</code>/<code>aria-modal</code> на модалните диалози, <code>aria-label</code> на бутони, ползващи само икона. Проверени WCAG критерии включват 1.1.1 (Non-text Content), 1.4.3 (Contrast — indigo-600 акцентният цвят достига ~7:1 контраст на бял фон, над изисквания минимум 4.5:1), 2.1.1 (Keyboard — всички интерактивни елементи достъпни с Tab/Enter) и 4.1.3 (Status Messages).</p>
+<p>Screen reader тестване с VoiceOver/NVDA не е формално документирано с конкретни резултати към момента на write-up-а — Lighthouse/axe-core одитът покрива статичен и семантичен анализ на DOM структурата (роли, имена, контраст), но не заменя реално ръчно преминаване през приложението със screen reader.</p>
+<h2>7.5 Performance</h2>
+<p>Следните стойности са реално измерени (не са цели от спецификацията), с изричен коментар за средата на измерване, тъй като разликата между Node.js desktop среда и мобилен браузър може да е съществена за постквантовите операции.</p>
+<p><strong>Крипто операции</strong> (Node.js 22, desktop CPU, среден резултат от 5–10 повторения):</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Операция</th>
+<th>Средно време</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ML-DSA-65 генериране на ключ</td>
+<td>~35 ms</td>
+</tr>
+<tr>
+<td>ML-DSA-65 подписване</td>
+<td>~63 ms</td>
+</tr>
+<tr>
+<td>ML-DSA-65 верификация</td>
+<td>~10 ms</td>
+</tr>
+<tr>
+<td>ECDSA P-256 подписване (Web Crypto, хардуерно ускорено)</td>
+<td>&lt;1 ms</td>
+</tr>
+<tr>
+<td>ECDSA P-256 верификация</td>
+<td>&lt;1 ms</td>
+</tr>
+<tr>
+<td><code>verifyDocument()</code> — цял multi-signer документ (2 подписа, хибридни, 513 KB PDF)</td>
+<td>~149 ms</td>
+</tr>
+</tbody></table></div>
+<p>ML-DSA-65 операциите остават на порядък по-бавни от ECDSA (десетки милисекунди срещу под 1 ms) — очаквано за lattice-базиран алгоритъм, но все още далеч под прага, при който потребителят би възприел забавяне като проблем, дори при генериране на ключ в Web Worker (изнесено извън главната нишка именно с оглед на по-слаби мобилни устройства, виж Раздел 4.3). Измерените стойности на desktop среда са значително по-ниски от първоначалната консервативна оценка от ~400 ms в проектната спецификация (обосноваваща решението за Worker) — реалната стойност на мобилно устройство остава непроверена директно.</p>
+<p><strong>Bundle размер</strong> (production build, <code>npm run build</code>, Vite 5.4, актуален към write-up-а):</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Артефакт</th>
+<th>Размер (minified)</th>
+<th>Размер (gzip)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Главен JS bundle</td>
+<td>2 342 KB</td>
+<td>894 KB</td>
+</tr>
+<tr>
+<td>CSS</td>
+<td>39 KB</td>
+<td>7 KB</td>
+</tr>
+<tr>
+<td>PDF.js worker (зареждан отделно, при отваряне на документ)</td>
+<td>1 305 KB</td>
+<td>—</td>
+</tr>
+<tr>
+<td>ML-DSA-65 keygen Web Worker</td>
+<td>19 KB</td>
+<td>—</td>
+</tr>
+</tbody></table></div>
+<p>Общият gzip трансфер за първоначално зареждане на приложението (без PDF worker-а, зареждан лениво) е <strong>~901 KB</strong> — над препоръчителния праг от 500 KB за бърз мобилен load, документирано в <code>docs/browser-compat.md</code> като известен backlog елемент (~60% от bundle-а е самия PDF стек: <code>pdf-lib</code> + <code>@pdf-lib/fontkit</code> + <code>pdfjs-dist</code>, всичко необходимо за core функционалността; lazy loading чрез <code>dynamic import()</code> е идентифициран, но нереализиран в текущия обхват).</p>
+<p><strong>Time to Interactive.</strong> Не е налична чиста измерена стойност — единственият наличен Lighthouse Performance резултат (41/100) е изрично документиран като повлиян от активни браузърни разширения по време на измерването (MetaMask, Wappalyzer), не от кода на приложението; чист incognito замер не е бил проведен към момента на write-up-а. Отчита се като известен пропуск, не като постигнат резултат.</p>
+<hr>
+<h2>Използвана литература (раздел 7)</h2>
+<p>[1] Adobe Inc. <em>Adobe Acrobat Reader — Digital Signature Verification</em> (Верификация на цифрови подписи). <a href="https://helpx.adobe.com/acrobat/using/digital-signatures.html">https://helpx.adobe.com/acrobat/using/digital-signatures.html</a>. 2024.</p>
+<p>[2] Google LLC. <em>Lighthouse — Automated auditing for web quality</em> (Автоматизиран одит на качеството на уеб приложения). <a href="https://developer.chrome.com/docs/lighthouse">https://developer.chrome.com/docs/lighthouse</a>. 2024.</p>
+<p>[3] Deque Systems. <em>axe-core — Accessibility testing engine</em> (Двигател за тестване на достъпност). <a href="https://github.com/dequelabs/axe-core">https://github.com/dequelabs/axe-core</a>. 2024.</p>
+<p>[4] World Wide Web Consortium. <em>Web Content Accessibility Guidelines (WCAG) 2.1</em> (Насоки за достъпност на уеб съдържание). <a href="https://www.w3.org/TR/WCAG21/">https://www.w3.org/TR/WCAG21/</a>. 2018.</p>
 
 </section>
 
