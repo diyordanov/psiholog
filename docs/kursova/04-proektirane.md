@@ -6,13 +6,13 @@
 
 ### Frontend: React, TypeScript, Vite
 
-За изграждане на потребителския интерфейс е избран **React 18** [1] в комбинация с **TypeScript** [2]. React предоставя компонентен модел, подходящ за сложния потребителски интерфейс на приложението — модали за подписване с многостъпков процес, интерактивен PDF преглед, collapsible секции с технически детайли. TypeScript е критично важен в контекста на криптографски код: операциите с байтове (Uint8Array), ASN.1 DER структури и PDF байтови диапазони са трудни за проследяване без статичен тип анализ; TypeScript прехваща грешки при компилация, преди да достигнат браузъра.
+За изграждане на потребителския интерфейс е избран **React 18** [18] в комбинация с **TypeScript** [19]. React предоставя компонентен модел, подходящ за сложния потребителски интерфейс на приложението — модали за подписване с многостъпков процес, интерактивен PDF преглед, collapsible секции с технически детайли. TypeScript е критично важен в контекста на криптографски код: операциите с байтове (Uint8Array), ASN.1 DER структури и PDF байтови диапазони са трудни за проследяване без статичен тип анализ; TypeScript прехваща грешки при компилация, преди да достигнат браузъра.
 
-**Vite** [3] е избран като инструмент за изграждане заради нативната му поддръжка на ES модули и бързото Hot Module Replacement при разработка. Важна особеност е поддръжката на Web Worker bundle (`?worker` import синтаксис), използвана за изнасяне на ML-DSA-65 keygen в отделна нишка — операция, изискваща ~400 ms, която би блокирала главния thread без Worker.
+**Vite** [13] е избран като инструмент за изграждане заради нативната му поддръжка на ES модули и бързото Hot Module Replacement при разработка. Важна особеност е поддръжката на Web Worker bundle (`?worker` import синтаксис), използвана за изнасяне на ML-DSA-65 keygen в отделна нишка — операция, изискваща ~400 ms, която би блокирала главния thread без Worker.
 
 ### Backend: Supabase
 
-**Supabase** [4] е избран като backend платформа заради комбинацията от функционалности, необходими за приложението:
+**Supabase** [31] е избран като backend платформа заради комбинацията от функционалности, необходими за приложението:
 
 - **PostgreSQL с Row Level Security (RLS)** — всяка таблица (documents, signing\_keys, audit\_log) е защитена с политики, гарантиращи, че потребителят може да чете и записва само своите данни. RLS е единственият слой на изолация между потребителите и е приложен на ниво база данни, независимо от логиката на приложението.
 - **Auth с WebAuthn** — Supabase Auth поддържа passkey (FIDO2/WebAuthn) автентикация нативно, без нужда от допълнителна библиотека за управление на сесии.
@@ -21,11 +21,11 @@
 
 ### Hosting: Cloudflare Pages
 
-**Cloudflare Pages** [5] е избран за хостинг заради автоматичния deploy от GitHub при всеки push към `main` клона, глобалния CDN с ниско латентно обслужване на статичните файлове и безплатния tier, подходящ за изследователски прототип. SPA routing се управлява от `_redirects` файл, а статичните ресурси (fonts, PDF worker) се кешират автоматично на edge нивото.
+**Cloudflare Pages** [4] е избран за хостинг заради автоматичния deploy от GitHub при всеки push към `main` клона, глобалния CDN с ниско латентно обслужване на статичните файлове и безплатния tier, подходящ за изследователски прототип. SPA routing се управлява от `_redirects` файл, а статичните ресурси (fonts, PDF worker) се кешират автоматично на edge нивото.
 
 ### Криптографски библиотеки: @noble
 
-За криптографски операции са избрани библиотеките на Paul Miller от фамилията **@noble** [6]:
+За криптографски операции са избрани библиотеките на Paul Miller от фамилията **@noble** [20]:
 
 - **`@noble/post-quantum`** — ML-DSA-65 (FIPS 204). Чист TypeScript, без WebAssembly зависимост. Библиотеката е независимо одитирана и е единствената производствено готова JS имплементация на ML-DSA-65 в момента на разработката.
 - **`@noble/ed25519`** — Ed25519 за Root CA ключа. Лека (~4 KB), конст-временна имплементация.
@@ -37,13 +37,13 @@
 
 ### PDF библиотеки: pdf-lib и pdfjs-dist
 
-**pdf-lib** [7] е избран за манипулация на PDF документи. Библиотеката поддържа инкрементални обновления на PDF — критично за PAdES подписването, при което CMS подписът се вгражда в резервиран placeholder, без да се генерира нов файл от нулата. Алтернативата (iText, PDFBox) изисква Java сървър и е несъвместима с изискването за клиентска обработка.
+**pdf-lib** [1] е избран за манипулация на PDF документи. Библиотеката поддържа инкрементални обновления на PDF — критично за PAdES подписването, при което CMS подписът се вгражда в резервиран placeholder, без да се генерира нов файл от нулата. Алтернативата (iText, PDFBox) изисква Java сървър и е несъвместима с изискването за клиентска обработка.
 
-**pdfjs-dist** [8] (Mozilla PDF.js) е използван единствено за визуализация — рендиране на PDF страниците като изображения в браузъра при избор на позиция на визуалния маркер. Важно: за поддръжка на iOS Safari е необходима legacy build на pdfjs-dist, тъй като стандартният build използва `Map.prototype.getOrInsertComputed` — метод, отсъстващ в текущата версия на Safari.
+**pdfjs-dist** [21] (Mozilla PDF.js) е използван единствено за визуализация — рендиране на PDF страниците като изображения в браузъра при избор на позиция на визуалния маркер. Важно: за поддръжка на iOS Safari е необходима legacy build на pdfjs-dist, тъй като стандартният build използва `Map.prototype.getOrInsertComputed` — метод, отсъстващ в текущата версия на Safari.
 
 ### PKI библиотека: @peculiar/x509
 
-**`@peculiar/x509`** [9] е използван единствено клиентски, за парсиране на сертификати при верификация (четене на subject, issuer, дати, серийни номера, chain validation — виж 6.3). Изграждането на X.509 leaf сертификати в `issue-certificate` Edge Function-а НЕ минава през тази библиотека — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаване на прости leaf сертификати би увеличило bundle размера ненужно; вместо това сертификатите се изграждат ръчно чрез минимален ASN.1 DER encoder (виж 6.5). Алтернативата на `@peculiar/x509` за клиентското парсиране, `node-forge`, е по-тежка и практически неподдържана от 2022 г.
+**`@peculiar/x509`** [27] е използван единствено клиентски, за парсиране на сертификати при верификация (четене на subject, issuer, дати, серийни номера, chain validation — виж 6.3). Изграждането на X.509 leaf сертификати в `issue-certificate` Edge Function-а НЕ минава през тази библиотека — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаване на прости leaf сертификати би увеличило bundle размера ненужно; вместо това сертификатите се изграждат ръчно чрез минимален ASN.1 DER encoder (виж 6.5). Алтернативата на `@peculiar/x509` за клиентското парсиране, `node-forge`, е по-тежка и практически неподдържана от 2022 г.
 
 ---
 
@@ -99,7 +99,7 @@
 
 ### Достъпност
 
-Потребителският интерфейс трябва да отговаря на **WCAG AA** стандарта за достъпност (Web Content Accessibility Guidelines 2.1, Level AA) [10]. Конкретно: интерактивните елементи трябва да имат достъпни имена (`aria-label`), динамичните съобщения трябва да са анонсирани от screen reader-и (`role="alert"`, `role="status"`), модалните диалози трябва да са маркирани семантично (`role="dialog"`, `aria-modal`).
+Потребителският интерфейс трябва да отговаря на **WCAG AA** стандарта за достъпност (Web Content Accessibility Guidelines 2.1, Level AA) [34]. Конкретно: интерактивните елементи трябва да имат достъпни имена (`aria-label`), динамичните съобщения трябва да са анонсирани от screen reader-и (`role="alert"`, `role="status"`), модалните диалози трябва да са маркирани семантично (`role="dialog"`, `aria-modal`).
 
 ### Производителност
 
@@ -119,22 +119,24 @@
 
 ## Използвана литература (раздел 4)
 
-[1] Meta Platforms. *React — The library for web and native user interfaces* (Библиотека за потребителски интерфейси). https://react.dev. 2024.
+Номерацията следва консолидираната библиография — виж Раздел 10.
 
-[2] Microsoft. *TypeScript — JavaScript With Syntax For Types* (JavaScript с типова система). https://www.typescriptlang.org. 2024.
+[1] Aaditya Agrawal et al. *pdf-lib: Create and modify PDF documents in any JavaScript environment* (Създаване и модификация на PDF документи в JavaScript). https://pdf-lib.js.org. 2024.
 
-[3] Evan You et al. *Vite — Next Generation Frontend Tooling* (Инструментариум за frontend от следващо поколение). https://vitejs.dev. 2024.
+[4] Cloudflare Inc. *Cloudflare Pages — Deploy web projects in record time* (Хостинг платформа за уеб проекти). https://pages.cloudflare.com. 2024.
 
-[4] Supabase Inc. *Supabase — The Open Source Firebase Alternative* (Open-source алтернатива на Firebase). https://supabase.com. 2024.
+[13] Evan You et al. *Vite — Next Generation Frontend Tooling* (Инструментариум за frontend от следващо поколение). https://vitejs.dev. 2024.
 
-[5] Cloudflare Inc. *Cloudflare Pages — Deploy web projects in record time* (Хостинг платформа за уеб проекти). https://pages.cloudflare.com. 2024.
+[18] Meta Platforms. *React — The library for web and native user interfaces* (Библиотека за потребителски интерфейси). https://react.dev. 2024.
 
-[6] Miller, P. *noble-post-quantum: Audited & minimal JS implementation of post-quantum algorithms* (Одитирана минималистична JS имплементация на постквантови алгоритми). https://github.com/paulmillr/noble-post-quantum. 2024.
+[19] Microsoft. *TypeScript — JavaScript With Syntax For Types* (JavaScript с типова система). https://www.typescriptlang.org. 2024.
 
-[7] Aaditya Agrawal et al. *pdf-lib: Create and modify PDF documents in any JavaScript environment* (Създаване и модификация на PDF документи в JavaScript). https://pdf-lib.js.org. 2024.
+[20] Miller, P. *noble-post-quantum: Audited & minimal JS implementation of post-quantum algorithms* (Одитирана минималистична JS имплементация на постквантови алгоритми). https://github.com/paulmillr/noble-post-quantum. 2024.
 
-[8] Mozilla Foundation. *PDF.js — A Portable Document Format (PDF) viewer* (Преглед на PDF документи в браузъра). https://mozilla.github.io/pdf.js. 2024.
+[21] Mozilla Foundation. *PDF.js — A Portable Document Format (PDF) viewer* (Преглед на PDF документи в браузъра). https://mozilla.github.io/pdf.js. 2024.
 
-[9] Peculiar Ventures. *@peculiar/x509 — X.509 certificate library for Node.js and browser* (Библиотека за X.509 сертификати). https://github.com/PeculiarVentures/x509. 2024.
+[27] Peculiar Ventures. *@peculiar/x509 — X.509 certificate library for Node.js and browser* (Библиотека за X.509 сертификати). https://github.com/PeculiarVentures/x509. 2024.
 
-[10] World Wide Web Consortium. *Web Content Accessibility Guidelines (WCAG) 2.1* (Насоки за достъпност на уеб съдържание). https://www.w3.org/TR/WCAG21/. 2018.
+[31] Supabase Inc. *Supabase — The Open Source Firebase Alternative* (Open-source алтернатива на Firebase). https://supabase.com. 2024.
+
+[34] World Wide Web Consortium. *Web Content Accessibility Guidelines (WCAG) 2.1* (Насоки за достъпност на уеб съдържание). https://www.w3.org/TR/WCAG21/. 2018.

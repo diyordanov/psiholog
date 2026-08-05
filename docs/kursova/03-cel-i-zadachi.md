@@ -2,7 +2,7 @@
 
 ## 3.1 Цел на разработката
 
-Целта на настоящата дипломна работа е проектирането и реализацията на уеб платформа за хибридно цифрово подписване на PDF документи. Платформата обединява два криптографски алгоритъма — класически ECDSA P-256 подпис, съвместим с PAdES стандарта и с Adobe Acrobat, и постквантов ML-DSA-65 подпис, стандартизиран от NIST като FIPS 204 [1]. Частните ключове са защитени чрез WebAuthn PRF механизъм, което означава, че нито потребителят не въвежда парола, нито сървърът съхранява ключовете в четим вид.
+Целта на настоящата дипломна работа е проектирането и реализацията на уеб платформа за хибридно цифрово подписване на PDF документи. Платформата обединява два криптографски алгоритъма — класически ECDSA P-256 подпис, съвместим с PAdES стандарта и с Adobe Acrobat, и постквантов ML-DSA-65 подпис, стандартизиран от NIST като FIPS 204 [23]. Частните ключове са защитени чрез WebAuthn PRF механизъм, което означава, че нито потребителят не въвежда парола, нито сървърът съхранява ключовете в четим вид.
 
 Разработката цели да демонстрира приложимостта на хибридните криптографски схеми като практическа преходна стратегия — от днешната класическа инфраструктура към постквантово защитена среда — реализирана като функционално уеб приложение с реален потребителски интерфейс.
 
@@ -10,7 +10,7 @@
 
 За постигане на поставената цел са формулирани следните задачи:
 
-1. **Анализ на PAdES-B-Basic профила и CMS контейнерната структура** (RFC 5652) [3] с цел определяне на минималните криптографски примитиви, необходими за съвместимост с Adobe Acrobat.
+1. **Анализ на PAdES-B-Basic профила и CMS контейнерната структура** (RFC 5652) [15] с цел определяне на минималните криптографски примитиви, необходими за съвместимост с Adobe Acrobat.
 
 2. **Обосновка на избора на ML-DSA-65** сред финалистите на NIST PQC стандартизационната програма — сравнителен анализ спрямо Falcon и SPHINCS+ по размер на подписа, скорост на изпълнение и ниво на сигурност.
 
@@ -18,7 +18,7 @@
 
 4. **Реализация на вътрешна инфраструктура за издаване на сертификати (mini-CA)** — Edge Function за X.509 leaf сертификати, издавани от собствен Root CA.
 
-5. **Проектиране и реализация на passkey автентикация без парола** — WebAuthn Level 3 с PRF extension [4] за деривация на симетричен ключ; HKDF-SHA256 (RFC 5869) [5] за разширяване към AES-256 wrapping ключ.
+5. **Проектиране и реализация на passkey автентикация без парола** — WebAuthn Level 3 с PRF extension [33] за деривация на симетричен ключ; HKDF-SHA256 (RFC 5869) [17] за разширяване към AES-256 wrapping ключ.
 
 6. **Разработка на модул за верификация, работещ изцяло в браузъра** — извличане на CMS структура, валидация на X.509 верига, проверка на ECDSA и ML-DSA-65 подписи, детекция на модификации след подписване.
 
@@ -38,12 +38,14 @@
 
 ## Използвана литература (раздел 3)
 
-[1] National Institute of Standards and Technology. _Module-Lattice-Based Digital Signature Standard_ (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. https://csrc.nist.gov/pubs/fips/204/final. Август 2024.
+Номерацията следва консолидираната библиография — виж Раздел 10.
 
-[2] European Telecommunications Standards Institute. _PDF Advanced Electronic Signatures (PAdES)_ (Усъвършенствани електронни подписи за PDF). ETSI EN 319 142-1. https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/. 2016.
+[12] European Telecommunications Standards Institute. _PDF Advanced Electronic Signatures (PAdES)_ (Усъвършенствани електронни подписи за PDF). ETSI EN 319 142-1. https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/. 2016.
 
-[3] Housley, R. _Cryptographic Message Syntax (CMS)_ (Криптографски синтаксис на съобщения). RFC 5652. https://datatracker.ietf.org/doc/html/rfc5652. Септември 2009.
+[15] Housley, R. _Cryptographic Message Syntax (CMS)_ (Криптографски синтаксис на съобщения). RFC 5652. https://datatracker.ietf.org/doc/html/rfc5652. Септември 2009.
 
-[4] World Wide Web Consortium. _Web Authentication: An API for accessing Public Key Credentials, Level 3_ (Уеб автентикация: API за достъп до публични ключови идентификатори). https://www.w3.org/TR/webauthn-3/. 2023.
+[17] Krawczyk, H., Eronen, P. _HMAC-based Extract-and-Expand Key Derivation Function (HKDF)_ (HMAC-базирана функция за деривация на ключове). RFC 5869. https://datatracker.ietf.org/doc/html/rfc5869. Май 2010.
 
-[5] Krawczyk, H., Eronen, P. _HMAC-based Extract-and-Expand Key Derivation Function (HKDF)_ (HMAC-базирана функция за деривация на ключове). RFC 5869. https://datatracker.ietf.org/doc/html/rfc5869. Май 2010.
+[23] National Institute of Standards and Technology. _Module-Lattice-Based Digital Signature Standard_ (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. https://csrc.nist.gov/pubs/fips/204/final. Август 2024.
+
+[33] World Wide Web Consortium. _Web Authentication: An API for accessing Public Key Credentials, Level 3_ (Уеб автентикация: API за достъп до публични ключови идентификатори). https://www.w3.org/TR/webauthn-3/. 2023.

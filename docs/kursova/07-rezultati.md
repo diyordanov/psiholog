@@ -106,10 +106,12 @@ ML-DSA-65 операциите остават на порядък по-бавн�
 
 ## Използвана литература (раздел 7)
 
-[1] Adobe Inc. *Adobe Acrobat Reader — Digital Signature Verification* (Верификация на цифрови подписи). https://helpx.adobe.com/acrobat/using/digital-signatures.html. 2024.
+Номерацията следва консолидираната библиография — виж Раздел 10.
 
-[2] Google LLC. *Lighthouse — Automated auditing for web quality* (Автоматизиран одит на качеството на уеб приложения). https://developer.chrome.com/docs/lighthouse. 2024.
+[2] Adobe Inc. *Adobe Acrobat Reader — Digital Signature Verification* (Верификация на цифрови подписи). https://helpx.adobe.com/acrobat/using/digital-signatures.html. 2024.
 
-[3] Deque Systems. *axe-core — Accessibility testing engine* (Двигател за тестване на достъпност). https://github.com/dequelabs/axe-core. 2024.
+[7] Deque Systems. *axe-core — Accessibility testing engine* (Двигател за тестване на достъпност). https://github.com/dequelabs/axe-core. 2024.
 
-[4] World Wide Web Consortium. *Web Content Accessibility Guidelines (WCAG) 2.1* (Насоки за достъпност на уеб съдържание). https://www.w3.org/TR/WCAG21/. 2018.
+[14] Google LLC. *Lighthouse — Automated auditing for web quality* (Автоматизиран одит на качеството на уеб приложения). https://developer.chrome.com/docs/lighthouse. 2024.
+
+[34] World Wide Web Consortium. *Web Content Accessibility Guidelines (WCAG) 2.1* (Насоки за достъпност на уеб съдържание). https://www.w3.org/TR/WCAG21/. 2018.

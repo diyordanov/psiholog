@@ -2,7 +2,7 @@
 
 ## 6.1 Криптографски модул
 
-Криптографският модул на SignShield се дели на две ясно разграничени отговорности: извеждане на симетричен ключ от биометрията на потребителя (HKDF-SHA256 [2]) и самото подписване/верификация с двата асиметрични алгоритъма (ECDSA P-256, ML-DSA-65 [3]). И четирите операции живеят в `src/lib/crypto/` и, с изключение на ML-DSA-65, се изпълняват директно чрез вградения браузърен Web Crypto API — без external крипто библиотека, без риск от bundle-size разход и с достъп до хардуерно ускорение, когато е налично.
+Криптографският модул на SignShield се дели на две ясно разграничени отговорности: извеждане на симетричен ключ от биометрията на потребителя (HKDF-SHA256 [17]) и самото подписване/верификация с двата асиметрични алгоритъма (ECDSA P-256, ML-DSA-65 [23]). И четирите операции живеят в `src/lib/crypto/` и, с изключение на ML-DSA-65, се изпълняват директно чрез вградения браузърен Web Crypto API — без external крипто библиотека, без риск от bundle-size разход и с достъп до хардуерно ускорение, когато е налично.
 
 **HKDF-SHA256 деривация от PRF output.** WebAuthn PRF extension-ът връща 32 сурови байта — недетерминиран поток, неподходящ за директна употреба като AES ключ без допълнителна обработка. `deriveAesKeyFromPRF()` изпълнява самата PRF ceremony (`navigator.credentials.get()` с `prf.eval.first`), после подава резултата през HKDF с известна сол (`prf_salt`, уникална за всеки ключ) и контекстен `info` низ, за да получи детерминиран, non-extractable AES-256-GCM ключ:
 
@@ -72,7 +72,7 @@ export async function signWithEcdsaP256(
 
 Резултатът е в P1363 формат (WebCrypto native — просто конкатенация на `r` и `s`, всеки padнат до 32 байта), различен от DER SEQUENCE формата, който CMS стандартът изисква — конверсията между двата е задача на `cmsBuilder.ts` (6.2).
 
-**ML-DSA-65 подписване.** За разлика от ECDSA, ML-DSA-65 няма native браузърна имплементация — извиква се директно библиотеката `@noble/post-quantum` [6], чийто API е синхронен и приема аргументите в обратен ред спрямо интуитивното очакване (съобщението първо, ключът втори при подписване; подписът първи при верификация):
+**ML-DSA-65 подписване.** За разлика от ECDSA, ML-DSA-65 няма native браузърна имплементация — извиква се директно библиотеката `@noble/post-quantum` [20], чийто API е синхронен и приема аргументите в обратен ред спрямо интуитивното очакване (съобщението първо, ключът втори при подписване; подписът първи при верификация):
 
 ```typescript
 export async function signWithMlDsa(
@@ -97,9 +97,9 @@ export async function verifyMlDsa(
 
 ## 6.2 PDF подписване
 
-Ядрото на подписващата логика живее в `pdfSigner.ts` (raw PDF байтова манипулация) и `cmsBuilder.ts` (ASN.1 DER кодиране на CMS структурата). За разлика от повечето операции в приложението, тук не се ползва високо-нивовата документна модификация на `pdf-lib` [7] за втория и следващите подписи — единствено първият (owner-ският) подпис минава през пълно pdf-lib зареждане/запис; всеки следващ е ръчно построен append-only incremental update (детайли по-долу).
+Ядрото на подписващата логика живее в `pdfSigner.ts` (raw PDF байтова манипулация) и `cmsBuilder.ts` (ASN.1 DER кодиране на CMS структурата). За разлика от повечето операции в приложението, тук не се ползва високо-нивовата документна модификация на `pdf-lib` [1] за втория и следващите подписи — единствено първият (owner-ският) подпис минава през пълно pdf-lib зареждане/запис; всеки следващ е ръчно построен append-only incremental update (детайли по-долу).
 
-**Structure на PAdES [8] подпис.** Подписаният PDF съдържа стандартен `/Type /Sig` речник с четири ключови полета: `/ByteRange` — четири числа `[0, A, B, C]`, определящи кои байтове от файла участват в хеша; `/Contents` — hex-кодиран CMS ContentInfo, поставен в предварително резервирано място (placeholder) с фиксирана дължина; `/Filter /Adobe.PPKLite` и `/SubFilter /adbe.pkcs7.detached` — идентификатори, разпознавани от Adobe Acrobat. Диапазонът `[A, B)` е **изключен** от хеша именно защото там живее самия `/Contents` — той не може да участва в собствения си хеш (класически проблем на всяка схема с вграден подпис).
+**Structure на PAdES [12] подпис.** Подписаният PDF съдържа стандартен `/Type /Sig` речник с четири ключови полета: `/ByteRange` — четири числа `[0, A, B, C]`, определящи кои байтове от файла участват в хеша; `/Contents` — hex-кодиран CMS ContentInfo, поставен в предварително резервирано място (placeholder) с фиксирана дължина; `/Filter /Adobe.PPKLite` и `/SubFilter /adbe.pkcs7.detached` — идентификатори, разпознавани от Adobe Acrobat. Диапазонът `[A, B)` е **изключен** от хеша именно защото там живее самия `/Contents` — той не може да участва в собствения си хеш (класически проблем на всяка схема с вграден подпис).
 
 **`preparePdfForSigning()` — placeholder механика.** Функцията рисува визуалния маркер върху страницата чрез pdf-lib, изгражда `/Sig` речника с placeholder стойности (`999999999` за `/ByteRange`, 16384 нулеви hex символа за `/Contents` — буфер от ~8 KB, ~5× повече от типичния размер на CMS структурата), сериализира документа и после **намира собствения си обект по номер**, а не по първо текстово съвпадение:
 
@@ -161,7 +161,7 @@ export function buildSignedAttrs(messageDigest: Uint8Array): Uint8Array {
 }
 ```
 
-Забележителна детайл е разминаването между тага, използван за подписване (`0x31`, стандартен ASN.1 `SET`), и тага, използван при вграждане в `SignerInfo` (`0xA0`, `[0] IMPLICIT`) — CMS стандартът [4] изисква полето да бъде префиксирано с контекстно-специфичен таг в самата структура, но подписваната стойност трябва да остане каноничен `SET`. При верификация (`cmsParser.ts`) тагът се сменя обратно преди подаване към `crypto.subtle.verify()`.
+Забележителна детайл е разминаването между тага, използван за подписване (`0x31`, стандартен ASN.1 `SET`), и тага, използван при вграждане в `SignerInfo` (`0xA0`, `[0] IMPLICIT`) — CMS стандартът [15] изисква полето да бъде префиксирано с контекстно-специфичен таг в самата структура, но подписваната стойност трябва да остане каноничен `SET`. При верификация (`cmsParser.ts`) тагът се сменя обратно преди подаване към `crypto.subtle.verify()`.
 
 **Incremental update за multi-signer.** Всеки подпис след първия не пресъздава документа — добавя нови обекти (`/Sig`, `Widget` annotation, CID шрифт за кирилица) и **преиздава** (redefine) съществуващите `AcroForm` и `Page` обекти на нови позиции във файла, без да пипа старите байтове:
 
@@ -247,7 +247,7 @@ function determineOverall(signers: SignerResult[]): VerifyResult['overall'] {
 
 ## 6.4 Passkey PRF integration
 
-Реалната WebAuthn [1] PRF ceremony се изпълнява само веднъж на подписваща операция чрез споделения hook `usePrfCeremony()` — преди Ден 6 логиката за нея беше copy-paste-вана между модала за единично подписване и модала за покана на съвместни подписващи. Hook-ът съществува основно заради т.нар. "capture-once" pattern: изпълнява истинската биометрична церемония веднъж, после връща **mock extractor-и**, които `signAsOwner()` може да извиква вътрешно, без нов prompt към потребителя.
+Реалната WebAuthn [33] PRF ceremony се изпълнява само веднъж на подписваща операция чрез споделения hook `usePrfCeremony()` — преди Ден 6 логиката за нея беше copy-paste-вана между модала за единично подписване и модала за покана на съвместни подписващи. Hook-ът съществува основно заради т.нар. "capture-once" pattern: изпълнява истинската биометрична церемония веднъж, после връща **mock extractor-и**, които `signAsOwner()` може да извиква вътрешно, без нов prompt към потребителя.
 
 **Single vs dual PRF ceremony.** Ако ECDSA и ML-DSA-65 ключовете на потребителя произхождат от един и същ WebAuthn credential (типичният случай — потребителят генерира и двата с една и съща passkey сесия), WebAuthn PRF extension-ът позволява **един** биометричен тап да върне **два** независими PRF резултата чрез `eval.first`/`eval.second`. Ако ключовете идват от различни credential-и, се налагат два отделни tap-а:
 
@@ -276,7 +276,7 @@ const performCeremony = useCallback(async (
 
 ## 6.5 Mini-CA Edge Function
 
-Единствената сървърна операция в цялото приложение с достъп до чувствителна тайна е `issue-certificate` — Supabase Edge Function, изпълнявана в Deno runtime [10]. Функцията приема `signingKeyId`, проверява собствеността му спрямо JWT токена на заявителя, и издава X.509 [5] leaf сертификат (ECDSA P-256) или JSON attestation (ML-DSA-65), подписани с частния ключ на вътрешния Root CA.
+Единствената сървърна операция в цялото приложение с достъп до чувствителна тайна е `issue-certificate` — Supabase Edge Function, изпълнявана в Deno runtime [6]. Функцията приема `signingKeyId`, проверява собствеността му спрямо JWT токена на заявителя, и издава X.509 [5] leaf сертификат (ECDSA P-256) или JSON attestation (ML-DSA-65), подписани с частния ключ на вътрешния Root CA.
 
 **JWT validation + ownership check.** Заявката е неоторизирана, ако Authorization header-ът липсва или токенът е невалиден; ключът е недостъпен, ако не принадлежи на автентикирания потребител — заявката филтрира изрично по `user_id`, не разчита единствено на RLS:
 
@@ -313,7 +313,7 @@ async function checkRateLimit(supabase, userId: string): Promise<boolean> {
 }
 ```
 
-**Изграждане на сертификата.** За разлика от повечето Node.js базирани решения, функцията НЕ използва библиотека като `@peculiar/x509` [9] — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаването на прости leaf сертификати би увеличило bundle размера ненужно. Вместо това `buildEcdsaP256Cert()` изгражда TBSCertificate структурата ръчно, чрез същите минималистични ASN.1 DER помощни функции като `cmsBuilder.ts`, и я подписва директно чрез `crypto.subtle.sign()` с CA частния ключ (внесен от Supabase Secret в PKCS8 формат):
+**Изграждане на сертификата.** За разлика от повечето Node.js базирани решения, функцията НЕ използва библиотека като `@peculiar/x509` [27] — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаването на прости leaf сертификати би увеличило bundle размера ненужно. Вместо това `buildEcdsaP256Cert()` изгражда TBSCertificate структурата ръчно, чрез същите минималистични ASN.1 DER помощни функции като `cmsBuilder.ts`, и я подписва директно чрез `crypto.subtle.sign()` с CA частния ключ (внесен от Supabase Secret в PKCS8 формат):
 
 ```typescript
 const tbs = derSeq(cat(
@@ -370,22 +370,24 @@ export async function signAsRecipient(
 
 ## Използвана литература (раздел 6)
 
-[1] World Wide Web Consortium. *Web Authentication: An API for accessing Public Key Credentials, Level 3* (Уеб автентикация: API за достъп до публични ключови идентификатори, ниво 3). https://www.w3.org/TR/webauthn-3/. 2023.
+Номерацията следва консолидираната библиография — виж Раздел 10.
 
-[2] Krawczyk, H., Eronen, P. *HMAC-based Extract-and-Expand Key Derivation Function (HKDF)* (HMAC-базирана функция за деривация на ключове). RFC 5869. https://datatracker.ietf.org/doc/html/rfc5869. Май 2010.
-
-[3] National Institute of Standards and Technology. *Module-Lattice-Based Digital Signature Standard* (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. https://csrc.nist.gov/pubs/fips/204/final. Август 2024.
-
-[4] Housley, R. *Cryptographic Message Syntax (CMS)* (Криптографски синтаксис на съобщения). RFC 5652. https://datatracker.ietf.org/doc/html/rfc5652. Септември 2009.
+[1] Aaditya Agrawal et al. *pdf-lib: Create and modify PDF documents in any JavaScript environment* (Създаване и модификация на PDF документи в JavaScript). https://pdf-lib.js.org. 2024.
 
 [5] Cooper, D., Santesson, S., Farrell, S., Boeyen, S., Housley, R., Polk, W. *Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile* (X.509 профил на сертификати и списъци за отмяна). RFC 5280. https://datatracker.ietf.org/doc/html/rfc5280. Май 2008.
 
-[6] Miller, P. *noble-post-quantum: Audited & minimal JS implementation of post-quantum algorithms* (Одитирана минималистична JS имплементация на постквантови алгоритми). https://github.com/paulmillr/noble-post-quantum. 2024.
+[6] Deno Land Inc. *Deno — A modern runtime for JavaScript and TypeScript* (Съвременна среда за изпълнение на JavaScript и TypeScript). https://deno.com. 2024.
 
-[7] Aaditya Agrawal et al. *pdf-lib: Create and modify PDF documents in any JavaScript environment* (Създаване и модификация на PDF документи в JavaScript). https://pdf-lib.js.org. 2024.
+[12] European Telecommunications Standards Institute. *PDF Advanced Electronic Signatures (PAdES). Part 1: Building blocks and PAdES baseline signatures* (Усъвършенствани електронни подписи за PDF. Част 1). ETSI EN 319 142-1. https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/. 2016.
 
-[8] European Telecommunications Standards Institute. *PDF Advanced Electronic Signatures (PAdES). Part 1: Building blocks and PAdES baseline signatures* (Усъвършенствани електронни подписи за PDF. Част 1). ETSI EN 319 142-1. https://www.etsi.org/deliver/etsi_en/319100_319199/31914201/. 2016.
+[15] Housley, R. *Cryptographic Message Syntax (CMS)* (Криптографски синтаксис на съобщения). RFC 5652. https://datatracker.ietf.org/doc/html/rfc5652. Септември 2009.
 
-[9] Peculiar Ventures. *@peculiar/x509 — X.509 certificate library for Node.js and browser* (Библиотека за X.509 сертификати). https://github.com/PeculiarVentures/x509. 2024.
+[17] Krawczyk, H., Eronen, P. *HMAC-based Extract-and-Expand Key Derivation Function (HKDF)* (HMAC-базирана функция за деривация на ключове). RFC 5869. https://datatracker.ietf.org/doc/html/rfc5869. Май 2010.
 
-[10] Deno Land Inc. *Deno — A modern runtime for JavaScript and TypeScript* (Съвременна среда за изпълнение на JavaScript и TypeScript). https://deno.com. 2024.
+[20] Miller, P. *noble-post-quantum: Audited & minimal JS implementation of post-quantum algorithms* (Одитирана минималистична JS имплементация на постквантови алгоритми). https://github.com/paulmillr/noble-post-quantum. 2024.
+
+[23] National Institute of Standards and Technology. *Module-Lattice-Based Digital Signature Standard* (Стандарт за цифров подпис, базиран на модулни решетки). FIPS 204. https://csrc.nist.gov/pubs/fips/204/final. Август 2024.
+
+[27] Peculiar Ventures. *@peculiar/x509 — X.509 certificate library for Node.js and browser* (Библиотека за X.509 сертификати). https://github.com/PeculiarVentures/x509. 2024.
+
+[33] World Wide Web Consortium. *Web Authentication: An API for accessing Public Key Credentials, Level 3* (Уеб автентикация: API за достъп до публични ключови идентификатори, ниво 3). https://www.w3.org/TR/webauthn-3/. 2023.
