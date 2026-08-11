@@ -71,6 +71,7 @@ function AppContent() {
   const [needsPasskeySetup, setNeedsPasskeySetup] = useState(false);
   const [checkingPasskeys, setCheckingPasskeys] = useState(false);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [passkeyCheckError, setPasskeyCheckError] = useState(false);
 
   // /verify е публична страница — показва се без auth, дори на не-логнати потребители
   if (window.location.pathname === '/verify') {
@@ -89,6 +90,7 @@ function AppContent() {
   // Ако го инициализираме на false и после го сетваме в useEffect,
   // има един render, в който dashboard-ът е видим — неприятен flash.
   const [processingRecovery, setProcessingRecovery] = useState(isRecoveryRedirect);
+  const [passkeyCheckRetryTick, setPasskeyCheckRetryTick] = useState(0);
 
   useEffect(() => {
     // Без активна реална сесия няма нищо за проверяване.
@@ -134,20 +136,49 @@ function AppContent() {
     // Не разчитаме на локален флаг — проверяваме реално в Supabase дали
     // потребителят има регистриран passkey. Така работи коректно дори при
     // презареждане на страницата по средата на регистрационния процес.
+    //
+    // ВАЖНО: при error от passkey.list() (напр. passkeys feature не е
+    // конфигуриран правилно в Supabase — липсващ/грешен webauthn_rp_id)
+    // НЕ пропускаме потребителя в dashboard-а мълчаливо — резултатът е
+    // неизвестен (може да има passkey, може и да няма), а грешен "минаваш
+    // без passkey" води точно до "нямаш регистриран passkey" при следващ
+    // login. Вместо това показваме грешка с бутон за повторен опит.
     setCheckingPasskeys(true);
+    setPasskeyCheckError(false);
     supabase.auth.passkey.list().then(({ data, error }) => {
-      const noPasskeys = !error && (data?.length ?? 0) === 0;
+      setCheckingPasskeys(false);
+      if (error) {
+        console.error('passkey.list() failed:', error.message);
+        setPasskeyCheckError(true);
+        return;
+      }
+      const noPasskeys = (data?.length ?? 0) === 0;
       setIsNewUser(noPasskeys); // no passkeys yet = brand-new signup
       setNeedsPasskeySetup(noPasskeys);
-      setCheckingPasskeys(false);
     });
-  }, [session?.user.id, session?.user.is_anonymous]);
+  }, [session?.user.id, session?.user.is_anonymous, passkeyCheckRetryTick]);
 
   // Показваме spinner докато auth state-ът или passkey проверката не са готови.
   if (loading || checkingPasskeys || processingRecovery) {
     return (
       <div className="flex min-h-screen items-center justify-center text-neutral-400">
         {processingRecovery ? 'Изтриваме стари passkey-и...' : 'Зареждане...'}
+      </div>
+    );
+  }
+
+  // passkey.list() гръмна — не знаем дали има passkey, затова не пускаме
+  // нито към dashboard, нито към регистрация. Изричен retry вместо тих bypass.
+  if (session && !session.user.is_anonymous && passkeyCheckError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-center text-neutral-500">
+        <p>Възникна грешка при проверка на passkey-ите ти. Опитай отново.</p>
+        <button
+          onClick={() => setPasskeyCheckRetryTick((t) => t + 1)}
+          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+        >
+          Опитай пак
+        </button>
       </div>
     );
   }
