@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, CheckCircle, FileSignature, PartyPopper } from 'lucide-react';
+import { Bell, CheckCircle, FileSignature, PartyPopper, Trash2, XCircle } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import type { NotificationRow } from '../lib/types';
 
@@ -7,6 +7,8 @@ const ICONS: Record<NotificationRow['type'], typeof Bell> = {
   owner_signed: FileSignature,
   recipient_signed: FileSignature,
   request_completed: PartyPopper,
+  delete_requested: Trash2,
+  delete_declined: XCircle,
 };
 
 /** Показва относително време ("преди 5 мин") за компактен нотификационен списък. */

@@ -80,7 +80,9 @@ export interface EmailNotificationRow {
 
 // ─── notifications ──────────────────────────────────────────────────────────
 
-export type NotificationType = 'recipient_signed' | 'owner_signed' | 'request_completed';
+export type NotificationType =
+  | 'recipient_signed' | 'owner_signed' | 'request_completed'
+  | 'delete_requested' | 'delete_declined';
 
 /** Един ред от таблицата `notifications` (migration 0018). */
 export interface NotificationRow {
@@ -91,6 +93,31 @@ export interface NotificationRow {
   message: string;
   read_at: string | null;
   created_at: string;
+}
+
+// ─── document_delete_requests / document_delete_consents (migration 0020) ────
+
+export type DeleteRequestStatus = 'pending' | 'approved' | 'declined';
+export type DeleteDecision = 'approved' | 'declined';
+
+/** Един ред от `document_delete_requests` — заявка за взаимно съгласувано изтриване. */
+export interface DeleteRequestRow {
+  id: string;
+  document_id: string;
+  signing_request_id: string;
+  requested_by: string;
+  status: DeleteRequestStatus;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** Един ред от `document_delete_consents` — решение на една от страните. */
+export interface DeleteConsentRow {
+  id: string;
+  delete_request_id: string;
+  user_id: string;
+  decision: DeleteDecision;
+  decided_at: string;
 }
 
 // ─── UI-composed изгледи ────────────────────────────────────────────────────

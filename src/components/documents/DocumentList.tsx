@@ -7,17 +7,23 @@
  *   - Бутон "Преглед" → генерира 5-минутен signed URL и отваря PdfViewer
  *   - Бутон "Подпиши" → pre-flight key check → SignDocumentModal (3 стъпки)
  *   - Бутон "Свали подписан" → при status='signed', сваля подписания PDF
- *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB)
+ *   - Бутон изтриване → inline потвърждение → soft delete (deleted_at в DB);
+ *     ако документът е споделен (има claim-нат recipient), delete-ът минава
+ *     през request→consent flow (migration 0020) вместо директно изтриване.
  */
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle, Sparkles, ArrowRight, Clock, Users, Ban } from 'lucide-react';
+import { FileText, Eye, RefreshCw, Trash2, PenLine, Download, CheckCircle, Sparkles, ArrowRight, Clock, Users, Ban, Check, X as XIcon } from 'lucide-react';
 import { fetchUserDocuments, getDocumentSignedUrl, softDeleteDocument, type DocumentRow } from '../../lib/documentUpload';
+import {
+  requestDocumentDeletion, respondDocumentDeletion,
+  listPendingDeleteRequests, listDeleteConsents,
+} from '../../lib/documentDeleteConsentService';
 import { fetchBestKeyId } from '../../lib/signingKeyStore';
 import { getSignedDownloadUrl } from '../../lib/signingService';
 import { logAuditEvent } from '../../lib/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMultiSignerActions } from '../../hooks/useMultiSignerActions';
-import type { SigningRequestWithRecipients } from '../../lib/types';
+import type { SigningRequestWithRecipients, DeleteRequestRow, DeleteConsentRow } from '../../lib/types';
 import UploadDocument from './UploadDocument';
 import PdfViewer from './PdfViewer';
 import SignDocumentModal from './SignDocumentModal';
@@ -43,6 +49,8 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
   const multiSignerActions = useMultiSignerActions(userId);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [signingRequests, setSigningRequests] = useState<SigningRequestWithRecipients[]>([]);
+  const [deleteRequests, setDeleteRequests] = useState<DeleteRequestRow[]>([]);
+  const [deleteConsents, setDeleteConsents] = useState<DeleteConsentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -69,7 +77,7 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
   // Toast state
   const [toast, setToast] = useState<string | null>(null);
 
-  /** Зарежда документите + signing_requests (за multi-signer state) от базата. */
+  /** Зарежда документите + signing_requests + pending заявки за изтриване от базата. */
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -80,6 +88,10 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
       ]);
       setDocuments(docs);
       setSigningRequests(requests);
+
+      const pendingRequests = await listPendingDeleteRequests();
+      setDeleteRequests(pendingRequests);
+      setDeleteConsents(await listDeleteConsents(pendingRequests.map(r => r.id)));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Грешка при зареждане.');
     } finally {
@@ -103,23 +115,85 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
     return map;
   }, [signingRequests]);
 
+  /**
+   * Pending заявка за изтриване на документ + дали ТЕКУЩИЯТ потребител вече е
+   * отговорил (requester-ът автоматично се брои за 'approved', виж migration
+   * 0020). Ползва се за да решим дали да покажем Trash2, "чакаме..." или
+   * Съгласен/Отказвам бутоните на реда на документа.
+   */
+  const pendingDeleteByDoc = useMemo(() => {
+    const map = new Map<string, { request: DeleteRequestRow; myDecision: 'approved' | 'declined' | null }>();
+    for (const req of deleteRequests) {
+      const myConsent = deleteConsents.find(c => c.delete_request_id === req.id && c.user_id === userId);
+      map.set(req.document_id, { request: req, myDecision: myConsent?.decision ?? null });
+    }
+    return map;
+  }, [deleteRequests, deleteConsents, userId]);
+
+  /** Има ли документът поне един claim-нат (регистриран) recipient — определя дали delete-ът изисква съгласие. */
+  const hasClaimedRecipients = useCallback(
+    (docId: string) => (latestRequestByDoc.get(docId)?.recipients ?? []).some(r => r.user_id !== null),
+    [latestRequestByDoc],
+  );
+
   /** Показва toast за 3 секунди. */
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
 
-  /** Soft-изтрива документ. */
+  /**
+   * Изтрива документ. Ако документът е споделен (има claim-нат recipient),
+   * вместо директно изтриване се създава pending заявка за съгласие
+   * (request→consent flow, migration 0020) — реалният delete се случва едва
+   * когато всички страни се съгласят.
+   */
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     try {
-      await softDeleteDocument(id, userId);
-      setDocuments((prev) => prev.filter((d) => d.id !== id));
+      if (hasClaimedRecipients(id)) {
+        const result = await requestDocumentDeletion(id, userId);
+        if (result.status === 'deleted') {
+          setDocuments((prev) => prev.filter((d) => d.id !== id));
+          showToast('Документът е изтрит.');
+        } else {
+          showToast('Заявка за изтриване е изпратена — чака съгласие от останалите участници.');
+          await load();
+        }
+      } else {
+        await softDeleteDocument(id, userId);
+        setDocuments((prev) => prev.filter((d) => d.id !== id));
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Грешка при изтриване.');
     } finally {
       setDeletingId(null);
       setConfirmDeleteId(null);
+    }
+  };
+
+  /**
+   * Отговор на входяща заявка за изтриване (Съгласен/Отказвам). При 'approved'
+   * от последната нужна страна документът реално се изтрива вътре в RPC-то.
+   */
+  const handleRespondDelete = async (docId: string, requestId: string, decision: 'approved' | 'declined') => {
+    setDeletingId(docId);
+    try {
+      const status = await respondDocumentDeletion(requestId, decision, userId, docId);
+      if (status === 'approved') {
+        setDocuments((prev) => prev.filter((d) => d.id !== docId));
+        showToast('Документът е изтрит по взаимно съгласие.');
+      } else if (status === 'declined') {
+        showToast('Отказахте заявката за изтриване.');
+        await load();
+      } else {
+        showToast('Съгласието е записано — изчакваме останалите участници.');
+        await load();
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Грешка при отговор на заявката.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -423,11 +497,47 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                     </>
                   )}
 
-                  {/* Бутон изтриване — само собственикът вижда действието; поканен
-                      recipient не притежава документа и не бива да може да го
-                      премахне от панела на собственика (виж migration 0019). */}
-                  {doc.user_id === userId && (
-                    confirmDeleteId === doc.id ? (
+                  {/* Бутон изтриване — вижда се от owner-а И claim-натите recipients
+                      (и двете страни са "собственик" на решението, виж migration 0020).
+                      Ако документът е споделен, delete-ът минава през request→consent
+                      вместо директно да изчезне от панела на другата страна. */}
+                  {(() => {
+                    const isParty = doc.user_id === userId
+                      || (latestRequestByDoc.get(doc.id)?.recipients ?? []).some(r => r.user_id === userId);
+                    if (!isParty) return null;
+
+                    const pending = pendingDeleteByDoc.get(doc.id);
+                    if (pending) {
+                      if (pending.request.requested_by === userId || pending.myDecision !== null) {
+                        return (
+                          <span className="flex items-center gap-1 text-xs text-neutral-400">
+                            <Clock size={11} /> Чака съгласие за изтриване...
+                          </span>
+                        );
+                      }
+                      return (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-amber-600">Заявка за изтриване:</span>
+                          <button
+                            onClick={() => handleRespondDelete(doc.id, pending.request.id, 'approved')}
+                            disabled={deletingId === doc.id}
+                            className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                          >
+                            {deletingId === doc.id ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+                            Съгласен
+                          </button>
+                          <button
+                            onClick={() => handleRespondDelete(doc.id, pending.request.id, 'declined')}
+                            disabled={deletingId === doc.id}
+                            className="flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            <XIcon size={11} /> Отказвам
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return confirmDeleteId === doc.id ? (
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => handleDelete(doc.id)}
@@ -452,8 +562,8 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                       >
                         <Trash2 size={14} aria-hidden="true" />
                       </button>
-                    )
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* State B: SigningRequestStatus + CancelSigningRequestButton */}
