@@ -423,32 +423,36 @@ export default function DocumentList({ userId, onNavigateKeys, onNavigateHowItWo
                     </>
                   )}
 
-                  {/* Бутон изтриване */}
-                  {confirmDeleteId === doc.id ? (
-                    <div className="flex items-center gap-1">
+                  {/* Бутон изтриване — само собственикът вижда действието; поканен
+                      recipient не притежава документа и не бива да може да го
+                      премахне от панела на собственика (виж migration 0019). */}
+                  {doc.user_id === userId && (
+                    confirmDeleteId === doc.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          disabled={deletingId === doc.id}
+                          className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          {deletingId === doc.id ? <RefreshCw size={11} className="animate-spin" /> : 'Потвърди'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="rounded-lg px-2 py-1 text-xs text-neutral-400 hover:text-neutral-600"
+                        >
+                          Откажи
+                        </button>
+                      </div>
+                    ) : (
                       <button
-                        onClick={() => handleDelete(doc.id)}
-                        disabled={deletingId === doc.id}
-                        className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                        onClick={() => setConfirmDeleteId(doc.id)}
+                        className="rounded-lg p-1 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                        title="Изтрий документ"
+                        aria-label="Изтрий документ"
                       >
-                        {deletingId === doc.id ? <RefreshCw size={11} className="animate-spin" /> : 'Потвърди'}
+                        <Trash2 size={14} aria-hidden="true" />
                       </button>
-                      <button
-                        onClick={() => setConfirmDeleteId(null)}
-                        className="rounded-lg px-2 py-1 text-xs text-neutral-400 hover:text-neutral-600"
-                      >
-                        Откажи
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmDeleteId(doc.id)}
-                      className="rounded-lg p-1 text-neutral-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                      title="Изтрий документ"
-                      aria-label="Изтрий документ"
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                    </button>
+                    )
                   )}
                 </div>
 

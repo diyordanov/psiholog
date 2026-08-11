@@ -21,6 +21,7 @@ export interface UploadResult {
 /** Един ред от таблицата `documents`, върнат от базата. */
 export interface DocumentRow {
   id: string;
+  user_id: string;
   original_filename: string;
   storage_path: string;
   status: 'uploaded' | 'signed';
@@ -160,16 +161,28 @@ export async function getDocumentSignedUrl(
  * Soft-изтрива документ — поставя `deleted_at` timestamp.
  * Физическият файл в Storage и DB редът остават (за одит и евентуално възстановяване).
  * RLS SELECT политиките филтрират `deleted_at IS NULL`, така документът изчезва от списъка.
+ *
+ * Само собственикът може да изтрие документ — recipient-ската UPDATE RLS policy
+ * (migration 0019) изрично забранява промяна на deleted_at, за да не изчезва
+ * споделен документ от панела на owner-а, ако recipient натисне изтриване от
+ * своя. `.select('id')` е нарочно тук: RLS-блокирано UPDATE НЕ връща error от
+ * PostgREST — просто засяга 0 реда тихо (same клас проблем като migration 0013's
+ * бележка) — без явна проверка бихме "успели" мълчаливо без документът реално
+ * да е изтрит.
  */
 export async function softDeleteDocument(documentId: string, userId: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('documents')
     .update({ deleted_at: new Date().toISOString() })
-    .eq('id', documentId);
+    .eq('id', documentId)
+    .select('id');
 
   if (error) {
     console.error('softDeleteDocument failed:', error.message);
     throw new Error('Грешка при изтриване на документа. Опитайте отново.');
+  }
+  if (!data || data.length === 0) {
+    throw new Error('Само собственикът на документа може да го изтрие.');
   }
 
   await logAuditEvent(userId, 'document_deleted', documentId);
@@ -183,7 +196,7 @@ export async function softDeleteDocument(documentId: string, userId: string): Pr
 export async function fetchUserDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from('documents')
-    .select('id, original_filename, storage_path, status, created_at, signed_at, signed_storage_path')
+    .select('id, user_id, original_filename, storage_path, status, created_at, signed_at, signed_storage_path')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
