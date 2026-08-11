@@ -33,16 +33,24 @@ vi.mock('../lib/pdf/cmsBuilder', () => ({
   buildSignedAttrs: vi.fn().mockReturnValue(new Uint8Array(100)),
   buildCmsDetached: vi.fn().mockReturnValue(new Uint8Array(500)),
 }));
-vi.mock('../lib/pdf/pdfSigner', () => ({
-  preparePdfForSigning: vi.fn().mockResolvedValue({
-    bytes: new Uint8Array(1000), contentsOffset: 100, byteRangeNumOffset: 200,
-  }),
-  computeByteRanges:    vi.fn().mockReturnValue([0, 100, 200, 800] as [number,number,number,number]),
-  patchByteRangeInPlace: vi.fn(),
-  hashByteRanges:       vi.fn().mockReturnValue(new Uint8Array(32).fill(0xab)),
-  injectSignatureAndPQ: vi.fn().mockReturnValue(new Uint8Array(1500)),
-  encodeBase64url:      vi.fn().mockReturnValue('dGVzdA'),
-}));
+// Партичен mock (importOriginal): countSignatureMarkers (pdfVerifier.ts) ползва
+// findPattern/findDictEnd от pdfSigner, реален байтов low-level код — трябва
+// да остане истински, иначе се чупи при signAsOwner()'s countSignatureMarkers()
+// повикване, докато preparePdfForSigning/injectSignatureAndPQ/etc. остават fake.
+vi.mock('../lib/pdf/pdfSigner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/pdf/pdfSigner')>();
+  return {
+    ...actual,
+    preparePdfForSigning: vi.fn().mockResolvedValue({
+      bytes: new Uint8Array(1000), contentsOffset: 100, byteRangeNumOffset: 200,
+    }),
+    computeByteRanges:    vi.fn().mockReturnValue([0, 100, 200, 800] as [number,number,number,number]),
+    patchByteRangeInPlace: vi.fn(),
+    hashByteRanges:       vi.fn().mockReturnValue(new Uint8Array(32).fill(0xab)),
+    injectSignatureAndPQ: vi.fn().mockReturnValue(new Uint8Array(1500)),
+    encodeBase64url:      vi.fn().mockReturnValue('dGVzdA'),
+  };
+});
 
 import { clickToMarkerPos, DEFAULT_MARKER } from '../components/documents/SignDocumentModal';
 import { signDocument } from '../lib/signingService';

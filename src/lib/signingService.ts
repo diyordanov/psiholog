@@ -43,6 +43,7 @@ import {
   type PqSignatureData, type SignOptions,
 } from './pdf/pdfSigner';
 import { buildSignedAttrs, buildCmsDetached } from './pdf/cmsBuilder';
+import { countSignatureMarkers } from './pdf/pdfVerifier';
 import { notifySigningParticipants } from './notificationService';
 import type { NewRecipientInput, SigningRequestStatus } from './types';
 
@@ -298,6 +299,27 @@ export async function signAsOwner(
   }
   if (docRow.status === 'signed') throw new Error('Документът вече е подписан.');
 
+  // ── 1б. Detect вече вграден подпис в самите байтове (напр. файл, свален
+  // подписан от друг потребител и качен тук ръчно вместо през поканата) —
+  // проверяваме преди PRF ceremony-то, за да не хабим биометричен prompt
+  // за операция, която така или иначе ще бъде отхвърлена. Байтовете се
+  // кешират и се преизползват в стъпка 7, вместо повторно сваляне.
+  const { data: preCheckBlob, error: preCheckErr } = await supabase.storage
+    .from('documents')
+    .download(docRow.storage_path as string);
+  if (preCheckErr || !preCheckBlob) {
+    console.error('signAsOwner: pre-check download failed:', preCheckErr?.message);
+    throw new Error('Грешка при изтегляне на документа. Опитайте отново.');
+  }
+  const originalPdfBytes = new Uint8Array(await preCheckBlob.arrayBuffer());
+  if (countSignatureMarkers(originalPdfBytes) > 0) {
+    throw new Error(
+      'Този документ вече съдържа цифров подпис. За да добавите допълнителен подпис към ' +
+      'вече подписан документ, използвайте поканата (Покани), изпратена от собственика — ' +
+      'не качвайте ръчно копие на вече подписан файл, тъй като това прави оригиналния подпис невалиден.'
+    );
+  }
+
   // ── 2. Не позволяваме втора активна заявка за същия документ ─────────────
   const { data: activeRequest } = await supabase
     .from('signing_requests')
@@ -364,15 +386,7 @@ export async function signAsOwner(
     ({ ecdsaSecretKey, mlDsaSecretKey } =
       await decryptSigningSecretKeys(keys, rpId, extractPrf, extractDualPrf));
 
-    // ── 7. Download оригинален PDF от storage ─────────────────────────────
-    const { data: pdfBlob, error: dlErr } = await supabase.storage
-      .from('documents')
-      .download(docRow.storage_path as string);
-    if (dlErr || !pdfBlob) {
-      console.error('signAsOwner: download PDF failed:', dlErr?.message);
-      throw new Error('Грешка при изтегляне на документа. Опитайте отново.');
-    }
-    const originalPdfBytes = new Uint8Array(await pdfBlob.arrayBuffer());
+    // ── 7. PDF байтовете вече са свалени и проверени в стъпка 1б ──────────
 
     // ── 8. Подготовка на PDF с визуален маркер (owner е ВИНАГИ signer #1) ──
     const signOptions: SignOptions = {

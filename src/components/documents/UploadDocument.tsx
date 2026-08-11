@@ -12,6 +12,7 @@ import { useState, useRef, useCallback } from 'react';
 import { Upload, FileText, X, AlertTriangle } from 'lucide-react';
 import { scanPdf } from '../../lib/pdfSanitizer';
 import { uploadDocument } from '../../lib/documentUpload';
+import { countSignatureMarkers } from '../../lib/pdf/pdfVerifier';
 
 const MAX_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB — лимит на Storage bucket-а
 
@@ -100,6 +101,21 @@ export default function UploadDocument({ userId, onUploaded }: UploadDocumentPro
     if (!safe) {
       setErrorMessage(
         `Документът е отхвърлен — открити опасни елементи:\n• ${threats.join('\n• ')}`
+      );
+      setStage('error');
+      return;
+    }
+
+    // Отхвърляме файл, който вече съдържа цифров подпис — типично когато
+    // потребител сваля вече подписан документ (напр. получен по имейл извън
+    // платформата) и се опитва да го качи като нов, за да добави подпис. Това
+    // прави оригиналния подпис невалиден при верификация (виж signAsOwner()
+    // за втория, финален guard срещу същия проблем).
+    if (countSignatureMarkers(new Uint8Array(buffer)) > 0) {
+      setErrorMessage(
+        'Този документ вече съдържа цифров подпис и не може да бъде качен тук. ' +
+        'За да добавите допълнителен подпис към вече подписан документ, помолете ' +
+        'собственика да ви покани през функцията „Покани".'
       );
       setStage('error');
       return;
