@@ -79,9 +79,16 @@ const page = `<!DOCTYPE html>
       border-bottom: 2px solid #333;
       margin-bottom: 2.5rem;
     }
-    .cover h1 { font-size: 1.55rem; line-height: 1.3; margin-bottom: 0.6rem; }
+    .cover h1 { font-size: 1.75rem; line-height: 1.3; margin: 1.75rem 0 .4rem; }
     .cover .sub { font-size: 0.95rem; color: #555; font-style: italic; }
     .cover .meta { margin-top: 1rem; font-size: 0.88rem; color: #444; }
+    .cover-univ { font-size: 1.15rem; font-weight: 700; letter-spacing: .02em; text-align: center; }
+    .cover-faculty { font-size: 1.02rem; font-weight: 700; margin-top: .25rem; text-align: center; }
+    .cover-logo { width: 150px; height: auto; margin: 1.75rem auto 0; display: block; }
+    .cover-ontopic { font-size: .95rem; color: #555; text-align: center; }
+    .cover-title { font-size: 1.15rem; font-weight: 700; margin: .4rem auto 0; max-width: 34rem; line-height: 1.4; text-align: center; }
+    .cover-authorblock { margin-top: 4rem; font-size: .92rem; color: #333; }
+    .cover-authorblock p { margin: .25rem 0; text-align: right; }
 
     /* ── TOC ── */
     .toc {
@@ -169,6 +176,9 @@ const page = `<!DOCTYPE html>
       body { background:#1a1816; color:#e4dfd8; }
       .cover { border-color:#666; }
       .cover .sub, .cover .meta { color:#999; }
+      .cover-ontopic { color:#999; }
+      .cover-authorblock { color:#ccc; }
+      .cover-logo { filter: invert(1) hue-rotate(180deg); }
       .toc { background:#252220; border-color:#777; }
       .toc h2 { color:#bbb; }
       .toc a { color:#79aadb; }
@@ -190,9 +200,17 @@ const page = `<!DOCTYPE html>
 <div class="page">
 
   <div class="cover">
-    <h1>Постквантови криптографски схеми за защита на електронни документи</h1>
-    <p class="sub">Дипломна работа по Информационна Сигурност</p>
-    <p class="meta">Технически университет — София</p>
+    <p class="cover-univ">ТЕХНИЧЕСКИ УНИВЕРСИТЕТ – СОФИЯ</p>
+    <p class="cover-faculty">ФАКУЛТЕТ ПО КОМПЮТЪРНИ СИСТЕМИ И ТЕХНОЛОГИИ</p>
+    <img class="cover-logo" src="screenshots/assets/tu-sofia-logo.png" alt="Лого на Технически университет – София" />
+    <h1>Дипломна работа</h1>
+    <p class="cover-ontopic">на тема</p>
+    <p class="cover-title">Постквантови криптографски схеми за защита на електронни документи</p>
+    <div class="cover-authorblock">
+      <p>Дипломант: Мариела Василева Тупарова</p>
+      <p>Специалност: Компютърно и софтуерно инженерство</p>
+      <p>Дипломен ръководител: маг. инж. Момчил Петков</p>
+    </div>
   </div>
 
   <nav class="toc">
