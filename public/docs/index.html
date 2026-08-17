@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Постквантови криптографски схеми — Курсова работа</title>
+  <title>Постквантови криптографски схеми — Дипломна работа</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -89,6 +89,12 @@
           font-size: .83rem; line-height: 1.5; }
     pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 
+    /* ── Изображения (screenshots, диаграми) ── */
+    .fig { margin: 1.5rem 0; text-align: center; }
+    .fig img { max-width: 100%; height: auto; border: 1px solid #d0ccc5; border-radius: 6px;
+               box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .fig-caption { font-size: .82rem; color: #666; margin-top: .5rem; font-style: italic; }
+
     /* ── Blockquote ── */
     blockquote { border-left: 4px solid #aaa; margin: 1.2rem 0;
                  padding: .7rem 1rem; background: #f5f3ef; color: #555; font-style: italic; }
@@ -121,6 +127,8 @@
       tr:nth-child(even) td { background:#212120; }
       blockquote { background:#252220; border-color:#666; color:#999; }
       hr { border-color:#333; }
+      .fig img { border-color:#444; }
+      .fig-caption { color:#999; }
     }
   </style>
 </head>
@@ -129,7 +137,7 @@
 
   <div class="cover">
     <h1>Постквантови криптографски схеми за защита на електронни документи</h1>
-    <p class="sub">Курсова работа по Информационна Сигурност</p>
+    <p class="sub">Дипломна работа по Информационна Сигурност</p>
     <p class="meta">Технически университет — София</p>
   </div>
 
@@ -143,6 +151,7 @@
       <li><a href="#05-arhitektura">Раздел 5. Архитектура</a></li>
       <li><a href="#06-programna-realizatsiya">Раздел 6. Програмна реализация</a></li>
       <li><a href="#07-rezultati">Раздел 7. Резултати</a></li>
+      <li><a href="#08-rukovodstvo-potrebitel">Раздел 8. Ръководство на потребителя</a></li>
       <li><a href="#09-zakluchenie">Раздел 9. Заключение</a></li>
       <li><a href="#10-bibliografia">Използвана литература (консолидирана библиография)</a></li>
     </ol>
@@ -635,8 +644,10 @@
         timestamptz created_at
     }
 </code></pre>
-<p><em>[FIG 2: ER диаграма — база данни на SignShield]</em></p>
-<p><strong><code>profiles</code></strong> съхранява показваното име на потребителя. Редът се създава автоматично чрез Postgres тригер при регистрация (<code>handle_new_user()</code>), а не от клиентски код — гарантира, че всеки автентикиран потребител винаги има точно един профилен запис.</p>
+<div class="fig">
+  <img src="screenshots/diagrams/er-diagram.png" alt="ER диаграма — база данни на SignShield" />
+  <p class="fig-caption">Фиг. 2 — ER диаграма: девет таблици в public схемата на Postgres.</p>
+</div><p><strong><code>profiles</code></strong> съхранява показваното име на потребителя. Редът се създава автоматично чрез Postgres тригер при регистрация (<code>handle_new_user()</code>), а не от клиентски код — гарантира, че всеки автентикиран потребител винаги има точно един профилен запис.</p>
 <p><strong><code>signing_keys</code></strong> е най-чувствителната таблица в схемата. Всеки ред представлява един подписващ ключ (ECDSA P-256 или ML-DSA-65) и съдържа частния ключ <strong>само</strong> в AES-256-GCM криптиран вид (<code>encrypted_private_key</code>), заедно с материалите, нужни за декриптирането му — <code>prf_salt</code> (уникална сол за WebAuthn PRF ceremony-то), <code>wrapped_key_iv</code> (инициализационен вектор за AES-GCM) и <code>credential_id</code> (кой passkey е ползван). Полето <code>certificate</code> пази X.509 сертификата (за ECDSA) или JSON attestation (за ML-DSA-65), издаден от вътрешния Root CA. Backend-ът никога не вижда декриптирания частен ключ — той съществува единствено временно, в паметта на браузъра, по време на самата операция по подписване.</p>
 <p><strong><code>documents</code></strong> пази метаданните на качения PDF — оригиналния път в storage, хеша при качване и, след подписване, пътя на подписаната версия. Статусът е умишлено опростен до <code>uploaded</code>/<code>signed</code> — целият по-сложен многоучастников progress живее в <code>signing_requests</code>, за да не се налага миграция на съществуващата логика, която чете <code>documents.status</code>.</p>
 <p><strong><code>signatures</code></strong> е одиторски запис за всеки индивидуален подпис — коя двойка ключове е ползвана (<code>ecdsa_key_id</code>, задължителен; <code>ml_dsa_key_id</code>, nullable — ML-DSA-65 е препоръчителен, не задължителен), суровите байтове на CMS структурата и точния storage път на файла, който този подпис е произвел. Таблицата поддържа само <code>SELECT</code> и <code>INSERT</code> на ниво RLS политика — умишлено няма <code>UPDATE</code>/<code>DELETE</code>, защото подписът е доказателство, че документът е бил подписан в конкретен момент; позволяването на промяна би обезсмислило одиторската му функция.</p>
@@ -831,7 +842,9 @@
 <h2>6.1 Криптографски модул</h2>
 <p>Криптографският модул на SignShield се дели на две ясно разграничени отговорности: извеждане на симетричен ключ от биометрията на потребителя (HKDF-SHA256 [17]) и самото подписване/верификация с двата асиметрични алгоритъма (ECDSA P-256, ML-DSA-65 [23]). И четирите операции живеят в <code>src/lib/crypto/</code> и, с изключение на ML-DSA-65, се изпълняват директно чрез вградения браузърен Web Crypto API — без external крипто библиотека, без риск от bundle-size разход и с достъп до хардуерно ускорение, когато е налично.</p>
 <p><strong>HKDF-SHA256 деривация от PRF output.</strong> WebAuthn PRF extension-ът връща 32 сурови байта — недетерминиран поток, неподходящ за директна употреба като AES ключ без допълнителна обработка. <code>deriveAesKeyFromPRF()</code> изпълнява самата PRF ceremony (<code>navigator.credentials.get()</code> с <code>prf.eval.first</code>), после подава резултата през HKDF с известна сол (<code>prf_salt</code>, уникална за всеки ключ) и контекстен <code>info</code> низ, за да получи детерминиран, non-extractable AES-256-GCM ключ:</p>
-<pre><code class="language-typescript">export async function deriveAesKeyFromPRF(
+<div class="fig">
+  <img src="screenshots/code/fig-01.png" alt="Код фрагмент 1" />
+</div><pre><code class="language-typescript">export async function deriveAesKeyFromPRF(
   prfSalt: Uint8Array,
   rpId: string,
   credentialId?: Uint8Array,
@@ -858,7 +871,9 @@
 </code></pre>
 <p>Параметърът <code>extractPrf</code> е инжектиран (dependency injection) с production по подразбиране <code>browserPrfExtractor</code> — това позволява unit тестовете да подават mock ceremony без реален WebAuthn достъп (виж Раздел 7). Важна детайл е <code>false</code> в четвъртия аргумент на <code>deriveKey()</code>: AES ключът е маркиран <strong>non-extractable</strong> — веднъж изведен, не може да бъде прочетен обратно като суров байтов масив дори от собствения ни код, само ползван за encrypt/decrypt операции в рамките на текущата сесия.</p>
 <p><strong>AES-256-GCM encrypt/decrypt на частни ключове.</strong> Самото криптиране е тънка обвивка над <code>crypto.subtle.encrypt</code>/<code>decrypt</code> с режим GCM (authenticated encryption) — избран специално защото грешен ключ или подправен ciphertext хвърля <code>OperationError</code> вместо тихо да върне безсмислени байтове:</p>
-<pre><code class="language-typescript">export async function decryptPrivateKey(
+<div class="fig">
+  <img src="screenshots/code/fig-02.png" alt="Код фрагмент 2" />
+</div><pre><code class="language-typescript">export async function decryptPrivateKey(
   encryptedKey: Uint8Array,
   derivedKey: CryptoKey,
   iv: Uint8Array,
@@ -872,7 +887,9 @@
 }
 </code></pre>
 <p><strong>ECDSA P-256 подписване.</strong> Ключовете се пазят в PKCS8 DER формат (изходния формат на <code>crypto.subtle.exportKey(&#39;pkcs8&#39;, ...)</code>), затова подписването първо ги импортира обратно като <code>CryptoKey</code>, после подписва с SHA-256 хеширане, вградено в самата <code>sign()</code> операция:</p>
-<pre><code class="language-typescript">export async function signWithEcdsaP256(
+<div class="fig">
+  <img src="screenshots/code/fig-03.png" alt="Код фрагмент 3" />
+</div><pre><code class="language-typescript">export async function signWithEcdsaP256(
   secretKey: Uint8Array,
   data: Uint8Array,
 ): Promise&lt;Uint8Array&gt; {
@@ -888,7 +905,9 @@
 </code></pre>
 <p>Резултатът е в P1363 формат (WebCrypto native — просто конкатенация на <code>r</code> и <code>s</code>, всеки padнат до 32 байта), различен от DER SEQUENCE формата, който CMS стандартът изисква — конверсията между двата е задача на <code>cmsBuilder.ts</code> (6.2).</p>
 <p><strong>ML-DSA-65 подписване.</strong> За разлика от ECDSA, ML-DSA-65 няма native браузърна имплементация — извиква се директно библиотеката <code>@noble/post-quantum</code> [20], чийто API е синхронен и приема аргументите в обратен ред спрямо интуитивното очакване (съобщението първо, ключът втори при подписване; подписът първи при верификация):</p>
-<pre><code class="language-typescript">export async function signWithMlDsa(
+<div class="fig">
+  <img src="screenshots/code/fig-04.png" alt="Код фрагмент 4" />
+</div><pre><code class="language-typescript">export async function signWithMlDsa(
   secretKey: Uint8Array,
   data: Uint8Array,
 ): Promise&lt;Uint8Array&gt; {
@@ -910,7 +929,9 @@ export async function verifyMlDsa(
 <p>Ядрото на подписващата логика живее в <code>pdfSigner.ts</code> (raw PDF байтова манипулация) и <code>cmsBuilder.ts</code> (ASN.1 DER кодиране на CMS структурата). За разлика от повечето операции в приложението, тук не се ползва високо-нивовата документна модификация на <code>pdf-lib</code> [1] за втория и следващите подписи — единствено първият (owner-ският) подпис минава през пълно pdf-lib зареждане/запис; всеки следващ е ръчно построен append-only incremental update (детайли по-долу).</p>
 <p><strong>Structure на PAdES [12] подпис.</strong> Подписаният PDF съдържа стандартен <code>/Type /Sig</code> речник с четири ключови полета: <code>/ByteRange</code> — четири числа <code>[0, A, B, C]</code>, определящи кои байтове от файла участват в хеша; <code>/Contents</code> — hex-кодиран CMS ContentInfo, поставен в предварително резервирано място (placeholder) с фиксирана дължина; <code>/Filter /Adobe.PPKLite</code> и <code>/SubFilter /adbe.pkcs7.detached</code> — идентификатори, разпознавани от Adobe Acrobat. Диапазонът <code>[A, B)</code> е <strong>изключен</strong> от хеша именно защото там живее самия <code>/Contents</code> — той не може да участва в собствения си хеш (класически проблем на всяка схема с вграден подпис).</p>
 <p><strong><code>preparePdfForSigning()</code> — placeholder механика.</strong> Функцията рисува визуалния маркер върху страницата чрез pdf-lib, изгражда <code>/Sig</code> речника с placeholder стойности (<code>999999999</code> за <code>/ByteRange</code>, 16384 нулеви hex символа за <code>/Contents</code> — буфер от ~8 KB, ~5× повече от типичния размер на CMS структурата), сериализира документа и после <strong>намира собствения си обект по номер</strong>, а не по първо текстово съвпадение:</p>
-<pre><code class="language-typescript">const sigObjMarker = new TextEncoder().encode(
+<div class="fig">
+  <img src="screenshots/code/fig-05.png" alt="Код фрагмент 5" />
+</div><pre><code class="language-typescript">const sigObjMarker = new TextEncoder().encode(
   `\n${sigDictRef.objectNumber} 0 obj`,
 );
 const sigObjPos = findPattern(bytes, sigObjMarker);
@@ -924,7 +945,9 @@ const contentsOffset = contentsMarkerPos + contentsMarker.length - 1;
 </code></pre>
 <p>Последният детайл е резултат от реален производствен инцидент: ако оригиналният, качен от потребителя PDF вече съдържа собствен, недовършен <code>/Contents</code>/<code>/ByteRange</code> placeholder (например артефакт от предишно, прекъснато подписване в Adobe Acrobat Reader), наивно търсене от началото на файла намира <strong>чуждия</strong> placeholder първи — новият подпис остава незапълнен, а чуждият обект бива тихо презаписан. Търсенето, ограничено да започва от byte позицията на собствения <code>/Sig</code> обект (идентифициран по неговия pdf-lib <code>objectNumber</code>), елиминира този клас грешки напълно.</p>
 <p><strong>Двустъпков PQ flow.</strong> Най-нетривиалната архитектурна особеност на модула е редът, в който се изчисляват двата подписа — обяснена подробно в Раздел 5.3.3. Кодовата реализация на този принцип е разделена между <code>pdfSigner.ts</code> (приема готов <code>pqData</code> и го вгражда като реален обект) и <code>signingService.ts</code> (оркестрира двете извиквания):</p>
-<pre><code class="language-typescript">// Стъпка 1: подготовка БЕЗ PQ данни → pre-digest
+<div class="fig">
+  <img src="screenshots/code/fig-06.png" alt="Код фрагмент 6" />
+</div><pre><code class="language-typescript">// Стъпка 1: подготовка БЕЗ PQ данни → pre-digest
 const preDigestPrepared = await preparePdfForSigning(
   originalPdfBytes, signerName, signingDate, signOptions,
 );
@@ -947,7 +970,9 @@ const prepared = await preparePdfForSigning(
 </code></pre>
 <p>Едва след тази втора подготовка се изчислява финалният <code>/ByteRange</code> (тесен, обхващащ само <code>/Contents</code>) и се подписва с ECDSA P-256 — вграждайки транзитивна защита на целия постквантов обект в рамките на класическия подпис.</p>
 <p><strong>CMS builder (ASN.1 DER структура).</strong> <code>cmsBuilder.ts</code> изгражда CMS <code>SignedData</code> изцяло на ръка, без библиотека — приложението не се нуждае от пълноценен ASN.1 encoder, само от точно определена, фиксирана структура. Двата ключови компонента са <code>signedAttrs</code> (какво реално се подписва) и обвивката, която ги превръща във валиден <code>SignerInfo</code>:</p>
-<pre><code class="language-typescript">export function buildSignedAttrs(messageDigest: Uint8Array): Uint8Array {
+<div class="fig">
+  <img src="screenshots/code/fig-07.png" alt="Код фрагмент 7" />
+</div><pre><code class="language-typescript">export function buildSignedAttrs(messageDigest: Uint8Array): Uint8Array {
   const ctAttr = derSeq(cat(
     derOid(OID_CONTENT_TYPE), derSet(derOid(OID_DATA)),
   ));
@@ -960,7 +985,9 @@ const prepared = await preparePdfForSigning(
 </code></pre>
 <p>Забележителна детайл е разминаването между тага, използван за подписване (<code>0x31</code>, стандартен ASN.1 <code>SET</code>), и тага, използван при вграждане в <code>SignerInfo</code> (<code>0xA0</code>, <code>[0] IMPLICIT</code>) — CMS стандартът [15] изисква полето да бъде префиксирано с контекстно-специфичен таг в самата структура, но подписваната стойност трябва да остане каноничен <code>SET</code>. При верификация (<code>cmsParser.ts</code>) тагът се сменя обратно преди подаване към <code>crypto.subtle.verify()</code>.</p>
 <p><strong>Incremental update за multi-signer.</strong> Всеки подпис след първия не пресъздава документа — добавя нови обекти (<code>/Sig</code>, <code>Widget</code> annotation, CID шрифт за кирилица) и <strong>преиздава</strong> (redefine) съществуващите <code>AcroForm</code> и <code>Page</code> обекти на нови позиции във файла, без да пипа старите байтове:</p>
-<pre><code class="language-typescript">const fieldsMatch = acroFormDict.text.match(/\/Fields\s*\[([^\]]*)\]/);
+<div class="fig">
+  <img src="screenshots/code/fig-08.png" alt="Код фрагмент 8" />
+</div><pre><code class="language-typescript">const fieldsMatch = acroFormDict.text.match(/\/Fields\s*\[([^\]]*)\]/);
 const newFieldsArray = `/Fields [${fieldsMatch[1]}${widgetObjNum} 0 R ]`;
 const newAcroFormText = acroFormDict.text.replace(
   /\/Fields\s*\[[^\]]*\]/, newFieldsArray,
@@ -971,7 +998,9 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 <p>Тъй като предишният подпис вече е хеширал byte диапазон, включващ старата версия на <code>AcroForm</code> обекта, всяка промяна там би скъсала неговата валидност — новата ревизия затова живее на нова позиция във файла, с нов запис в xref таблицата, сочещ към нея; PDF четци разпознават последната ревизия на всеки обект по последния xref запис, докато математически по-ранните подписи продължават да хешират точно същите байтове, каквито са били при собственото им подписване.</p>
 <h2>6.3 Верификация</h2>
 <p>Верификационният модул (<code>pdfVerifier.ts</code> + <code>verifyService.ts</code>) е изграден да поддържа произволен брой подписващи в един документ, без специален случай за N = 1. Първата стъпка е <strong>извличане</strong> — намиране на всички <code>/Type /Sig</code> обекти във файла, по реда на появяването им (файловият ред съответства на реда на подписване):</p>
-<pre><code class="language-typescript">export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[] {
+<div class="fig">
+  <img src="screenshots/code/fig-09.png" alt="Код фрагмент 9" />
+</div><pre><code class="language-typescript">export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[] {
   const positions = findAllOccurrences(pdfBytes, enc.encode(&#39;/Type /Sig&#39;));
   const results: ExtractedSignature[] = [];
   let prevDictEnd = 0;
@@ -993,7 +1022,9 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 </code></pre>
 <p>Асоциирането на постквантовия обект с &quot;неговия&quot; ECDSA подпис е по <strong>файлов прозорец</strong> (байтовете между края на предишния <code>/Sig</code> речник и началото на текущия), не по индекс, съхранен в самите данни — устойчиво на произволен брой подписващи, без нужда от координация между тях.</p>
 <p><strong>Chain validation.</strong> За всеки leaf сертификат, извлечен от CMS структурата, <code>verifyCertChain()</code> проверява дали е издаден и подписан от вградения Root CA сертификат (статично компилиран в JavaScript bundle-а), и дали периодът му на валидност все още тече:</p>
-<pre><code class="language-typescript">export async function verifyCertChain(
+<div class="fig">
+  <img src="screenshots/code/fig-10.png" alt="Код фрагмент 10" />
+</div><pre><code class="language-typescript">export async function verifyCertChain(
   leafCertDer: Uint8Array, rootCaCertDer: Uint8Array,
 ): Promise&lt;{ status: CertChainStatus; expiry: Date; signerName: string }&gt; {
   const leaf = new x509.X509Certificate(leafCertDer);
@@ -1010,7 +1041,9 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 }
 </code></pre>
 <p><strong>Overall status логика.</strong> Резултатите от отделните подписващи се комбинират в един обобщен статус по строго дефиниран приоритет — най-тежкото условие &quot;печели&quot;:</p>
-<pre><code class="language-typescript">function determineOverall(signers: SignerResult[]): VerifyResult[&#39;overall&#39;] {
+<div class="fig">
+  <img src="screenshots/code/fig-11.png" alt="Код фрагмент 11" />
+</div><pre><code class="language-typescript">function determineOverall(signers: SignerResult[]): VerifyResult[&#39;overall&#39;] {
   if (signers.some(s =&gt; s.ecdsa.tampered)) return &#39;tampered&#39;;
   if (signers.some(s =&gt; s.ecdsa.status === &#39;invalid&#39;)) return &#39;invalid&#39;;
   if (signers.some(s =&gt; s.ecdsa.certStatus === &#39;chain_invalid&#39;)) return &#39;invalid&#39;;
@@ -1028,7 +1061,9 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 <h2>6.4 Passkey PRF integration</h2>
 <p>Реалната WebAuthn [33] PRF ceremony се изпълнява само веднъж на подписваща операция чрез споделения hook <code>usePrfCeremony()</code> — преди Ден 6 логиката за нея беше copy-paste-вана между модала за единично подписване и модала за покана на съвместни подписващи. Hook-ът съществува основно заради т.нар. &quot;capture-once&quot; pattern: изпълнява истинската биометрична церемония веднъж, после връща <strong>mock extractor-и</strong>, които <code>signAsOwner()</code> може да извиква вътрешно, без нов prompt към потребителя.</p>
 <p><strong>Single vs dual PRF ceremony.</strong> Ако ECDSA и ML-DSA-65 ключовете на потребителя произхождат от един и същ WebAuthn credential (типичният случай — потребителят генерира и двата с една и съща passkey сесия), WebAuthn PRF extension-ът позволява <strong>един</strong> биометричен тап да върне <strong>два</strong> независими PRF резултата чрез <code>eval.first</code>/<code>eval.second</code>. Ако ключовете идват от различни credential-и, се налагат два отделни tap-а:</p>
-<pre><code class="language-typescript">const performCeremony = useCallback(async (
+<div class="fig">
+  <img src="screenshots/code/fig-12.png" alt="Код фрагмент 12" />
+</div><pre><code class="language-typescript">const performCeremony = useCallback(async (
   preflightKeys: ResolvedKeys, rpId: string,
 ): Promise&lt;PrfCeremonyResult&gt; =&gt; {
   if (preflightKeys.singlePrf &amp;&amp; preflightKeys.mlDsaData) {
@@ -1051,7 +1086,9 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 <h2>6.5 Mini-CA Edge Function</h2>
 <p>Единствената сървърна операция в цялото приложение с достъп до чувствителна тайна е <code>issue-certificate</code> — Supabase Edge Function, изпълнявана в Deno runtime [6]. Функцията приема <code>signingKeyId</code>, проверява собствеността му спрямо JWT токена на заявителя, и издава X.509 [5] leaf сертификат (ECDSA P-256) или JSON attestation (ML-DSA-65), подписани с частния ключ на вътрешния Root CA.</p>
 <p><strong>JWT validation + ownership check.</strong> Заявката е неоторизирана, ако Authorization header-ът липсва или токенът е невалиден; ключът е недостъпен, ако не принадлежи на автентикирания потребител — заявката филтрира изрично по <code>user_id</code>, не разчита единствено на RLS:</p>
-<pre><code class="language-typescript">const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
+<div class="fig">
+  <img src="screenshots/code/fig-13.png" alt="Код фрагмент 13" />
+</div><pre><code class="language-typescript">const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
 if (authError || !user) return jsonError(&#39;Invalid token&#39;, 401);
 
 const { data: keyRow, error: keyError } = await supabase
@@ -1067,7 +1104,9 @@ if (keyRow.certificate !== null) return json({ ok: true, alreadyIssued: true });
 </code></pre>
 <p>Последният ред прави операцията идемпотентна — повторна заявка за вече издаден сертификат не хвърля грешка, просто съобщава, че вече съществува.</p>
 <p><strong>Rate limiting.</strong> Вместо отделна инфраструктура (Redis, персистентен брояч), rate limit-ът брои редове в <code>audit_log</code> — операцията &quot;издаване на сертификат&quot; вече оставя одиторски запис, така че лимитът е просто заявка към данни, които и без това се записват:</p>
-<pre><code class="language-typescript">async function checkRateLimit(supabase, userId: string): Promise&lt;boolean&gt; {
+<div class="fig">
+  <img src="screenshots/code/fig-14.png" alt="Код фрагмент 14" />
+</div><pre><code class="language-typescript">async function checkRateLimit(supabase, userId: string): Promise&lt;boolean&gt; {
   const oneMinAgo = new Date(Date.now() - 60_000).toISOString();
   const { count } = await supabase
     .from(&#39;audit_log&#39;)
@@ -1079,7 +1118,9 @@ if (keyRow.certificate !== null) return json({ ok: true, alreadyIssued: true });
 }
 </code></pre>
 <p><strong>Изграждане на сертификата.</strong> За разлика от повечето Node.js базирани решения, функцията НЕ използва библиотека като <code>@peculiar/x509</code> [27] — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаването на прости leaf сертификати би увеличило bundle размера ненужно. Вместо това <code>buildEcdsaP256Cert()</code> изгражда TBSCertificate структурата ръчно, чрез същите минималистични ASN.1 DER помощни функции като <code>cmsBuilder.ts</code>, и я подписва директно чрез <code>crypto.subtle.sign()</code> с CA частния ключ (внесен от Supabase Secret в PKCS8 формат):</p>
-<pre><code class="language-typescript">const tbs = derSeq(cat(
+<div class="fig">
+  <img src="screenshots/code/fig-15.png" alt="Код фрагмент 15" />
+</div><pre><code class="language-typescript">const tbs = derSeq(cat(
   tlv(0xa0, derInt(new Uint8Array([0x02]))), // [0] version: v3
   encodeSerial(serialHex), sigAlgId, issuerDN,
   validity, subjectDN, spki, exts,
@@ -1095,7 +1136,9 @@ return derSeq(cat(tbs, sigAlgId, tlv(0x03, cat(new Uint8Array([0x00]), sigDer)))
 <p>Оркестрацията на многоучастниковия workflow живее изцяло в <code>signingService.ts</code>, разделена на две функции с различна отговорност и различен модел на грешки: <code>signAsOwner()</code> изпълнява се точно веднъж на заявка, докато <code>attemptRecipientSign()</code> (обвита в retry loop от <code>signAsRecipient()</code>) може да бъде извикана многократно от произволен брой независими получатели.</p>
 <p><strong>Разделение signAsOwner() / signAsRecipient().</strong> Собственикът винаги подписва през стандартния (single-signer) <code>preparePdfForSigning()</code> път, тъй като е гарантирано първият подписващ — документът все още не съществува в подписан вид. Всеки получател подписва инкрементално, върху последната налична версия — функциите споделят помощни стъпки (<code>resolveSigningKeys()</code>, PRF декриптиране), но самата PDF подготовка минава през различни примитиви (<code>preparePdfForSigning</code> срещу <code>prepareIncrementalSignature</code>).</p>
 <p><strong>Optimistic concurrency retry loop.</strong> Тъй като получателите могат да подписват в произволен, непредвидим ред — потенциално почти едновременно — всеки опит за подпис може да се провали заради състезателно условие. Retry логиката повтаря <strong>целия</strong> опит (включително нова биометрична церемония, защото byte диапазонът вече се е сменил), не само неуспелия запис:</p>
-<pre><code class="language-typescript">export async function signAsRecipient(
+<div class="fig">
+  <img src="screenshots/code/fig-16.png" alt="Код фрагмент 16" />
+</div><pre><code class="language-typescript">export async function signAsRecipient(
   recipientId: string, userId: string, signerName: string, rpId: string,
   fontBytes: Uint8Array, extractPrf?: PrfExtractor,
   extractDualPrf?: DualPrfExtractor,
@@ -1372,6 +1415,122 @@ return derSeq(cat(tbs, sigAlgId, tlv(0x03, cat(new Uint8Array([0x00]), sigDer)))
 <p>[7] Deque Systems. <em>axe-core — Accessibility testing engine</em> (Двигател за тестване на достъпност). <a href="https://github.com/dequelabs/axe-core">https://github.com/dequelabs/axe-core</a>. 2024.</p>
 <p>[14] Google LLC. <em>Lighthouse — Automated auditing for web quality</em> (Автоматизиран одит на качеството на уеб приложения). <a href="https://developer.chrome.com/docs/lighthouse">https://developer.chrome.com/docs/lighthouse</a>. 2024.</p>
 <p>[34] World Wide Web Consortium. <em>Web Content Accessibility Guidelines (WCAG) 2.1</em> (Насоки за достъпност на уеб съдържание). <a href="https://www.w3.org/TR/WCAG21/">https://www.w3.org/TR/WCAG21/</a>. 2018.</p>
+
+</section>
+
+<section class="doc-section" id="08-rukovodstvo-potrebitel">
+<h1>Раздел 8. Ръководство на потребителя</h1>
+<p>Този раздел показва стъпка по стъпка как се използва SignShield от гледна точка на реален потребител — от първата регистрация до проверката на подписан документ. Всички скрийншоти са направени с реални тестови акаунти върху живата система.</p>
+<h2>8.1 Регистрация и вход</h2>
+<p>За да започнем работа, отваряме приложението в браузъра. На стартовия екран въвеждаме име (&quot;Как да те наричаме?&quot;) и email адрес, след което натискаме бутона <strong>„Изпрати линк за потвърждение&quot;</strong>. Email-ът се използва само еднократно — за потвърждение на самоличността при регистрация; след това влизаме единствено с passkey, без парола.</p>
+<div class="fig">
+  <img src="screenshots/phase8/00-signup-landing.png" alt="Стартов екран — регистрация" />
+  <p class="fig-caption">Фиг. 1 — Стартов екран: въвеждане на име и email.</p>
+</div><p>След като кликнем линка от полученото писмо, email-ът е потвърден и приложението ни показва последната стъпка от регистрацията — закачане на passkey към профила. Натискаме <strong>„Регистрирай passkey&quot;</strong> и браузърът поисква биометрично потвърждение (Face ID / Windows Hello / отпечатък), за да създаде и регистрира новия passkey.</p>
+<div class="fig">
+  <img src="screenshots/phase8/01-register-passkey-step.png" alt="Регистрация на passkey" />
+  <p class="fig-caption">Фиг. 2 — Последна стъпка от регистрацията: закачане на passkey.</p>
+</div><p>След успешна биометрична церемония влизаме direкtно в главния екран на приложението — списъкът с документи все още е празен, защото това е нов акаунт.</p>
+<div class="fig">
+  <img src="screenshots/phase8/02-dashboard-empty.png" alt="Празен dashboard" />
+  <p class="fig-caption">Фиг. 3 — Главен екран веднага след регистрация.</p>
+</div><h2>8.2 Генериране на ключове</h2>
+<p>Преди да подпишем какъвто и да е документ, трябва да генерираме поне един подписващ ключ. Отваряме таб <strong>„Ключове&quot;</strong> — вижда се съобщение, че все още нямаме генерирани ключове.</p>
+<div class="fig">
+  <img src="screenshots/phase8/03-keys-empty.png" alt="Празен списък с ключове" />
+  <p class="fig-caption">Фиг. 4 — Таб „Ключове" преди генериране.</p>
+</div><p>Натискаме <strong>„+ Генерирай нов ключ&quot;</strong>. В диалога избираме алгоритъм — по подразбиране е маркиран <strong>ECDSA P-256</strong> (препоръчан, съвместим с Adobe Reader). Натискаме <strong>„Генерирай&quot;</strong> и потвърждаваме отново с биометрия — браузърът генерира ключова двойка, криптира частния ключ с ключ, изведен от PRF резултата на passkey-я, и качва публичния ключ + автоматично издаден X.509 сертификат.</p>
+<div class="fig">
+  <img src="screenshots/phase8/04-generate-key-modal-ecdsa.png" alt="Диалог за генериране на ECDSA ключ" />
+  <p class="fig-caption">Фиг. 5 — Избор на алгоритъм ECDSA P-256.</p>
+</div><div class="fig">
+  <img src="screenshots/phase8/05-ecdsa-key-generated.png" alt="ECDSA ключ генериран" />
+  <p class="fig-caption">Фиг. 6 — ECDSA P-256 ключ, генериран успешно.</p>
+</div><p>За пълна защита повтаряме процеса, но този път избираме <strong>ML-DSA-65</strong> (пост-квантов алгоритъм). Генерирането отнема забележимо по-дълго (по-голям ключ, 1952 байта), но протича по същия начин.</p>
+<div class="fig">
+  <img src="screenshots/phase8/06-generate-key-modal-mldsa.png" alt="Диалог за генериране на ML-DSA-65 ключ" />
+  <p class="fig-caption">Фиг. 7 — Избор на алгоритъм ML-DSA-65.</p>
+</div><p>Резултатът — един ECDSA P-256 и един ML-DSA-65 ключ, готови за хибридно подписване:</p>
+<div class="fig">
+  <img src="screenshots/phase8/07-keys-both-generated.png" alt="Двата ключа генерирани" />
+  <p class="fig-caption">Фиг. 8 — И двата ключа са налични: 1 ECDSA P-256, 1 ML-DSA-65.</p>
+</div><h2>8.3 Подписване (единичен подписващ)</h2>
+<p>Връщаме се в таб <strong>„Документи&quot;</strong> и качваме PDF файл — влачим го в зоната за качване или избираме файл ръчно. Веднага след качването документът се появява в списъка с бутони <strong>„Преглед&quot;</strong>, <strong>„Подпиши&quot;</strong> и <strong>„Изпрати за подписване&quot;</strong>.</p>
+<div class="fig">
+  <img src="screenshots/phase8/08-document-uploaded.png" alt="Качен документ" />
+  <p class="fig-caption">Фиг. 9 — Документ, качен и готов за подписване.</p>
+</div><p>Натискаме <strong>„Подпиши&quot;</strong>. На първата стъпка избираме позицията на визуалния маркер върху документа (или ползваме позицията по подразбиране — долу вляво).</p>
+<div class="fig">
+  <img src="screenshots/phase8/09-sign-modal-position-set.png" alt="Избор на позиция за подпис" />
+  <p class="fig-caption">Фиг. 10 — Стъпка 1: позиция на подписа.</p>
+</div><p>На втората стъпка виждаме преглед и натискаме финалното <strong>„Подпиши&quot;</strong> — браузърът поисква биометрично потвърждение, след което последователно се изчисляват ECDSA P-256 и ML-DSA-65 подписите.</p>
+<div class="fig">
+  <img src="screenshots/phase8/10-sign-modal-confirm.png" alt="Потвърждение на подписа" />
+  <p class="fig-caption">Фиг. 11 — Стъпка 2: преглед и подписване.</p>
+</div><p>При успех виждаме прогрес-списъка с всички изпълнени стъпки и бутон за сваляне на подписания документ.</p>
+<div class="fig">
+  <img src="screenshots/phase8/11-sign-success.png" alt="Документът е подписан успешно" />
+  <p class="fig-caption">Фиг. 12 — Документът е подписан (ECDSA P-256 + ML-DSA-65).</p>
+</div><h2>8.4 Подписване с покани (multi-signer)</h2>
+<p>Когато документът трябва да бъде подписан от повече от едно лице, вместо „Подпиши&quot; натискаме <strong>„Изпрати за подписване&quot;</strong> на нов, все още неподписан документ.</p>
+<p><strong>Стъпка 1 — участници.</strong> Въвеждаме email адреса на поканения и натискаме <strong>„Добави&quot;</strong> (до двама получатели в текущата версия на приложението).</p>
+<div class="fig">
+  <img src="screenshots/phase8/12-invite-modal-recipients.png" alt="Добавяне на получател" />
+  <p class="fig-caption">Фиг. 13 — Стъпка 1: въвеждане на email на получателя.</p>
+</div><div class="fig">
+  <img src="screenshots/phase8/13-invite-modal-recipient-added.png" alt="Получателят е добавен" />
+  <p class="fig-caption">Фиг. 14 — Получателят е добавен към списъка.</p>
+</div><p><strong>Стъпка 2 — позиции.</strong> Влачим с мишката върху прегледа на документа, за да очертаем зона — системата автоматично разделя зоната на равен брой места (по едно за всеки участник, цветово кодирани).</p>
+<div class="fig">
+  <img src="screenshots/phase8/14-invite-modal-positions-blank.png" alt="Зона за подписите — празна" />
+  <p class="fig-caption">Фиг. 15 — Стъпка 2: очертаване на зона за подписите.</p>
+</div><div class="fig">
+  <img src="screenshots/phase8/15-invite-modal-positions-drawn.png" alt="Зона за подписите — разделена" />
+  <p class="fig-caption">Фиг. 16 — Зоната е автоматично разделена на 2 места (собственик + получател).</p>
+</div><p><strong>Стъпка 3 — подпис на собственика.</strong> Преглеждаме участниците и натискаме <strong>„Подпиши като собственик&quot;</strong> — биометрична церемония, след която документът се качва и поканите се изпращат по email.</p>
+<div class="fig">
+  <img src="screenshots/phase8/16-invite-modal-confirm.png" alt="Преглед преди подписване" />
+  <p class="fig-caption">Фиг. 17 — Стъпка 3: преглед преди подпис на собственика.</p>
+</div><div class="fig">
+  <img src="screenshots/phase8/17-invite-success.png" alt="Собственикът е подписал и поканил" />
+  <p class="fig-caption">Фиг. 18 — Документът е подписан от собственика; поканите са изпратени.</p>
+</div><p><strong>От страна на получателя.</strong> Получателят кликва линка от поканата — ако е нов потребител, първо преминава през същата passkey регистрация като при обикновена регистрация.</p>
+<div class="fig">
+  <img src="screenshots/phase8/18-recipient-register-passkey-step.png" alt="Получателят регистрира passkey" />
+  <p class="fig-caption">Фиг. 19 — Получателят регистрира собствен passkey.</p>
+</div><p>След регистрацията получателят каца на страницата на поканата с детайли за документа и бутон <strong>„Подпиши&quot;</strong>.</p>
+<div class="fig">
+  <img src="screenshots/phase8/19-recipient-invite-landing.png" alt="Страница на поканата" />
+  <p class="fig-caption">Фиг. 20 — Страницата на поканата от гледна точка на получателя.</p>
+</div><p>Ако получателят все още няма собствен подписващ ключ, приложението изрично го пренасочва да генерира такъв, преди да продължи — процесът е идентичен с описания в 8.2. Междувременно, в таб „Документи&quot; статусът на споделения документ се вижда като „Routing (1/2)&quot; — чака се вторият подпис.</p>
+<div class="fig">
+  <img src="screenshots/phase8/20-recipient-pending-status.png" alt="Статус на изчакване" />
+  <p class="fig-caption">Фиг. 21 — Статус „Routing (1/2)" — документът чака получателя.</p>
+</div><p>Отделно, в таб <strong>„Покани&quot;</strong> получателят вижда чакащата покана директно, с бутон <strong>„Подпиши&quot;</strong>:</p>
+<div class="fig">
+  <img src="screenshots/phase8/21-recipient-invites-tab.png" alt="Таб Покани" />
+  <p class="fig-caption">Фиг. 22 — Таб „Покани" — чакаща покана за подписване.</p>
+</div><p>Натискаме „Подпиши&quot; — преглеждаме позицията и участниците, после потвърждаваме с биометрия.</p>
+<div class="fig">
+  <img src="screenshots/phase8/22-recipient-signing-confirm.png" alt="Потвърждение от получателя" />
+  <p class="fig-caption">Фиг. 23 — Получателят преглежда и подписва.</p>
+</div><p>При успех приложението изрично съобщава, че <strong>всички</strong> участници вече са подписали — документът е окончателно завършен.</p>
+<div class="fig">
+  <img src="screenshots/phase8/23-recipient-sign-success.png" alt="Всички са подписали" />
+  <p class="fig-caption">Фиг. 24 — „Всички участници вече са подписали."</p>
+</div><div class="fig">
+  <img src="screenshots/phase8/24-recipient-documents-final.png" alt="Финално състояние на документа" />
+  <p class="fig-caption">Фиг. 25 — Документът в списъка на получателя, вече напълно подписан.</p>
+</div><h2>8.5 Верификация</h2>
+<p>Верификацията е публична — не изисква вход в системата. Отваряме <code>/verify</code>, влачим PDF файл в зоната за качване.</p>
+<div class="fig">
+  <img src="screenshots/phase8/25-verify-page-empty.png" alt="Страница за проверка — празна" />
+  <p class="fig-caption">Фиг. 26 — Публичната страница за проверка на документ.</p>
+</div><p>След качването приложението verифицира изцяло в браузъра (файлът не се изпраща никъде) и показва резултат — зелено съобщение „Документът е автентичен и непроменен&quot;, списък с всички подписващи, и разгъваеми технически детайли за всеки подпис (сертификатна верига, алгоритъм, статус на ML-DSA-65 слоя).</p>
+<div class="fig">
+  <img src="screenshots/phase8/26-verify-page-result.png" alt="Резултат от проверката" />
+  <p class="fig-caption">Фиг. 27 — Успешна верификация на документ, подписан от двама участници.</p>
+</div><p>От същия екран можем да свалим и подробен верификационен доклад в PDF формат, или да проверим друг документ.</p>
 
 </section>
 

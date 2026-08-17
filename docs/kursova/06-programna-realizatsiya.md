@@ -6,6 +6,10 @@
 
 **HKDF-SHA256 деривация от PRF output.** WebAuthn PRF extension-ът връща 32 сурови байта — недетерминиран поток, неподходящ за директна употреба като AES ключ без допълнителна обработка. `deriveAesKeyFromPRF()` изпълнява самата PRF ceremony (`navigator.credentials.get()` с `prf.eval.first`), после подава резултата през HKDF с известна сол (`prf_salt`, уникална за всеки ключ) и контекстен `info` низ, за да получи детерминиран, non-extractable AES-256-GCM ключ:
 
+<div class="fig">
+  <img src="screenshots/code/fig-01.png" alt="Код фрагмент 1" />
+</div>
+
 ```typescript
 export async function deriveAesKeyFromPRF(
   prfSalt: Uint8Array,
@@ -37,6 +41,10 @@ export async function deriveAesKeyFromPRF(
 
 **AES-256-GCM encrypt/decrypt на частни ключове.** Самото криптиране е тънка обвивка над `crypto.subtle.encrypt`/`decrypt` с режим GCM (authenticated encryption) — избран специално защото грешен ключ или подправен ciphertext хвърля `OperationError` вместо тихо да върне безсмислени байтове:
 
+<div class="fig">
+  <img src="screenshots/code/fig-02.png" alt="Код фрагмент 2" />
+</div>
+
 ```typescript
 export async function decryptPrivateKey(
   encryptedKey: Uint8Array,
@@ -53,6 +61,10 @@ export async function decryptPrivateKey(
 ```
 
 **ECDSA P-256 подписване.** Ключовете се пазят в PKCS8 DER формат (изходния формат на `crypto.subtle.exportKey('pkcs8', ...)`), затова подписването първо ги импортира обратно като `CryptoKey`, после подписва с SHA-256 хеширане, вградено в самата `sign()` операция:
+
+<div class="fig">
+  <img src="screenshots/code/fig-03.png" alt="Код фрагмент 3" />
+</div>
 
 ```typescript
 export async function signWithEcdsaP256(
@@ -73,6 +85,10 @@ export async function signWithEcdsaP256(
 Резултатът е в P1363 формат (WebCrypto native — просто конкатенация на `r` и `s`, всеки padнат до 32 байта), различен от DER SEQUENCE формата, който CMS стандартът изисква — конверсията между двата е задача на `cmsBuilder.ts` (6.2).
 
 **ML-DSA-65 подписване.** За разлика от ECDSA, ML-DSA-65 няма native браузърна имплементация — извиква се директно библиотеката `@noble/post-quantum` [20], чийто API е синхронен и приема аргументите в обратен ред спрямо интуитивното очакване (съобщението първо, ключът втори при подписване; подписът първи при верификация):
+
+<div class="fig">
+  <img src="screenshots/code/fig-04.png" alt="Код фрагмент 4" />
+</div>
 
 ```typescript
 export async function signWithMlDsa(
@@ -103,6 +119,10 @@ export async function verifyMlDsa(
 
 **`preparePdfForSigning()` — placeholder механика.** Функцията рисува визуалния маркер върху страницата чрез pdf-lib, изгражда `/Sig` речника с placeholder стойности (`999999999` за `/ByteRange`, 16384 нулеви hex символа за `/Contents` — буфер от ~8 KB, ~5× повече от типичния размер на CMS структурата), сериализира документа и после **намира собствения си обект по номер**, а не по първо текстово съвпадение:
 
+<div class="fig">
+  <img src="screenshots/code/fig-05.png" alt="Код фрагмент 5" />
+</div>
+
 ```typescript
 const sigObjMarker = new TextEncoder().encode(
   `\n${sigDictRef.objectNumber} 0 obj`,
@@ -120,6 +140,10 @@ const contentsOffset = contentsMarkerPos + contentsMarker.length - 1;
 Последният детайл е резултат от реален производствен инцидент: ако оригиналният, качен от потребителя PDF вече съдържа собствен, недовършен `/Contents`/`/ByteRange` placeholder (например артефакт от предишно, прекъснато подписване в Adobe Acrobat Reader), наивно търсене от началото на файла намира **чуждия** placeholder първи — новият подпис остава незапълнен, а чуждият обект бива тихо презаписан. Търсенето, ограничено да започва от byte позицията на собствения `/Sig` обект (идентифициран по неговия pdf-lib `objectNumber`), елиминира този клас грешки напълно.
 
 **Двустъпков PQ flow.** Най-нетривиалната архитектурна особеност на модула е редът, в който се изчисляват двата подписа — обяснена подробно в Раздел 5.3.3. Кодовата реализация на този принцип е разделена между `pdfSigner.ts` (приема готов `pqData` и го вгражда като реален обект) и `signingService.ts` (оркестрира двете извиквания):
+
+<div class="fig">
+  <img src="screenshots/code/fig-06.png" alt="Код фрагмент 6" />
+</div>
 
 ```typescript
 // Стъпка 1: подготовка БЕЗ PQ данни → pre-digest
@@ -148,6 +172,10 @@ const prepared = await preparePdfForSigning(
 
 **CMS builder (ASN.1 DER структура).** `cmsBuilder.ts` изгражда CMS `SignedData` изцяло на ръка, без библиотека — приложението не се нуждае от пълноценен ASN.1 encoder, само от точно определена, фиксирана структура. Двата ключови компонента са `signedAttrs` (какво реално се подписва) и обвивката, която ги превръща във валиден `SignerInfo`:
 
+<div class="fig">
+  <img src="screenshots/code/fig-07.png" alt="Код фрагмент 7" />
+</div>
+
 ```typescript
 export function buildSignedAttrs(messageDigest: Uint8Array): Uint8Array {
   const ctAttr = derSeq(cat(
@@ -165,6 +193,10 @@ export function buildSignedAttrs(messageDigest: Uint8Array): Uint8Array {
 
 **Incremental update за multi-signer.** Всеки подпис след първия не пресъздава документа — добавя нови обекти (`/Sig`, `Widget` annotation, CID шрифт за кирилица) и **преиздава** (redefine) съществуващите `AcroForm` и `Page` обекти на нови позиции във файла, без да пипа старите байтове:
 
+<div class="fig">
+  <img src="screenshots/code/fig-08.png" alt="Код фрагмент 8" />
+</div>
+
 ```typescript
 const fieldsMatch = acroFormDict.text.match(/\/Fields\s*\[([^\]]*)\]/);
 const newFieldsArray = `/Fields [${fieldsMatch[1]}${widgetObjNum} 0 R ]`;
@@ -180,6 +212,10 @@ push(`\n${acroFormNum} 0 obj\n${newAcroFormText}\nendobj\n`);
 ## 6.3 Верификация
 
 Верификационният модул (`pdfVerifier.ts` + `verifyService.ts`) е изграден да поддържа произволен брой подписващи в един документ, без специален случай за N = 1. Първата стъпка е **извличане** — намиране на всички `/Type /Sig` обекти във файла, по реда на появяването им (файловият ред съответства на реда на подписване):
+
+<div class="fig">
+  <img src="screenshots/code/fig-09.png" alt="Код фрагмент 9" />
+</div>
 
 ```typescript
 export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[] {
@@ -207,6 +243,10 @@ export function extractAllSignatures(pdfBytes: Uint8Array): ExtractedSignature[]
 
 **Chain validation.** За всеки leaf сертификат, извлечен от CMS структурата, `verifyCertChain()` проверява дали е издаден и подписан от вградения Root CA сертификат (статично компилиран в JavaScript bundle-а), и дали периодът му на валидност все още тече:
 
+<div class="fig">
+  <img src="screenshots/code/fig-10.png" alt="Код фрагмент 10" />
+</div>
+
 ```typescript
 export async function verifyCertChain(
   leafCertDer: Uint8Array, rootCaCertDer: Uint8Array,
@@ -226,6 +266,10 @@ export async function verifyCertChain(
 ```
 
 **Overall status логика.** Резултатите от отделните подписващи се комбинират в един обобщен статус по строго дефиниран приоритет — най-тежкото условие "печели":
+
+<div class="fig">
+  <img src="screenshots/code/fig-11.png" alt="Код фрагмент 11" />
+</div>
 
 ```typescript
 function determineOverall(signers: SignerResult[]): VerifyResult['overall'] {
@@ -250,6 +294,10 @@ function determineOverall(signers: SignerResult[]): VerifyResult['overall'] {
 Реалната WebAuthn [33] PRF ceremony се изпълнява само веднъж на подписваща операция чрез споделения hook `usePrfCeremony()` — преди Ден 6 логиката за нея беше copy-paste-вана между модала за единично подписване и модала за покана на съвместни подписващи. Hook-ът съществува основно заради т.нар. "capture-once" pattern: изпълнява истинската биометрична церемония веднъж, после връща **mock extractor-и**, които `signAsOwner()` може да извиква вътрешно, без нов prompt към потребителя.
 
 **Single vs dual PRF ceremony.** Ако ECDSA и ML-DSA-65 ключовете на потребителя произхождат от един и същ WebAuthn credential (типичният случай — потребителят генерира и двата с една и съща passkey сесия), WebAuthn PRF extension-ът позволява **един** биометричен тап да върне **два** независими PRF резултата чрез `eval.first`/`eval.second`. Ако ключовете идват от различни credential-и, се налагат два отделни tap-а:
+
+<div class="fig">
+  <img src="screenshots/code/fig-12.png" alt="Код фрагмент 12" />
+</div>
 
 ```typescript
 const performCeremony = useCallback(async (
@@ -280,6 +328,10 @@ const performCeremony = useCallback(async (
 
 **JWT validation + ownership check.** Заявката е неоторизирана, ако Authorization header-ът липсва или токенът е невалиден; ключът е недостъпен, ако не принадлежи на автентикирания потребител — заявката филтрира изрично по `user_id`, не разчита единствено на RLS:
 
+<div class="fig">
+  <img src="screenshots/code/fig-13.png" alt="Код фрагмент 13" />
+</div>
+
 ```typescript
 const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
 if (authError || !user) return jsonError('Invalid token', 401);
@@ -300,6 +352,10 @@ if (keyRow.certificate !== null) return json({ ok: true, alreadyIssued: true });
 
 **Rate limiting.** Вместо отделна инфраструктура (Redis, персистентен брояч), rate limit-ът брои редове в `audit_log` — операцията "издаване на сертификат" вече оставя одиторски запис, така че лимитът е просто заявка към данни, които и без това се записват:
 
+<div class="fig">
+  <img src="screenshots/code/fig-14.png" alt="Код фрагмент 14" />
+</div>
+
 ```typescript
 async function checkRateLimit(supabase, userId: string): Promise<boolean> {
   const oneMinAgo = new Date(Date.now() - 60_000).toISOString();
@@ -314,6 +370,10 @@ async function checkRateLimit(supabase, userId: string): Promise<boolean> {
 ```
 
 **Изграждане на сертификата.** За разлика от повечето Node.js базирани решения, функцията НЕ използва библиотека като `@peculiar/x509` [27] — Deno edge runtime средата няма нативен Node crypto слой, а добавянето на пълноценна X.509 библиотека само за издаването на прости leaf сертификати би увеличило bundle размера ненужно. Вместо това `buildEcdsaP256Cert()` изгражда TBSCertificate структурата ръчно, чрез същите минималистични ASN.1 DER помощни функции като `cmsBuilder.ts`, и я подписва директно чрез `crypto.subtle.sign()` с CA частния ключ (внесен от Supabase Secret в PKCS8 формат):
+
+<div class="fig">
+  <img src="screenshots/code/fig-15.png" alt="Код фрагмент 15" />
+</div>
 
 ```typescript
 const tbs = derSeq(cat(
@@ -337,6 +397,10 @@ return derSeq(cat(tbs, sigAlgId, tlv(0x03, cat(new Uint8Array([0x00]), sigDer)))
 **Разделение signAsOwner() / signAsRecipient().** Собственикът винаги подписва през стандартния (single-signer) `preparePdfForSigning()` път, тъй като е гарантирано първият подписващ — документът все още не съществува в подписан вид. Всеки получател подписва инкрементално, върху последната налична версия — функциите споделят помощни стъпки (`resolveSigningKeys()`, PRF декриптиране), но самата PDF подготовка минава през различни примитиви (`preparePdfForSigning` срещу `prepareIncrementalSignature`).
 
 **Optimistic concurrency retry loop.** Тъй като получателите могат да подписват в произволен, непредвидим ред — потенциално почти едновременно — всеки опит за подпис може да се провали заради състезателно условие. Retry логиката повтаря **целия** опит (включително нова биометрична церемония, защото byte диапазонът вече се е сменил), не само неуспелия запис:
+
+<div class="fig">
+  <img src="screenshots/code/fig-16.png" alt="Код фрагмент 16" />
+</div>
 
 ```typescript
 export async function signAsRecipient(

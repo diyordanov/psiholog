@@ -148,7 +148,10 @@ erDiagram
     }
 ```
 
-*[FIG 2: ER диаграма — база данни на SignShield]*
+<div class="fig">
+  <img src="screenshots/diagrams/er-diagram.png" alt="ER диаграма — база данни на SignShield" />
+  <p class="fig-caption">Фиг. 2 — ER диаграма: девет таблици в public схемата на Postgres.</p>
+</div>
 
 **`profiles`** съхранява показваното име на потребителя. Редът се създава автоматично чрез Postgres тригер при регистрация (`handle_new_user()`), а не от клиентски код — гарантира, че всеки автентикиран потребител винаги има точно един профилен запис.
 

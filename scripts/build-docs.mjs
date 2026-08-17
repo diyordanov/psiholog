@@ -4,16 +4,17 @@
  * Извиква се като част от `npm run build`.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { marked } from 'marked';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT      = join(__dirname, '..');
-const DOCS_SRC  = join(ROOT, 'docs', 'kursova');
-const DOCS_OUT  = join(ROOT, 'public', 'docs');
-const OUT_FILE  = join(DOCS_OUT, 'index.html');
+const __dirname     = dirname(fileURLToPath(import.meta.url));
+const ROOT          = join(__dirname, '..');
+const DOCS_SRC      = join(ROOT, 'docs', 'kursova');
+const SCREENSHOTS_SRC = join(ROOT, 'docs', 'screenshots');
+const DOCS_OUT      = join(ROOT, 'public', 'docs');
+const OUT_FILE      = join(DOCS_OUT, 'index.html');
 
 // ── Strip YAML frontmatter (--- ... ---) from markdown ────────────────────
 function stripFrontmatter(raw) {
@@ -56,7 +57,7 @@ const page = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Постквантови криптографски схеми — Курсова работа</title>
+  <title>Постквантови криптографски схеми — Дипломна работа</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -142,6 +143,12 @@ const page = `<!DOCTYPE html>
           font-size: .83rem; line-height: 1.5; }
     pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 
+    /* ── Изображения (screenshots, диаграми) ── */
+    .fig { margin: 1.5rem 0; text-align: center; }
+    .fig img { max-width: 100%; height: auto; border: 1px solid #d0ccc5; border-radius: 6px;
+               box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .fig-caption { font-size: .82rem; color: #666; margin-top: .5rem; font-style: italic; }
+
     /* ── Blockquote ── */
     blockquote { border-left: 4px solid #aaa; margin: 1.2rem 0;
                  padding: .7rem 1rem; background: #f5f3ef; color: #555; font-style: italic; }
@@ -174,6 +181,8 @@ const page = `<!DOCTYPE html>
       tr:nth-child(even) td { background:#212120; }
       blockquote { background:#252220; border-color:#666; color:#999; }
       hr { border-color:#333; }
+      .fig img { border-color:#444; }
+      .fig-caption { color:#999; }
     }
   </style>
 </head>
@@ -182,7 +191,7 @@ const page = `<!DOCTYPE html>
 
   <div class="cover">
     <h1>Постквантови криптографски схеми за защита на електронни документи</h1>
-    <p class="sub">Курсова работа по Информационна Сигурност</p>
+    <p class="sub">Дипломна работа по Информационна Сигурност</p>
     <p class="meta">Технически университет — София</p>
   </div>
 
@@ -206,4 +215,25 @@ const final = page
 
 mkdirSync(DOCS_OUT, { recursive: true });
 writeFileSync(OUT_FILE, final, 'utf8');
+
+// Ръчно рекурсивно копиране (не fs.cpSync — на тази Node/Windows комбинация
+// с кирилски път cpSync крашва процеса без грешка, вж. commit история).
+function copyDirRecursive(src, dest) {
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(src)) {
+    const srcPath = join(src, entry);
+    const destPath = join(dest, entry);
+    if (statSync(srcPath).isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+if (existsSync(SCREENSHOTS_SRC)) {
+  copyDirRecursive(SCREENSHOTS_SRC, join(DOCS_OUT, 'screenshots'));
+  console.log('[build-docs] ✅ Копирани screenshots/диаграми в public/docs/screenshots');
+}
+
 console.log(`[build-docs] ✅ Записан ${OUT_FILE} (${mdFiles.length} файла)`);
